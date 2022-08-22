@@ -14,7 +14,6 @@ from uploader import Uploader
 class IAUploader(Uploader):
     """Dissemination logic for Internet Archive"""
 
-
     def upload_to_platform(self):
         """Upload work in required format to Internet Archive"""
 
@@ -40,11 +39,12 @@ class IAUploader(Uploader):
 
         for response in responses:
             if response.status_code != 200:
-                logging.error('Error uploading to Internet Archive: {}'.format(response.text))
+                logging.error(
+                    'Error uploading to Internet Archive: {}'.format(response.text))
                 sys.exit(1)
 
-        logging.info('Successfully uploaded to Internet Archive at archive.org/details/{}'.format(filename))
-
+        logging.info(
+            'Successfully uploaded to Internet Archive at archive.org/details/{}'.format(filename))
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""

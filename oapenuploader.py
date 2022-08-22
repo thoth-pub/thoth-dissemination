@@ -14,7 +14,6 @@ from uploader import Uploader
 class OAPENUploader(Uploader):
     """Dissemination logic for OAPEN"""
 
-
     def upload_to_platform(self):
         """
         Upload work in required format to OAPEN.
@@ -39,19 +38,22 @@ class OAPENUploader(Uploader):
                     try:
                         ftp.cwd('/{}'.format(dir))
                     except FileNotFoundError:
-                        logging.error('Could not find folder "{}" on OAPEN FTP server'.format(dir))
+                        logging.error(
+                            'Could not find folder "{}" on OAPEN FTP server'.format(dir))
                         sys.exit(1)
                     try:
-                        ftp.storbinary('STOR {}.xml'.format(filename), BytesIO(metadata_bytes))
+                        ftp.storbinary('STOR {}.xml'.format(
+                            filename), BytesIO(metadata_bytes))
                     except error_perm as error:
-                        logging.error('Error uploading to OAPEN FTP server: {}'.format(error))
+                        logging.error(
+                            'Error uploading to OAPEN FTP server: {}'.format(error))
                         sys.exit(1)
         except error_perm as error:
-            logging.error('Could not connect to OAPEN FTP server: {}'.format(error))
+            logging.error(
+                'Could not connect to OAPEN FTP server: {}'.format(error))
             sys.exit(1)
 
         logging.info('Successfully uploaded to OAPEN FTP server')
-
 
     def parse_metadata(self):
         """Convert work metadata into OAPEN format"""

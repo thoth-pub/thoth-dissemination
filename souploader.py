@@ -16,7 +16,6 @@ from uploader import Uploader
 class SOUploader(Uploader):
     """Dissemination logic for ScienceOpen"""
 
-
     def upload_to_platform(self):
         """
         Upload work in required format to ScienceOpen.
@@ -65,26 +64,30 @@ class SOUploader(Uploader):
                 try:
                     sftp.cwd(root_dir)
                 except FileNotFoundError:
-                    logging.error('Could not find folder UPLOAD_TO_THIS_DIRECTORY on ScienceOpen SFTP server')
+                    logging.error(
+                        'Could not find folder UPLOAD_TO_THIS_DIRECTORY on ScienceOpen SFTP server')
                     sys.exit(1)
                 try:
                     sftp.cwd(publisher)
                 except FileNotFoundError:
-                    logging.error('Could not find folder for publisher "{}" on ScienceOpen SFTP server'.format(publisher))
+                    logging.error(
+                        'Could not find folder for publisher "{}" on ScienceOpen SFTP server'.format(publisher))
                     sys.exit(1)
                 sftp.mkdir(new_dir)
                 sftp.cwd(new_dir)
                 try:
-                    sftp.putfo(flo=zipped_files, remotepath='{}.zip'.format(filename))
+                    sftp.putfo(flo=zipped_files,
+                               remotepath='{}.zip'.format(filename))
                 except TypeError as error:
-                    logging.error('Error uploading to ScienceOpen SFTP server: {}'.format(error))
+                    logging.error(
+                        'Error uploading to ScienceOpen SFTP server: {}'.format(error))
                     sys.exit(1)
         except pysftp.AuthenticationException as error:
-            logging.error('Could not connect to ScienceOpen SFTP server: {}'.format(error))
+            logging.error(
+                'Could not connect to ScienceOpen SFTP server: {}'.format(error))
             sys.exit(1)
 
         logging.info('Successfully uploaded to ScienceOpen SFTP server')
-
 
     def parse_metadata(self):
         """Convert work metadata into ScienceOpen format"""
