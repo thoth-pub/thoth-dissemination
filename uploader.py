@@ -59,7 +59,7 @@ class Uploader():
         # Extract cover URL from Thoth metadata
         cover_url = self.get_cover_url()
 
-        match cover_url.split('.')[-1]:
+        match cover_url.split('.')[-1].lower():
             case 'jpg':
                 expected_format = 'image/jpeg'
             case 'png':
@@ -73,29 +73,21 @@ class Uploader():
 
     def get_pdf_url(self):
         """Extract canonical work PDF URL from work metadata"""
-        # Default value
-        pdf_url = None
         publications = self.metadata.get(
             'data').get('work').get('publications')
-        for publication in publications:
-            # Required URL is under PDF publication
-            if publication.get('publicationType') == 'PDF':
-                locations = publication.get('locations')
-                for location in locations:
-                    # Required URL is under canonical location
-                    if location.get('canonical') == True:
-                        if pdf_url is None:
-                            pdf_url = location.get('fullTextUrl')
-                        else:
-                            logging.error(
-                                'Found more than one PDF Full Text URL - should be unique')
-                            sys.exit(1)
-
-        if pdf_url is None:
+        try:
+            # There should be a maximum of one PDF publication with a maximum of
+            # one canonical location; more than one would be a Thoth database error
+            pdf_locations = [n.get('locations') for n in publications if n.get(
+                'publicationType') == 'PDF'][0]
+            pdf_url = [n.get('fullTextUrl')
+                       for n in pdf_locations if n.get('canonical')][0]
+            if not pdf_url:
+                raise ValueError
+            return pdf_url
+        except (IndexError, ValueError):
             logging.error('No PDF Full Text URL found for Work')
             sys.exit(1)
-
-        return pdf_url
 
     def get_cover_url(self):
         """Extract cover URL from work metadata"""

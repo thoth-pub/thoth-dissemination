@@ -65,7 +65,7 @@ def get_arguments():
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG,
+    logging.basicConfig(level=logging.INFO,
                         format='%(levelname)s:%(asctime)s: %(message)s')
     # dotenv only required for running locally - when running
     # with Docker, --env-file option could be used instead

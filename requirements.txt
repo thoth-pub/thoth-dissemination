@@ -1,5 +1,5 @@
-internetarchive
-pysftp
-python-dotenv
-requests
-thothlibrary
+internetarchive==3.0.2
+pysftp==0.2.9
+python-dotenv==0.19.2
+requests==2.28.1
+thothlibrary==0.14.0

@@ -42,9 +42,12 @@ class SOUploader(Uploader):
         cover_bytes = self.get_cover_image()
         pdf_bytes = self.get_pdf_bytes()
 
+        # Both .jpg and .png cover files are supported
+        cover_file_ext = self.get_cover_url().split('.')[-1]
+
         files = [
             ('{}.csv'.format(filename), metadata_bytes),
-            ('{}.jpg'.format(filename), cover_bytes),
+            ('{}.{}'.format(filename, cover_file_ext), cover_bytes),
             ('{}.pdf'.format(filename), pdf_bytes),
         ]
 

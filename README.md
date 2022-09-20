@@ -22,10 +22,12 @@ pip3 install -r ./requirements.txt
 ### Run with Docker
 ```sh
 docker build . -t ${imagename} # Dockerfile handles Python package requirements
-docker run ${imagename} ./disseminator.py --work ${work_id} --platform ${platform}
+docker run -rm ${imagename} ./disseminator.py --work ${work_id} --platform ${platform}
 ```
 
 ### Options
 `--work` = Thoth ID of work to be disseminated
+
 `--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`)
+
 See also `--help`.
