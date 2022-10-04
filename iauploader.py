@@ -17,8 +17,9 @@ class IAUploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to Internet Archive"""
 
-        # Identifier and filenames TBD: use paperback ISBN for now
-        filename = self.get_pb_isbn()
+        # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
+        filename = self.work_id
+
         # Metadata file format TBD: use CSV for now
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
         pdf_bytes = self.get_pdf_bytes()
@@ -52,7 +53,7 @@ class IAUploader(Uploader):
         # Repeatable fields such as 'creator', 'isbn', 'subject'
         # can be set by submitting a list of values
         creators = [n.get('fullName')
-                    for n in work_metadata.get('contributions')]
+                    for n in work_metadata.get('contributions') if n.get('mainContribution') == True]
         # IA metadata schema suggests hyphens should be omitted,
         # although including them does not cause any errors
         isbns = [n.get('isbn').replace(
@@ -64,7 +65,7 @@ class IAUploader(Uploader):
         ia_metadata = {
             # All fields are non-mandatory
             # Any None values or empty lists are ignored by IA on ingest
-            'title': work_metadata.get('title'),
+            'title': work_metadata.get('fullTitle'),
             'publisher': self.get_publisher_name(),
             'creator': creators,
             # IA requires date in YYYY-MM-DD format, as output by Thoth
@@ -80,6 +81,8 @@ class IAUploader(Uploader):
             # IA has no dedicated DOI field but 'source' is
             # "[u]sed to signify where a piece of media originated"
             'source': work_metadata.get('doi'),
+            # https://help.archive.org/help/uploading-a-basic-guide/ requests no more than
+            # 10 subject tags, but additional tags appear to be accepted without error
             'subject': subjects,
         }
 

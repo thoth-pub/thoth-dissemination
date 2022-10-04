@@ -99,6 +99,7 @@ class Uploader():
 
         return cover_url
 
+    # Function not currently used
     def get_pb_isbn(self):
         """Extract paperback ISBN from work metadata"""
         pb_isbn = None
