@@ -62,6 +62,14 @@ class IAUploader(Uploader):
         # IA doesn't set a standard so representations vary across the archive
         subjects = [n.get('subjectCode')
                     for n in work_metadata.get('subjects')]
+        # language/issn/volume not currently supported in thothlibrary (latest release v0.15.0)
+        languages = [n.get('languageCode')
+                     for n in work_metadata.get('languages')]
+        issns = [n.get('series').get(key) for n in work_metadata.get(
+            'issues') for key in ['issnPrint', 'issnDigital']]
+        # IA only accepts a single volume number
+        volume = next(iter([str(n.get('issueOrdinal'))
+                      for n in work_metadata.get('issues')]), None)
         ia_metadata = {
             # All fields are non-mandatory
             # Any None values or empty lists are ignored by IA on ingest
@@ -84,6 +92,9 @@ class IAUploader(Uploader):
             # https://help.archive.org/help/uploading-a-basic-guide/ requests no more than
             # 10 subject tags, but additional tags appear to be accepted without error
             'subject': subjects,
+            'language': languages,
+            'issn': issns,
+            'volume': volume,
         }
 
         return ia_metadata
