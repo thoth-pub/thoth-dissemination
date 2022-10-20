@@ -18,6 +18,10 @@ class SwordV2Uploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
 
+        # Metadata file format TBD: use CSV for now
+        metadata_bytes = self.get_formatted_metadata('csv::thoth')
+        pdf_bytes = self.get_pdf_bytes()
+
         # Convert Thoth work metadata into SWORD v2 format
         sword_metadata = self.parse_metadata()
 
@@ -26,6 +30,10 @@ class SwordV2Uploader(Uploader):
             service_document_iri="https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712",
             user_name=environ.get('cam_ds7_user'),
             user_pass=environ.get('cam_ds7_pw'),
+            # SWORD2 library doesn't handle timeout-related errors gracefully and large files
+            # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
+            # Allow lots of leeway. (This otherwise matches the default `http_impl`.)
+            http_impl=sword2.http_layer.HttpLib2Layer(timeout=120.0)
         )
 
         try:
@@ -41,7 +49,45 @@ class SwordV2Uploader(Uploader):
 
         if receipt.code != 201:
             logging.error(
-                'Error uploading to SWORD v2')
+                'Error uploading item data to SWORD v2')
+            sys.exit(1)
+
+        try:
+            pdf_receipt = conn.add_file_to_resource(
+                edit_media_iri=receipt.edit_media,
+                payload=pdf_bytes,
+                # Filename TBD: use work ID for now
+                filename='{}.pdf'.format(self.work_id),
+                mimetype='application/pdf',
+                in_progress=True,
+            )
+        except sword2.exceptions.Forbidden:
+            logging.error(
+                'Could not connect to SWORD v2 server: authorisation failed')
+            sys.exit(1)
+
+        if pdf_receipt.code != 201:
+            logging.error(
+                'Error uploading PDF file to SWORD v2')
+            sys.exit(1)
+
+        try:
+            metadata_receipt = conn.add_file_to_resource(
+                edit_media_iri=receipt.edit_media,
+                payload=metadata_bytes,
+                # Filename TBD: use work ID for now
+                filename='{}.csv'.format(self.work_id),
+                mimetype='text/csv',
+                in_progress=True,
+            )
+        except sword2.exceptions.Forbidden:
+            logging.error(
+                'Could not connect to SWORD v2 server: authorisation failed')
+            sys.exit(1)
+
+        if metadata_receipt.code != 201:
+            logging.error(
+                'Error uploading metadata file to SWORD v2')
             sys.exit(1)
 
         logging.info(
