@@ -97,7 +97,25 @@ class SwordV2Uploader(Uploader):
         """Convert work metadata into SWORD v2 format"""
         work_metadata = self.metadata.get('data').get('work')
         sword_metadata = sword2.Entry(
-            title=work_metadata.get('fullTitle')
+            # All fields are non-mandatory and any None values are ignored on ingest
+            # (within Apollo DSpace 7 - yet to test other SWORD2-based platforms)
+            # Some of the below fields do not appear to be stored/
+            # correctly displayed by Apollo, although they are valid within SWORD2
+            title=work_metadata.get('fullTitle'),
+            dcterms_publisher=self.get_publisher_name(),
+            dcterms_issued=work_metadata.get('publicationDate'),
+            dcterms_description=work_metadata.get('longAbstract'),
+            dcterms_identifier=work_metadata.get('doi'),
+            dcterms_license=work_metadata.get('license'),
+            dcterms_tableOfContents=work_metadata.get('toc'),
         )
+        # Workaround for adding repeatable fields
+        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+            sword_metadata.add_field("dcterms_contributor", contributor)
+        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
+            sword_metadata.add_field("dcterms_subject", subject)
+        for isbn in [n.get('isbn').replace(
+                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+            sword_metadata.add_field("dcterms_identifier", isbn)
 
         return sword_metadata
