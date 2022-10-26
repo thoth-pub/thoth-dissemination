@@ -117,5 +117,8 @@ class SwordV2Uploader(Uploader):
         for isbn in [n.get('isbn').replace(
                 '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
             sword_metadata.add_field("dcterms_identifier", isbn)
+        # language not currently supported in thothlibrary (latest release v0.15.0)
+        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
+            sword_metadata.add_field("dcterms_language", language)
 
         return sword_metadata
