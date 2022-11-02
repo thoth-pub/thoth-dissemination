@@ -39,7 +39,14 @@ class SwordV2Uploader(Uploader):
         try:
             receipt = conn.create(
                 col_iri="https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712",
-                metadata_entry=sword_metadata,
+                # Hacky workaround for an issue with mishandling of encodings within sword2 library,
+                # which meant metadata containing special characters could not be submitted.
+                # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
+                # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
+                # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
+                # seems to mean that the string sent to the server is in correct utf-8 format.
+                metadata_entry=str(sword_metadata).encode(
+                    'utf-8').decode('latin-1'),
                 in_progress=True,
             )
         except sword2.exceptions.Forbidden:
