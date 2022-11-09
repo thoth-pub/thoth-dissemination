@@ -62,7 +62,6 @@ class IAUploader(Uploader):
         # IA doesn't set a standard so representations vary across the archive
         subjects = [n.get('subjectCode')
                     for n in work_metadata.get('subjects')]
-        # language/issn/volume not currently supported in thothlibrary (latest release v0.15.0)
         languages = [n.get('languageCode')
                      for n in work_metadata.get('languages')]
         issns = [n.get('series').get(key) for n in work_metadata.get(
