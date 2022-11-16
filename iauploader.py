@@ -20,8 +20,7 @@ class IAUploader(Uploader):
         # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
         filename = self.work_id
 
-        # Metadata file format TBD: use CSV for now
-        metadata_bytes = self.get_formatted_metadata('csv::thoth')
+        metadata_bytes = self.get_formatted_metadata('json::thoth')
         pdf_bytes = self.get_pdf_bytes()
 
         # Convert Thoth work metadata into Internet Archive format
@@ -31,7 +30,7 @@ class IAUploader(Uploader):
             identifier=filename,
             files={
                 '{}.pdf'.format(filename): BytesIO(pdf_bytes),
-                '{}.csv'.format(filename): BytesIO(metadata_bytes),
+                '{}.json'.format(filename): BytesIO(metadata_bytes),
             },
             metadata=ia_metadata,
             access_key=environ.get('ia_s3_access'),
