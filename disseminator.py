@@ -6,6 +6,8 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
+__version__ = 'unversioned'
+
 import argparse
 import logging
 from dotenv import load_dotenv
@@ -47,7 +49,7 @@ ARGS = [
 
 def run(work_id, platform, export_url):
     """Execute a dissemination uploader based on input parameters"""
-    uploader = UPLOADERS[platform](work_id, export_url)
+    uploader = UPLOADERS[platform](work_id, export_url, __version__)
     uploader.run()
 
 

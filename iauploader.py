@@ -93,6 +93,8 @@ class IAUploader(Uploader):
             'language': languages,
             'issn': issns,
             'volume': volume,
+            # Custom field helping future users determine what logic was used to create an upload
+            'thoth-dissemination-service': self.version,
         }
 
         return ia_metadata

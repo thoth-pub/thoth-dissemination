@@ -13,11 +13,12 @@ from thothlibrary import ThothClient
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
-    def __init__(self, work_id, export_url):
+    def __init__(self, work_id, export_url, version):
         """Save argument values and retrieve and store JSON-formatted work metadata"""
         self.work_id = work_id
         self.export_url = export_url
         self.metadata = self.get_thoth_metadata()
+        self.version = version
 
     def run(self):
         """Execute upload logic specific to the selected platform"""
