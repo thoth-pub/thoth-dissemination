@@ -5,9 +5,10 @@ Retrieve and disseminate files and metadata to Internet Archive
 
 import logging
 import sys
-from internetarchive import upload
+from internetarchive import get_item, upload
 from io import BytesIO
 from os import environ
+from requests import exceptions
 from uploader import Uploader
 
 
@@ -20,22 +21,49 @@ class IAUploader(Uploader):
         # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
         filename = self.work_id
 
+        # Ensure that this identifier is available in the Archive
+        # (this will also check that the identifier is in a valid format,
+        # although all Thoth IDs should be acceptable)
+        if not get_item(filename).identifier_available():
+            logging.error(
+                'Cannot upload to Internet Archive: an item with this identifier already exists')
+            sys.exit(1)
+
+        # Include full work metadata file in JSON format,
+        # as a supplement to filling out Internet Archive metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         pdf_bytes = self.get_pdf_bytes()
 
         # Convert Thoth work metadata into Internet Archive format
         ia_metadata = self.parse_metadata()
 
-        responses = upload(
-            identifier=filename,
-            files={
-                '{}.pdf'.format(filename): BytesIO(pdf_bytes),
-                '{}.json'.format(filename): BytesIO(metadata_bytes),
-            },
-            metadata=ia_metadata,
-            access_key=environ.get('ia_s3_access'),
-            secret_key=environ.get('ia_s3_secret'),
-        )
+        try:
+            responses = upload(
+                identifier=filename,
+                files={
+                    '{}.pdf'.format(filename): BytesIO(pdf_bytes),
+                    '{}.json'.format(filename): BytesIO(metadata_bytes),
+                },
+                metadata=ia_metadata,
+                access_key=environ.get('ia_s3_access'),
+                secret_key=environ.get('ia_s3_secret'),
+                retries=2,
+                retries_sleep=30,
+                verify=True,
+            )
+        except exceptions.HTTPError:
+            # This usually occurs due to supplying incorrect credentials.
+            # internetarchive module outputs its own ERROR log before we catch this exception,
+            # so no need to repeat the error text. As a future enhancement,
+            # we could filter out these third-party logs and update this message.
+            logging.error(
+                'Error uploading to Internet Archive: credentials may be incorrect')
+            sys.exit(1)
+
+        if len(responses) == 0:
+            logging.error(
+                'Error uploading to Internet Archive: no response received from server')
+            sys.exit(1)
 
         for response in responses:
             if response.status_code != 200:
@@ -71,6 +99,7 @@ class IAUploader(Uploader):
         ia_metadata = {
             # All fields are non-mandatory
             # Any None values or empty lists are ignored by IA on ingest
+            'collection': 'thoth-archiving-network',
             'title': work_metadata.get('fullTitle'),
             'publisher': self.get_publisher_name(),
             'creator': creators,
@@ -93,6 +122,9 @@ class IAUploader(Uploader):
             'language': languages,
             'issn': issns,
             'volume': volume,
+            # Custom field: this data should already be included in the formatted
+            # metadata file, but including it here may be beneficial for searching
+            'thoth-work-id': self.work_id,
             # Custom field helping future users determine what logic was used to create an upload
             'thoth-dissemination-service': self.version,
         }

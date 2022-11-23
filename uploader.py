@@ -7,7 +7,7 @@ import logging
 import sys
 import json
 import requests
-from thothlibrary import ThothClient
+from thothlibrary import ThothClient, ThothError
 
 
 class Uploader():
@@ -27,7 +27,13 @@ class Uploader():
     def get_thoth_metadata(self):
         """Retrieve JSON-formatted work metadata from Thoth GraphQL API via Thoth Client"""
         thoth = ThothClient()
-        metadata_string = thoth.work_by_id(self.work_id, raw=True)
+        try:
+            metadata_string = thoth.work_by_id(self.work_id, raw=True)
+        except ThothError:
+            logging.error(
+                # Don't include full error text as it's lengthy (contains full query/response)
+                'Error retrieving work metadata from GraphQL API: work ID may be incorrect')
+            sys.exit(1)
 
         # Convert string value to JSON value
         try:
