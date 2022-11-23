@@ -7,17 +7,18 @@ import logging
 import sys
 import json
 import requests
-from thothlibrary import ThothClient
+from thothlibrary import ThothClient, ThothError
 
 
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
-    def __init__(self, work_id, export_url):
+    def __init__(self, work_id, export_url, version):
         """Save argument values and retrieve and store JSON-formatted work metadata"""
         self.work_id = work_id
         self.export_url = export_url
         self.metadata = self.get_thoth_metadata()
+        self.version = version
 
     def run(self):
         """Execute upload logic specific to the selected platform"""
@@ -26,7 +27,13 @@ class Uploader():
     def get_thoth_metadata(self):
         """Retrieve JSON-formatted work metadata from Thoth GraphQL API via Thoth Client"""
         thoth = ThothClient()
-        metadata_string = thoth.work_by_id(self.work_id, raw=True)
+        try:
+            metadata_string = thoth.work_by_id(self.work_id, raw=True)
+        except ThothError:
+            logging.error(
+                # Don't include full error text as it's lengthy (contains full query/response)
+                'Error retrieving work metadata from GraphQL API: work ID may be incorrect')
+            sys.exit(1)
 
         # Convert string value to JSON value
         try:
@@ -99,6 +106,7 @@ class Uploader():
 
         return cover_url
 
+    # Function not currently used
     def get_pb_isbn(self):
         """Extract paperback ISBN from work metadata"""
         pb_isbn = None

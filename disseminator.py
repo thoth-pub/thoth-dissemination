@@ -6,6 +6,8 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
+__version__ = 'unversioned'
+
 import argparse
 import logging
 from dotenv import load_dotenv
@@ -13,11 +15,13 @@ from pathlib import Path
 from iauploader import IAUploader
 from oapenuploader import OAPENUploader
 from souploader import SOUploader
+from swordv2uploader import SwordV2Uploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
     "OAPEN": OAPENUploader,
     "ScienceOpen": SOUploader,
+    "SWORD": SwordV2Uploader,
 }
 
 ARGS = [
@@ -45,7 +49,8 @@ ARGS = [
 
 def run(work_id, platform, export_url):
     """Execute a dissemination uploader based on input parameters"""
-    uploader = UPLOADERS[platform](work_id, export_url)
+    logging.info('Beginning upload of {} to {}'.format(work_id, platform))
+    uploader = UPLOADERS[platform](work_id, export_url, __version__)
     uploader.run()
 
 

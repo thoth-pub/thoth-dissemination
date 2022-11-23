@@ -5,9 +5,10 @@ Retrieve and disseminate files and metadata to Internet Archive
 
 import logging
 import sys
-from internetarchive import upload
+from internetarchive import get_item, upload
 from io import BytesIO
 from os import environ
+from requests import exceptions
 from uploader import Uploader
 
 
@@ -17,25 +18,52 @@ class IAUploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to Internet Archive"""
 
-        # Identifier and filenames TBD: use paperback ISBN for now
-        filename = self.get_pb_isbn()
-        # Metadata file format TBD: use CSV for now
-        metadata_bytes = self.get_formatted_metadata('csv::thoth')
+        # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
+        filename = self.work_id
+
+        # Ensure that this identifier is available in the Archive
+        # (this will also check that the identifier is in a valid format,
+        # although all Thoth IDs should be acceptable)
+        if not get_item(filename).identifier_available():
+            logging.error(
+                'Cannot upload to Internet Archive: an item with this identifier already exists')
+            sys.exit(1)
+
+        # Include full work metadata file in JSON format,
+        # as a supplement to filling out Internet Archive metadata fields
+        metadata_bytes = self.get_formatted_metadata('json::thoth')
         pdf_bytes = self.get_pdf_bytes()
 
         # Convert Thoth work metadata into Internet Archive format
         ia_metadata = self.parse_metadata()
 
-        responses = upload(
-            identifier=filename,
-            files={
-                '{}.pdf'.format(filename): BytesIO(pdf_bytes),
-                '{}.csv'.format(filename): BytesIO(metadata_bytes),
-            },
-            metadata=ia_metadata,
-            access_key=environ.get('ia_s3_access'),
-            secret_key=environ.get('ia_s3_secret'),
-        )
+        try:
+            responses = upload(
+                identifier=filename,
+                files={
+                    '{}.pdf'.format(filename): BytesIO(pdf_bytes),
+                    '{}.json'.format(filename): BytesIO(metadata_bytes),
+                },
+                metadata=ia_metadata,
+                access_key=environ.get('ia_s3_access'),
+                secret_key=environ.get('ia_s3_secret'),
+                retries=2,
+                retries_sleep=30,
+                verify=True,
+            )
+        except exceptions.HTTPError:
+            # This usually occurs due to supplying incorrect credentials.
+            # internetarchive module outputs its own ERROR log before we catch this exception,
+            # so no need to repeat the error text. As a future enhancement,
+            # we could filter out these third-party logs and update this message.
+            logging.error(
+                'Error uploading to Internet Archive: credentials may be incorrect')
+            sys.exit(1)
+
+        if len(responses) == 0:
+            logging.error(
+                'Error uploading to Internet Archive: no response received from server')
+            sys.exit(1)
 
         for response in responses:
             if response.status_code != 200:
@@ -52,7 +80,7 @@ class IAUploader(Uploader):
         # Repeatable fields such as 'creator', 'isbn', 'subject'
         # can be set by submitting a list of values
         creators = [n.get('fullName')
-                    for n in work_metadata.get('contributions')]
+                    for n in work_metadata.get('contributions') if n.get('mainContribution') == True]
         # IA metadata schema suggests hyphens should be omitted,
         # although including them does not cause any errors
         isbns = [n.get('isbn').replace(
@@ -61,10 +89,18 @@ class IAUploader(Uploader):
         # IA doesn't set a standard so representations vary across the archive
         subjects = [n.get('subjectCode')
                     for n in work_metadata.get('subjects')]
+        languages = [n.get('languageCode')
+                     for n in work_metadata.get('languages')]
+        issns = [n.get('series').get(key) for n in work_metadata.get(
+            'issues') for key in ['issnPrint', 'issnDigital']]
+        # IA only accepts a single volume number
+        volume = next(iter([str(n.get('issueOrdinal'))
+                      for n in work_metadata.get('issues')]), None)
         ia_metadata = {
             # All fields are non-mandatory
             # Any None values or empty lists are ignored by IA on ingest
-            'title': work_metadata.get('title'),
+            'collection': 'thoth-archiving-network',
+            'title': work_metadata.get('fullTitle'),
             'publisher': self.get_publisher_name(),
             'creator': creators,
             # IA requires date in YYYY-MM-DD format, as output by Thoth
@@ -80,7 +116,17 @@ class IAUploader(Uploader):
             # IA has no dedicated DOI field but 'source' is
             # "[u]sed to signify where a piece of media originated"
             'source': work_metadata.get('doi'),
+            # https://help.archive.org/help/uploading-a-basic-guide/ requests no more than
+            # 10 subject tags, but additional tags appear to be accepted without error
             'subject': subjects,
+            'language': languages,
+            'issn': issns,
+            'volume': volume,
+            # Custom field: this data should already be included in the formatted
+            # metadata file, but including it here may be beneficial for searching
+            'thoth-work-id': self.work_id,
+            # Custom field helping future users determine what logic was used to create an upload
+            'thoth-dissemination-service': self.version,
         }
 
         return ia_metadata
