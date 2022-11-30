@@ -1,0 +1,35 @@
+name: test-workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      workId:
+        description: 'Thoth work ID'
+        required: true
+
+env:
+  TEST_TAG: test
+
+jobs:
+  test_workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Do something simple
+        run: |
+          echo "Work ID: ${{ github.event.inputs.workId }}"
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v2
+        with:
+          push: false
+          load: true
+          tags: ${{ env.TEST_TAG }}
+
+      - name: Run disseminator using Docker image
+        run: |
+          docker run --rm ${{ env.TEST_TAG }} \
+            ./disseminator.py --work ${{ github.event.inputs.workId }} \
+            --platform InternetArchive
