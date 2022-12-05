@@ -17,6 +17,7 @@ jobs:
       - name: Do something simple
         run: |
           echo "Work ID: ${{ github.event.inputs.workId }}"
+          echo "Test secret: ${{ secrets.TEST_SECRET }}"
 
       - name: Checkout
         uses: actions/checkout@v2
@@ -30,6 +31,9 @@ jobs:
 
       - name: Run disseminator using Docker image
         run: |
-          docker run --rm ${{ env.TEST_TAG }} \
+          docker run \
+            --env ia_s3_access=${{ secrets.TEST_SECRET }} \
+            --env ia_s3_secret=${{ secrets.TEST_SECRET }} \
+            --rm ${{ env.TEST_TAG }} \
             ./disseminator.py --work ${{ github.event.inputs.workId }} \
             --platform InternetArchive
