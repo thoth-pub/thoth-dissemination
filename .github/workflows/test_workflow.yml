@@ -26,7 +26,6 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           push: false
-          load: true
           tags: ${{ env.TEST_TAG }}
 
       - name: Run disseminator using Docker image
