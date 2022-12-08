@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        work-id: ${{ github.event.inputs.workIds }}
+        work-id: ${{ fromJSON(github.event.inputs.workIds) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v2
