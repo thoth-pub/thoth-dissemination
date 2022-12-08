@@ -1,4 +1,11 @@
-name: test-workflow
+# Purpose: manual upload of a single work from Thoth to Internet Archive.
+# Work must have a valid URL supplied as the PDF Publication Canonical Location.
+# Work must not have previously been uploaded to Internet Archive.
+# IA credentials for a user with write permissions to the Thoth Archiving Network
+# collection (e.g. thoth_pub) must be present as repository secrets
+# named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
+# It is advised not to upload until the work is published and all metadata finalised.
+name: manual-ia-upload
 
 on:
   workflow_dispatch:
@@ -8,17 +15,12 @@ on:
         required: true
 
 env:
-  TEST_TAG: test
+  DOCKER_TAG: disseminator
 
 jobs:
   test_workflow:
     runs-on: ubuntu-latest
     steps:
-      - name: Do something simple
-        run: |
-          echo "Work ID: ${{ github.event.inputs.workId }}"
-          echo "Test secret: ${{ secrets.TEST_SECRET }}"
-
       - name: Checkout
         uses: actions/checkout@v2
 
@@ -26,13 +28,13 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           push: false
-          tags: ${{ env.TEST_TAG }}
+          tags: ${{ env.DOCKER_TAG }}
 
       - name: Run disseminator using Docker image
         run: |
           docker run \
-            --env ia_s3_access=${{ secrets.TEST_SECRET }} \
-            --env ia_s3_secret=${{ secrets.TEST_SECRET }} \
-            --rm ${{ env.TEST_TAG }} \
+            --env ia_s3_access=${{ secrets.IA_S3_ACCESS }} \
+            --env ia_s3_secret=${{ secrets.IA_S3_SECRET }} \
+            --rm ${{ env.DOCKER_TAG }} \
             ./disseminator.py --work ${{ github.event.inputs.workId }} \
             --platform InternetArchive
