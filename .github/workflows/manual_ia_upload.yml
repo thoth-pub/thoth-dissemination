@@ -1,0 +1,40 @@
+# Purpose: manual upload of a single work from Thoth to Internet Archive.
+# Work must have a valid URL supplied as the PDF Publication Canonical Location.
+# Work must not have previously been uploaded to Internet Archive.
+# IA credentials for a user with write permissions to the Thoth Archiving Network
+# collection (e.g. thoth_pub) must be present as repository secrets
+# named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
+# It is advised not to upload until the work is published and all metadata finalised.
+name: manual-ia-upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      workId:
+        description: 'Thoth work ID'
+        required: true
+
+env:
+  DOCKER_TAG: disseminator
+
+jobs:
+  upload_to_ia:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v2
+        with:
+          push: false
+          tags: ${{ env.DOCKER_TAG }}
+
+      - name: Run disseminator using Docker image
+        run: |
+          docker run \
+            --env ia_s3_access=${{ secrets.IA_S3_ACCESS }} \
+            --env ia_s3_secret=${{ secrets.IA_S3_SECRET }} \
+            --rm ${{ env.DOCKER_TAG }} \
+            ./disseminator.py --work ${{ github.event.inputs.workId }} \
+            --platform InternetArchive
