@@ -39,7 +39,7 @@ class IAUploader(Uploader):
 
         try:
             responses = upload(
-                identifier=filename+'teststring',
+                identifier=filename,
                 files={
                     '{}.pdf'.format(filename): BytesIO(pdf_bytes),
                     '{}.json'.format(filename): BytesIO(metadata_bytes),
@@ -99,7 +99,7 @@ class IAUploader(Uploader):
         ia_metadata = {
             # All fields are non-mandatory
             # Any None values or empty lists are ignored by IA on ingest
-            'collection': 'test_collection',
+            'collection': 'thoth-archiving-network',
             'title': work_metadata.get('fullTitle'),
             'publisher': self.get_publisher_name(),
             'creator': creators,
