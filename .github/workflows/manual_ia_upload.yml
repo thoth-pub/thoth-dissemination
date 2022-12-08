@@ -18,12 +18,8 @@ env:
   DOCKER_TAG: disseminator
 
 jobs:
-  upload_to_ia:
+  build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        work-id: ${{ fromJSON(github.event.inputs.workIds) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -33,9 +29,32 @@ jobs:
         with:
           push: false
           tags: ${{ env.DOCKER_TAG }}
+          outputs: type=docker,dest=/tmp/${{ env.DOCKER_TAG }}.tar
+
+      - name: Upload image as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.DOCKER_TAG }}
+          path: /tmp/${{ env.DOCKER_TAG }}.tar
+          retention-days: 1
+
+  upload_to_ia:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        work-id: ${{ fromJSON(github.event.inputs.workIds) }}
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ env.DOCKER_TAG }}
+          path: /tmp
 
       - name: Run disseminator using Docker image
         run: |
+          docker load --input /tmp/${{ env.DOCKER_TAG }}.tar
           docker run \
             --env ia_s3_access=${{ secrets.IA_S3_ACCESS }} \
             --env ia_s3_secret=${{ secrets.IA_S3_SECRET }} \
