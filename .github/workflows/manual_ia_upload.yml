@@ -1,4 +1,4 @@
-# Purpose: manual upload of a single work from Thoth to Internet Archive.
+# Purpose: manual upload of one or more works from Thoth to Internet Archive.
 # Work must have a valid URL supplied as the PDF Publication Canonical Location.
 # Work must not have previously been uploaded to Internet Archive.
 # IA credentials for a user with write permissions to the Thoth Archiving Network
@@ -10,8 +10,8 @@ name: manual-ia-upload
 on:
   workflow_dispatch:
     inputs:
-      workId:
-        description: 'Thoth work ID'
+      workIds:
+        description: 'Thoth work IDs in array format, e.g. [id1, id2]'
         required: true
 
 env:
@@ -20,6 +20,10 @@ env:
 jobs:
   upload_to_ia:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        work-id: ${{ github.event.inputs.workIds }}
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -36,5 +40,5 @@ jobs:
             --env ia_s3_access=${{ secrets.IA_S3_ACCESS }} \
             --env ia_s3_secret=${{ secrets.IA_S3_SECRET }} \
             --rm ${{ env.DOCKER_TAG }} \
-            ./disseminator.py --work ${{ github.event.inputs.workId }} \
+            ./disseminator.py --work ${{ matrix.work-id }} \
             --platform InternetArchive
