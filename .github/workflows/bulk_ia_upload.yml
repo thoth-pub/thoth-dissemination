@@ -10,8 +10,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  bulk_ia_upload:
+  run-script:
     runs-on: ubuntu-latest
+    outputs:
+      NEW_IDS: ${{ steps.get-ids.outputs.NEW_IDS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -28,7 +30,8 @@ jobs:
           output=$(python obtain_new_ids.py)
           echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
 
-      - name: Upload all supplied IDs to Internet Archive
-        uses: ./.github/workflows/ia_upload.yml
-        with:
-          work-ids: ${{ steps.get-ids.outputs.NEW_IDS }}
+  bulk_ia_upload:
+    needs: run-script
+    uses: ./.github/workflows/ia_upload.yml
+    with:
+      work-ids: ${{ needs.run-script.outputs.NEW_IDS }}

@@ -16,9 +16,6 @@ on:
 
 jobs:
   manual_ia_upload:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Upload all supplied IDs to Internet Archive
-        uses: ./.github/workflows/ia_upload.yml
-        with:
-          work-ids: ${{ github.event.inputs.workIds }}
+    uses: ./.github/workflows/ia_upload.yml
+    with:
+      work-ids: ${{ github.event.inputs.workIds }}
