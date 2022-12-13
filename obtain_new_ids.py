@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Acquire a newline-separated list of work IDs to be uploaded to Internet Archive.
+Acquire a list of work IDs to be uploaded to Internet Archive.
 Purpose: automatic upload at regular intervals of newly-published OBP and punctum works.
 Based on `iabulkupload/obtain_work_ids.py`.
 """
@@ -33,7 +33,8 @@ thoth_ids = [n.workId for n in thoth_works]
 # We only need the identifier; this matches the Thoth work ID.
 # If the collection later grows to include more publishers, we may want to
 # additionally filter the query to only return OBP and punctum works.
-ia_works = search_items(query='collection:thoth-archiving-network', fields=['identifier'])
+ia_works = search_items(
+    query='collection:thoth-archiving-network', fields=['identifier'])
 
 # Extract the IA identifiers from the set of results
 ia_ids = [n['identifier'] for n in ia_works]
