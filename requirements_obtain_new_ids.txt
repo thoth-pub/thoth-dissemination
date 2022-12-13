@@ -1,0 +1,2 @@
+internetarchive==3.0.2
+thothlibrary==0.16.0
