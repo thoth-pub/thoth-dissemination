@@ -10,10 +10,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  bulk_ia_upload:
     runs-on: ubuntu-latest
-    outputs:
-      NEW_IDS: ${{ steps.get-ids.outputs.NEW_IDS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -25,26 +23,12 @@ jobs:
 
       - name: Get list of work IDs using Python script
         id: get-ids
-        # pip install command will be partially re-run when building Docker image in later step
         run: |
           pip install -r requirements_obtain_new_ids.txt
           output=$(python obtain_new_ids.py)
           echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
 
-  upload_to_ia:
-    runs-on: ubuntu-latest
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        work-id: ${{ fromJSON(needs.build.outputs.NEW_IDS) }}
-    steps:
-      - name: Run disseminator using Dockerhub image
-        uses: docker://openbookpublishers/thoth-dissemination:latest
+      - name: Upload all supplied IDs to Internet Archive
+        uses: ./.github/workflows/ia_upload.yml
         with:
-          entrypoint: /disseminator.py
-          ia_s3_access: ${{ secrets.IA_S3_ACCESS }}
-          ia_s3_secret: ${{ secrets.IA_S3_SECRET }}
-          args: >-
-            --work ${{ matrix.work-id }}
-            --platform InternetArchive
+          work-ids: ${{ steps.get-ids.outputs.NEW_IDS }}

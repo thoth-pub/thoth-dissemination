@@ -15,19 +15,10 @@ on:
         required: true
 
 jobs:
-  upload_to_ia:
+  manual_ia_upload:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        work-id: ${{ fromJSON(github.event.inputs.workIds) }}
     steps:
-      - name: Run disseminator using Dockerhub image
-        uses: docker://openbookpublishers/thoth-dissemination:latest
+      - name: Upload all supplied IDs to Internet Archive
+        uses: ./.github/workflows/ia_upload.yml
         with:
-          entrypoint: /disseminator.py
-          ia_s3_access: ${{ secrets.IA_S3_ACCESS }}
-          ia_s3_secret: ${{ secrets.IA_S3_SECRET }}
-          args: >-
-            --work ${{ matrix.work-id }}
-            --platform InternetArchive
+          work-ids: ${{ github.event.inputs.workIds }}
