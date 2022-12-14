@@ -20,8 +20,6 @@ class OAPENUploader(Uploader):
 
         Only the OAPEN ONIX file is required, as OAPEN can retrieve
         content files from the links contained within it.
-
-        Separate folders for OAPEN and DOAB: upload one copy to each.
         """
 
         metadata_bytes = self.get_formatted_metadata('onix_3.0::oapen')
@@ -34,20 +32,19 @@ class OAPENUploader(Uploader):
                 user=environ.get('oapen_ftp_user'),
                 passwd=environ.get('oapen_ftp_pw'),
             ) as ftp:
-                for dir in ['OAPEN', 'DOAB']:
-                    try:
-                        ftp.cwd('/{}'.format(dir))
-                    except FileNotFoundError:
-                        logging.error(
-                            'Could not find folder "{}" on OAPEN FTP server'.format(dir))
-                        sys.exit(1)
-                    try:
-                        ftp.storbinary('STOR {}.xml'.format(
-                            filename), BytesIO(metadata_bytes))
-                    except error_perm as error:
-                        logging.error(
-                            'Error uploading to OAPEN FTP server: {}'.format(error))
-                        sys.exit(1)
+                try:
+                    ftp.cwd('/OAPEN')
+                except FileNotFoundError:
+                    logging.error(
+                        'Could not find folder "OAPEN" on OAPEN FTP server')
+                    sys.exit(1)
+                try:
+                    ftp.storbinary('STOR {}.xml'.format(
+                        filename), BytesIO(metadata_bytes))
+                except error_perm as error:
+                    logging.error(
+                        'Error uploading to OAPEN FTP server: {}'.format(error))
+                    sys.exit(1)
         except error_perm as error:
             logging.error(
                 'Could not connect to OAPEN FTP server: {}'.format(error))

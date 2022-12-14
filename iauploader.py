@@ -5,10 +5,10 @@ Retrieve and disseminate files and metadata to Internet Archive
 
 import logging
 import sys
-from internetarchive import get_item, upload
+from internetarchive import get_item, upload, exceptions as ia_except
 from io import BytesIO
 from os import environ
-from requests import exceptions
+from requests import exceptions as req_except
 from uploader import Uploader
 
 
@@ -51,11 +51,17 @@ class IAUploader(Uploader):
                 retries_sleep=30,
                 verify=True,
             )
-        except exceptions.HTTPError:
-            # This usually occurs due to supplying incorrect credentials.
+        # Empty access_key and/or secret_key triggers an AuthenticationError.
+        # Incorrect access_key and/or secret_key triggers an HTTPError.
+        except ia_except.AuthenticationError:
+            logging.error(
+                'Error uploading to Internet Archive: credentials missing from config.env')
+            sys.exit(1)
+        except req_except.HTTPError:
             # internetarchive module outputs its own ERROR log before we catch this exception,
             # so no need to repeat the error text. As a future enhancement,
-            # we could filter out these third-party logs and update this message.
+            # we could filter out these third-party logs (along with the INFO logs
+            # which are output during the upload process) and update this message.
             logging.error(
                 'Error uploading to Internet Archive: credentials may be incorrect')
             sys.exit(1)
