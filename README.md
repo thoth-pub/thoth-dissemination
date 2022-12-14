@@ -28,6 +28,6 @@ docker run -rm ${imagename} ./disseminator.py --work ${work_id} --platform ${pla
 ### Options
 `--work` = Thoth ID of work to be disseminated
 
-`--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`)
+`--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`, `Figshare`)
 
 See also `--help`.
