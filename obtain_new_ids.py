@@ -42,7 +42,8 @@ publishers = json.dumps(publishers_env)
 
 # Obtain all active (published) works listed in Thoth from the selected publishers.
 # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
-# but excludes Chapters and Book Sets.
+# but excludes Chapters and Book Sets. `bookIds` variant only retrieves their workIds.
+# thoth_works = thoth.bookIds(
 thoth_works = thoth.books(
     # The default limit is 100; publishers' back catalogues may be bigger than that
     limit='9999',
@@ -52,7 +53,7 @@ thoth_works = thoth.books(
     publishers=publishers,
 )
 
-# Extract the Thoth work IDs from the set of results
+# Extract the Thoth work ID strings from the set of results
 thoth_ids = [n.workId for n in thoth_works]
 
 # Obtain all works listed in the Internet Archive's Thoth Archiving Network collection.
