@@ -9,9 +9,12 @@ Based on `iabulkupload/obtain_work_ids.py`.
 from internetarchive import search_items
 from thothlibrary import errors, ThothClient
 import json
+import logging
 from os import environ
 import sys
 
+logging.basicConfig(level=logging.INFO,
+                    format='%(levelname)s:%(asctime)s: %(message)s')
 thoth = ThothClient()
 
 # Check that a list of IDs of publishers whose works should be uploaded
@@ -19,13 +22,14 @@ thoth = ThothClient()
 try:
     publishers_env = json.loads(environ.get('ENV_PUBLISHERS'))
 except:
-    print("ERROR: Failed to retrieve publisher IDs from environment variable")
+    logging.error('Failed to retrieve publisher IDs from environment variable')
     sys.exit(1)
 
 # Test that list is not empty - if so, the Thoth client call would erroneously
 # retrieve the full list of works from all publishers
 if len(publishers_env) < 1:
-    print("ERROR: No publisher IDs found in environment variable: list is empty")
+    logging.error(
+        'No publisher IDs found in environment variable: list is empty')
     sys.exit(1)
 
 # Test that all supplied publisher IDs are valid - if a mistyped ID was passed to the Thoth
@@ -35,7 +39,7 @@ for publisher in publishers_env:
         thoth.publisher(publisher)
     except errors.ThothError:
         # Don't include full error text as it's lengthy (contains full query/response)
-        print("ERROR: No record found for publisher {}: ID may be incorrect".format(
+        logging.error('No record found for publisher {}: ID may be incorrect'.format(
             publisher))
         sys.exit(1)
 
@@ -66,7 +70,8 @@ if environ.get('ENV_EXCEPTIONS') is not None:
     except:
         # No need to early-exit; current use case for exceptions list is
         # just to avoid attempting uploads which are expected to fail
-        print("WARNING: Failed to retrieve excepted works from environment variable")
+        logging.warning(
+            'Failed to retrieve excepted works from environment variable')
 
 # Obtain all works listed in the Internet Archive's Thoth Archiving Network collection.
 # We only need the identifier; this matches the Thoth work ID.
