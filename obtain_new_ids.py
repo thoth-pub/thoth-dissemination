@@ -8,21 +8,37 @@ Based on `iabulkupload/obtain_work_ids.py`.
 # Both third-party packages already included in thoth-dissemination/requirements.txt
 from internetarchive import search_items
 from thothlibrary import errors, ThothClient
+import json
+from os import environ
 import sys
 
 thoth = ThothClient()
 
-# Obtain IDs of publishers whose works should be uploaded from arguments to script
-# Test that all are valid and early-exit if not
-for publisher in sys.argv[1:]:
+# Check that a list of IDs of publishers whose works should be uploaded
+# has been provided as a JSON-formatted environment variable
+try:
+    publishers_env = json.loads(environ.get('ENV_PUBLISHERS'))
+except:
+    print("ERROR: Failed to retrieve publisher IDs from environment variable")
+    sys.exit(1)
+
+# Test that list is not empty - if so, the Thoth client call would erroneously
+# retrieve the full list of works from all publishers
+if len(publishers_env) < 1:
+    print("ERROR: No publisher IDs found in environment variable: list is empty")
+    sys.exit(1)
+
+# Test that all supplied publisher IDs are valid - if a mistyped ID was passed to the Thoth
+# client call, it would behave the same as a valid ID for which no relevant works exist
+for publisher in publishers_env:
     try:
         thoth.publisher(publisher)
     except errors.ThothError:
         # Don't include full error text as it's lengthy (contains full query/response)
-        print("No record found for publisher {}: ID may be incorrect".format(publisher))
+        print("ERROR: No record found for publisher {}: ID may be incorrect".format(publisher))
         sys.exit(1)
 
-publishers = '["' + '", "'.join(sys.argv[1:]) + '"]'
+publishers = json.dumps(publishers_env)
 
 # Obtain all active (published) works listed in Thoth from the selected publishers.
 # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
