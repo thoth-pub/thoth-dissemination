@@ -34,6 +34,9 @@ jobs:
           pip install -r requirements_obtain_new_ids.txt
           output=$(python obtain_new_ids.py)
           echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
+        env:
+          ENV_PUBLISHERS: ${{ vars.ENV_PUBLISHERS }}
+          ENV_EXCEPTIONS: ${{ vars.ENV_EXCEPTIONS }}
 
   bulk_ia_upload:
     needs: run-script
