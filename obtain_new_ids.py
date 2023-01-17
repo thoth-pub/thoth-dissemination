@@ -35,7 +35,8 @@ for publisher in publishers_env:
         thoth.publisher(publisher)
     except errors.ThothError:
         # Don't include full error text as it's lengthy (contains full query/response)
-        print("ERROR: No record found for publisher {}: ID may be incorrect".format(publisher))
+        print("ERROR: No record found for publisher {}: ID may be incorrect".format(
+            publisher))
         sys.exit(1)
 
 publishers = json.dumps(publishers_env)
