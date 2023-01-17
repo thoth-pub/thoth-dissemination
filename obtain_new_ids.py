@@ -56,6 +56,17 @@ thoth_works = thoth.books(
 # Extract the Thoth work ID strings from the set of results
 thoth_ids = [n.workId for n in thoth_works]
 
+# If a list of exceptions has been provided, remove these from the results
+# (e.g. works that are ineligible for upload due to not being available as PDFs)
+if environ.get('ENV_EXCEPTIONS') is not None:
+    try:
+        exceptions = json.loads(environ.get('ENV_EXCEPTIONS'))
+        thoth_ids = set(thoth_ids).difference(exceptions)
+    except:
+        # No need to early-exit; current use case for exceptions list is
+        # just to avoid attempting uploads which are expected to fail
+        print("WARNING: Failed to retrieve excepted works from environment variable")
+
 # Obtain all works listed in the Internet Archive's Thoth Archiving Network collection.
 # We only need the identifier; this matches the Thoth work ID.
 # If the collection later grows to include more publishers, we may want to
@@ -68,10 +79,8 @@ ia_ids = [n['identifier'] for n in ia_works]
 
 # The set of IDs of works that need to be uploaded to the Internet Archive
 # is those which appear as published for the selected publishers in Thoth
-# but do not appear as already uploaded to the IA collection.
-# Note that if any work has been determined as ineligible for upload
-# (e.g. due to not being available as a PDF), it will continue to appear
-# in this list every time this process is run.
+# but do not appear as already uploaded to the IA collection
+# (minus any specified exceptions).
 new_ids = list(set(thoth_ids).difference(ia_ids))
 
 # Output this list (as an array of comma-separated, quote-enclosed strings)
