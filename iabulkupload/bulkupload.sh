@@ -8,6 +8,8 @@
 # Outputs: 1) list of successfully uploaded IDs to file ./uploaded.txt
 #          2) Dissemination Service log messages to stderr
 # To send log messages to a file: ./bulkupload.sh [idfile] 2>> [logfile]
+#
+# NOTE accepting/outputting streams rather than files would be preferable
 
 # Name of file in current directory where work IDs of
 # successfully uploaded items will be saved

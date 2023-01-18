@@ -10,6 +10,7 @@ thoth = ThothClient()
 
 # Short names and Thoth IDs of Open Book Publishers and punctum respectively
 # publishers = [("obp", "85fd969a-a16c-480b-b641-cb9adf979c3b"), ("punctum", "9c41b13c-cecc-4f6a-a151-be4682915ef5")]
+# NOTE passing these in as arguments would be preferable - cf obtain_new_ids.py
 publishers = [("example1", "example-ID-1"), ("example2", "example-ID-2")]
 
 for publisher in publishers:
@@ -33,5 +34,6 @@ for publisher in publishers:
     ids_list = '\n'.join(work_ids)
 
     # Write the list to a file in the current directory named "[publisher]_list.txt"
+    # NOTE outputting a stream would be preferable - cf obtain_new_ids.py
     with open('{}_list.txt'.format(publisher[0]), 'w') as output:
         output.write(f'{ids_list}\n')
