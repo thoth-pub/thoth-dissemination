@@ -48,8 +48,7 @@ publishers = json.dumps(publishers_env)
 # Obtain all active (published) works listed in Thoth from the selected publishers.
 # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
 # but excludes Chapters and Book Sets. `bookIds` variant only retrieves their workIds.
-# thoth_works = thoth.bookIds(
-thoth_works = thoth.books(
+thoth_works = thoth.bookIds(
     # The default limit is 100; publishers' back catalogues may be bigger than that
     limit='9999',
     work_status='ACTIVE',
