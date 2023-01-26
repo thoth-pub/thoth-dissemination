@@ -21,3 +21,14 @@ docker build . -t testdissem
 ```
 7. Check `./disseminator.log` for any `ERROR` messages. If necessary, cancel the upload process using `ctrl+C`. Once errors are resolved, the upload process can be re-started (successfully uploaded work IDs will be skipped).
 8. Once upload process completes, check that all work IDs present in the `./[publisher]_list.txt` files also appear in `./uploaded.txt`.
+
+#### Alternative credentials handling
+Instead of filling out `../config.env` in step 2, credentials can be set as environment variables if some changes are made to `./bulkupload.sh`. In place of line 30 (`docker run --rm testdissem ./disseminator.py --work $work_id --platform InternetArchive`), do either of the following:
+- pass the credentials directly to the docker container as environment variables:
+```
+docker run --env ia_s3_secret=[xxx] --env ia_s3_access=[yyy] --rm testdissem ./disseminator.py --work $work_id --platform InternetArchive
+```
+- use the undockerised run method given in the comment in line 33, having set the credentials as environment variables in the shell (`export ia_s3_secret=[xxx]; export ia_s3_access=[yyy]`):
+```
+python3 ../disseminator.py --work $work_id --platform InternetArchive
+```
