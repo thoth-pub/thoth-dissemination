@@ -106,7 +106,6 @@ class Uploader():
 
         return cover_url
 
-    # Function not currently used
     def get_pb_isbn(self):
         """Extract paperback ISBN from work metadata"""
         pb_isbn = None
@@ -142,7 +141,9 @@ class Uploader():
 
         if expected_format is not None:
             # Attempt a HEAD request to check validity before downloading full data
-            url_headers = requests.head(url)
+            # Other request methods follow redirects by default, but we need to
+            # set this behaviour explicitly for `head()`
+            url_headers = requests.head(url, allow_redirects=True)
 
             if url_headers.status_code != 200:
                 logging.error('Error retrieving data from "{}": {}'.format(

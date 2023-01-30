@@ -21,7 +21,7 @@ class SOUploader(Uploader):
         Upload work in required format to ScienceOpen.
 
         Standard instructions:
-        - Create new directory, named with today's date (YYYY-MM-DD), in 'UPLOAD_TO_THIS_DIRECTORY'
+        - Create new directory, named with today's date (YYYY-MM-DD), in 'UPLOAD_TO_THIS_DIRECTORY/books'
         - Add one zip file to this directory for each work in this upload batch
         - Zip file should contain metadata and all relevant content files
 
@@ -35,6 +35,7 @@ class SOUploader(Uploader):
         publisher = self.get_publisher_name()
         filename = self.get_pb_isbn()
         root_dir = 'UPLOAD_TO_THIS_DIRECTORY'
+        collection_dir = 'books'
         new_dir = date.today().isoformat()
 
         # Metadata file format TBD: use CSV for now
@@ -68,7 +69,13 @@ class SOUploader(Uploader):
                     sftp.cwd(root_dir)
                 except FileNotFoundError:
                     logging.error(
-                        'Could not find folder UPLOAD_TO_THIS_DIRECTORY on ScienceOpen SFTP server')
+                        'Could not find folder "UPLOAD_TO_THIS_DIRECTORY" on ScienceOpen SFTP server')
+                    sys.exit(1)
+                try:
+                    sftp.cwd(collection_dir)
+                except FileNotFoundError:
+                    logging.error(
+                        'Could not find collection folder "books" on ScienceOpen SFTP server')
                     sys.exit(1)
                 try:
                     sftp.cwd(publisher)
