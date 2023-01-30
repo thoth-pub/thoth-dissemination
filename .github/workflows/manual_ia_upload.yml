@@ -1,0 +1,21 @@
+# Purpose: manual upload of one or more works from Thoth to Internet Archive.
+# Work must have a valid URL supplied as the PDF Publication Canonical Location.
+# Work must not have previously been uploaded to Internet Archive.
+# IA credentials for a user with write permissions to the Thoth Archiving Network
+# collection (e.g. thoth_pub) must be present as repository secrets
+# named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
+# It is advised not to upload until the work is published and all metadata finalised.
+name: manual-ia-upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      workIds:
+        description: 'Thoth work IDs in array format, e.g. [id1, id2]'
+        required: true
+
+jobs:
+  manual_ia_upload:
+    uses: ./.github/workflows/ia_upload.yml
+    with:
+      work-ids: ${{ github.event.inputs.workIds }}
