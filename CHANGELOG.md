@@ -6,7 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [[0.1.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.1) - 2022-12-13
+## [[0.1.3]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.3) - 2023-01-30
+### Added
+  - GitHub Actions for recurring automatic uploads of newly published works to Internet Archive
+
+## [[0.1.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.2) - 2022-12-13
 ### Changed
   - Fix Dockerfile for compatibility with GitHub Actions
 
