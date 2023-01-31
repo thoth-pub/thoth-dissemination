@@ -36,6 +36,8 @@ class CrossrefUploader(Uploader):
             files={filename: metadata_bytes},
             params={
                 'operation': 'doMDUpload',
+            },
+            data={
                 # placeholder - in practice we'll need different credentials for each publisher
                 'login_id': environ.get('crossref_user'),
                 'login_passwd': environ.get('crossref_pw'),
