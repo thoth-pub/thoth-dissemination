@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       workIds:
-        description: 'Thoth work IDs in array format, e.g. [id1, id2]'
+        description: 'Thoth work IDs in array format, e.g. ["id1", "id2"]'
         required: true
 
 jobs:
