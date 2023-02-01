@@ -26,8 +26,9 @@ jobs:
         uses: docker://openbookpublishers/thoth-dissemination:latest
         with:
           entrypoint: /disseminator.py
-          ia_s3_access: ${{ secrets.IA_S3_ACCESS }}
-          ia_s3_secret: ${{ secrets.IA_S3_SECRET }}
           args: >-
             --work ${{ matrix.work-id }}
             --platform InternetArchive
+        env:
+          ia_s3_access: ${{ secrets.IA_S3_ACCESS }}
+          ia_s3_secret: ${{ secrets.IA_S3_SECRET }}
