@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[0.1.4]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.4) - 2023-02-01
+### Fixed
+  - Corrected GitHub Actions syntax to pick up environment variables stored as repository secrets
+
 ## [[0.1.3]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.3) - 2023-01-30
 ### Added
   - GitHub Actions for recurring automatic uploads of newly published works to Internet Archive
