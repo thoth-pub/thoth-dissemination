@@ -43,3 +43,4 @@ jobs:
     uses: ./.github/workflows/ia_upload.yml
     with:
       work-ids: ${{ needs.run-script.outputs.NEW_IDS }}
+    secrets: inherit
