@@ -19,3 +19,4 @@ jobs:
     uses: ./.github/workflows/ia_upload.yml
     with:
       work-ids: ${{ github.event.inputs.workIds }}
+    secrets: inherit
