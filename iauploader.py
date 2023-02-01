@@ -55,7 +55,7 @@ class IAUploader(Uploader):
         # Incorrect access_key and/or secret_key triggers an HTTPError.
         except ia_except.AuthenticationError:
             logging.error(
-                'Error uploading to Internet Archive: credentials missing from config.env')
+                'Error uploading to Internet Archive: credentials missing')
             sys.exit(1)
         except req_except.HTTPError:
             # internetarchive module outputs its own ERROR log before we catch this exception,
