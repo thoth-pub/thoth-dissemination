@@ -32,6 +32,20 @@ class SOUploader(Uploader):
         - Chapter files and metadata required (full details TBD; not yet implemented)
         """
 
+        # Fast-fail if credentials for upload are missing
+        username = environ.get('so_ftp_user')
+        password = environ.get('so_ftp_pw')
+
+        if username is None:
+            logging.error(
+                'Error uploading to ScienceOpen: no user ID supplied')
+            sys.exit(1)
+
+        if password is None:
+            logging.error(
+                'Error uploading to ScienceOpen: no password supplied')
+            sys.exit(1)
+
         publisher = self.get_publisher_name()
         filename = self.get_pb_isbn()
         root_dir = 'UPLOAD_TO_THIS_DIRECTORY'
@@ -62,8 +76,8 @@ class SOUploader(Uploader):
         try:
             with pysftp.Connection(
                 host='ftp.scienceopen.com',
-                username=environ.get('so_ftp_user'),
-                password=environ.get('so_ftp_pw'),
+                username=username,
+                password=password,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)

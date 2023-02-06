@@ -18,6 +18,20 @@ class SwordV2Uploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
 
+        # Fast-fail if credentials for upload are missing
+        user_name = environ.get('cam_ds7_user')
+        user_pass = environ.get('cam_ds7_pw')
+
+        if user_name is None:
+            logging.error(
+                'Error uploading to SWORD v2: no user ID supplied')
+            sys.exit(1)
+
+        if user_pass is None:
+            logging.error(
+                'Error uploading to SWORD v2: no password supplied')
+            sys.exit(1)
+
         # Metadata file format TBD: use CSV for now
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
         pdf_bytes = self.get_pdf_bytes()
@@ -28,8 +42,8 @@ class SwordV2Uploader(Uploader):
         # Set up SWORD v2 endpoint connection
         conn = sword2.Connection(
             service_document_iri="https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712",
-            user_name=environ.get('cam_ds7_user'),
-            user_pass=environ.get('cam_ds7_pw'),
+            user_name=user_name,
+            user_pass=user_pass,
             # SWORD2 library doesn't handle timeout-related errors gracefully and large files
             # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
             # Allow lots of leeway. (This otherwise matches the default `http_impl`.)

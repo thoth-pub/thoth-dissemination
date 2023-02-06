@@ -18,6 +18,20 @@ class IAUploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to Internet Archive"""
 
+        # Fast-fail if credentials for upload are missing
+        access_key = environ.get('ia_s3_access')
+        secret_key = environ.get('ia_s3_secret')
+
+        if access_key is None:
+            logging.error(
+                'Error uploading to Internet Archive: no access key supplied')
+            sys.exit(1)
+
+        if secret_key is None:
+            logging.error(
+                'Error uploading to Internet Archive: no secret key supplied')
+            sys.exit(1)
+
         # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
         filename = self.work_id
 
@@ -45,8 +59,8 @@ class IAUploader(Uploader):
                     '{}.json'.format(filename): BytesIO(metadata_bytes),
                 },
                 metadata=ia_metadata,
-                access_key=environ.get('ia_s3_access'),
-                secret_key=environ.get('ia_s3_secret'),
+                access_key=access_key,
+                secret_key=secret_key,
                 retries=2,
                 retries_sleep=30,
                 verify=True,
@@ -54,6 +68,7 @@ class IAUploader(Uploader):
         # Empty access_key and/or secret_key triggers an AuthenticationError.
         # Incorrect access_key and/or secret_key triggers an HTTPError.
         except ia_except.AuthenticationError:
+            # The fast-fail above ought to prevent us from hitting this
             logging.error(
                 'Error uploading to Internet Archive: credentials missing')
             sys.exit(1)
