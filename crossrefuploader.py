@@ -47,17 +47,15 @@ class CrossrefUploader(Uploader):
             },
         )
 
-        if crossref_rsp.status_code != 200:
-            logging.error(
-                'Failed to deposit file in Crossref database: {}'.format(crossref_rsp.text))
+        if crossref_rsp.status_code != 200 or not SUCCESS_MSG in crossref_rsp.text:
+            # The Crossref API does not return succinct error messages so it isn't
+            # useful to display the response text; the status code/reason may help
+            logging.error('Failed to deposit DOI file in Crossref database (status code: {} {})'.format(
+                crossref_rsp.status_code, crossref_rsp.reason)
+            )
             sys.exit(1)
 
-        if not SUCCESS_MSG in crossref_rsp.text:
-            logging.error(
-                'Failed to deposit file in Crossref database')
-            sys.exit(1)
-
-        logging.info('Successfully deposited file in Crossref database')
+        logging.info('Successfully deposited DOI file in Crossref database')
 
     def parse_metadata(self):
         """Convert work metadata into Crossref format"""
