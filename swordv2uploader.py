@@ -6,7 +6,6 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 import logging
 import sys
 import sword2
-from io import BytesIO
 from os import environ
 from uploader import Uploader
 
