@@ -135,6 +135,13 @@ class Uploader():
 
         return publisher
 
+    def get_publisher_id(self):
+        """Extract publisher id from work metadata"""
+        publisher = self.metadata.get('data').get('work').get(
+            'imprint').get('publisher').get('publisherId')
+
+        return publisher
+
     @staticmethod
     def get_data_from_url(url, expected_format=None):
         """Download data from specified URL"""

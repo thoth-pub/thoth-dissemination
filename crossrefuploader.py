@@ -21,6 +21,19 @@ class CrossrefUploader(Uploader):
         Only the Crossref DOI deposit file is required.
         """
 
+        # Check that Crossref credentials have been provided for this publisher
+        publisher_id = self.get_publisher_id()
+        login_id = environ.get('crossref_user_' + publisher_id)
+        login_passwd = environ.get('crossref_pw_' + publisher_id)
+
+        if login_id is None:
+            logging.error('Error uploading to Crossref: no user ID supplied for publisher of this work')
+            sys.exit(1)
+
+        if login_passwd is None:
+            logging.error('Error uploading to Crossref: no password supplied for publisher of this work')
+            sys.exit(1)
+
         CROSSREF_ENDPOINT = 'https://doi.crossref.org/servlet/deposit'
         # The Crossref API is minimal and will not necessarily return errors if
         # requests are malformed, so check the response text for confirmation
@@ -36,9 +49,8 @@ class CrossrefUploader(Uploader):
             files={filename: metadata_bytes},
             params={
                 'operation': 'doMDUpload',
-                # placeholder - in practice we'll need different credentials for each publisher
-                'login_id': environ.get('crossref_user'),
-                'login_passwd': environ.get('crossref_pw'),
+                'login_id': login_id,
+                'login_passwd': login_passwd,
             },
         )
 
