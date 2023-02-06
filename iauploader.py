@@ -72,7 +72,7 @@ class IAUploader(Uploader):
                 'Error uploading to Internet Archive: credentials may be incorrect')
             sys.exit(1)
 
-        if len(responses) == 0:
+        if len(responses) < 1:
             logging.error(
                 'Error uploading to Internet Archive: no response received from server')
             sys.exit(1)
