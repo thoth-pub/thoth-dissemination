@@ -7,7 +7,6 @@ import logging
 import sys
 from internetarchive import get_item, upload, exceptions as ia_except
 from io import BytesIO
-from os import environ
 from requests import exceptions as req_except
 from uploader import Uploader
 
@@ -19,18 +18,10 @@ class IAUploader(Uploader):
         """Upload work in required format to Internet Archive"""
 
         # Fast-fail if credentials for upload are missing
-        access_key = environ.get('ia_s3_access')
-        secret_key = environ.get('ia_s3_secret')
-
-        if access_key is None:
-            logging.error(
-                'Error uploading to Internet Archive: no access key supplied')
-            sys.exit(1)
-
-        if secret_key is None:
-            logging.error(
-                'Error uploading to Internet Archive: no secret key supplied')
-            sys.exit(1)
+        access_key = self.get_credential_from_env(
+            'ia_s3_access', 'Internet Archive')
+        secret_key = self.get_credential_from_env(
+            'ia_s3_secret', 'Internet Archive')
 
         # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
         filename = self.work_id

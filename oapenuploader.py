@@ -7,7 +7,6 @@ import logging
 import sys
 from ftplib import FTP, error_perm
 from io import BytesIO
-from os import environ
 from uploader import Uploader
 
 
@@ -23,18 +22,8 @@ class OAPENUploader(Uploader):
         """
 
         # Fast-fail if credentials for upload are missing
-        user = environ.get('oapen_ftp_user')
-        passwd = environ.get('oapen_ftp_pw')
-
-        if user is None:
-            logging.error(
-                'Error uploading to OAPEN: no user ID supplied')
-            sys.exit(1)
-
-        if passwd is None:
-            logging.error(
-                'Error uploading to OAPEN: no password supplied')
-            sys.exit(1)
+        user = self.get_credential_from_env('oapen_ftp_user', 'OAPEN')
+        passwd = self.get_credential_from_env('oapen_ftp_pw', 'OAPEN')
 
         metadata_bytes = self.get_formatted_metadata('onix_3.0::oapen')
         # Filename TBD: use work ID for now
