@@ -51,7 +51,7 @@ publishers = json.dumps(publishers_env)
 thoth_works = thoth.bookIds(
     # The default limit is 100; publishers' back catalogues may be bigger than that
     limit='9999',
-    work_status='ACTIVE',
+    work_statuses='[ACTIVE]',
     # Start with the earliest, so that the upload is logically ordered
     order='{field: PUBLICATION_DATE, direction: ASC}',
     publishers=publishers,

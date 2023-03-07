@@ -71,18 +71,22 @@ earliest_updated_time = current_time
 while earliest_updated_time > last_deposit_time:
     # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
     # but excludes Chapters and Book Sets.
-    thoth_works += thoth.books(
+    results = thoth.books(
         limit=limit,
         offset=offset,
-        # TODO: we need both Active and Forthcoming works. Requires change to GraphQL schema
-        # c.f. work_types for `works` query. As a workaround, could make two calls.
-        work_status='ACTIVE',
+        work_statuses='[ACTIVE, FORTHCOMING]',
         # Start with the most recently updated
         order='{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}',
         publishers=publishers,
     )
+    # Avoid infinite loop if no more results are available
+    # (e.g. if a new target publisher's full catalogue was imported since last deposit)
+    if len(results) < 1:
+        break
+    else:
+        thoth_works += results
     offset += limit
-    earliest_updated_time_str = thoth_works.last().get('updatedAtWithRelations')
+    earliest_updated_time_str = thoth_works[-1].get('updatedAtWithRelations')
     earliest_updated_time = datetime.strptime(
         earliest_updated_time_str, "%Y-%m-%dT%H:%M:%S.%f%z")
 
