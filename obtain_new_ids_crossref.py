@@ -56,43 +56,24 @@ publishers = json.dumps(publishers_env)
 
 # Obtain all works listed in Thoth from the selected publishers which are
 # either Active or Forthcoming, and which have been updated since the last deposit.
-
 current_time = datetime.now(timezone.utc)
 last_deposit_time = current_time - \
     timedelta(hours=(DEPOSIT_INTERVAL_HRS + DELAY_BUFFER_HRS))
+last_deposit_time_str = datetime.strftime(
+    last_deposit_time, "%Y-%m-%dT%H:%M:%SZ")
 
-limit = 50
-offset = 0
-
-# Placeholder values
-thoth_works = []
-earliest_updated_time = current_time
-
-while earliest_updated_time > last_deposit_time:
-    # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
-    # but excludes Chapters and Book Sets.
-    results = thoth.books(
-        limit=limit,
-        offset=offset,
-        work_statuses='[ACTIVE, FORTHCOMING]',
-        # Start with the most recently updated
-        order='{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}',
-        publishers=publishers,
-    )
-    # Avoid infinite loop if no more results are available
-    # (e.g. if a new target publisher's full catalogue was imported since last deposit)
-    if len(results) < 1:
-        break
-    else:
-        thoth_works += results
-    offset += limit
-    earliest_updated_time_str = thoth_works[-1].get('updatedAtWithRelations')
-    earliest_updated_time = datetime.strptime(
-        earliest_updated_time_str, "%Y-%m-%dT%H:%M:%S.%f%z")
-
-# Remove any results where last update is earlier than last deposit.
-thoth_works = [n for n in thoth_works if datetime.strptime(
-    n.get('updatedAtWithRelations'), "%Y-%m-%dT%H:%M:%S.%f%z") > last_deposit_time]
+# `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
+# but excludes Chapters and Book Sets.
+thoth_works = thoth.bookIds(
+    # The default limit is 100; publishers' back catalogues may be bigger than that
+    limit='9999',
+    work_statuses='[ACTIVE, FORTHCOMING]',
+    # Start with the most recently updated
+    order='{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}',
+    publishers=publishers,
+    updated_at_with_relations='{{timestamp: "{}", expression: GREATER_THAN}}'.format(
+        last_deposit_time_str)
+)
 
 # Extract the Thoth work ID strings from the set of results
 thoth_ids = [n.workId for n in thoth_works]
