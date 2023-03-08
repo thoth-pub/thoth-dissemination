@@ -69,7 +69,7 @@ thoth_works = thoth.bookIds(
     limit='9999',
     work_statuses='[ACTIVE, FORTHCOMING]',
     # Start with the most recently updated
-    order='{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}',
+    order='{{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}}',
     publishers=publishers,
     updated_at_with_relations='{{timestamp: "{}", expression: GREATER_THAN}}'.format(
         last_deposit_time_str)
