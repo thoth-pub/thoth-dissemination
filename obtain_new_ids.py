@@ -53,7 +53,7 @@ thoth_works = thoth.bookIds(
     limit='9999',
     work_statuses='[ACTIVE]',
     # Start with the earliest, so that the upload is logically ordered
-    order='{{field: PUBLICATION_DATE, direction: ASC}}',
+    order='{field: PUBLICATION_DATE, direction: ASC}',
     publishers=publishers,
 )
 
