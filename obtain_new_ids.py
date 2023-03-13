@@ -17,47 +17,78 @@ from os import environ
 import sys
 
 
-def get_arguments():
-    # Simple argument parsing
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-p", "--platform")
-    args = parser.parse_args()
-    return args
+class IDFinder():
 
+    def __init__(self):
+        self.thoth = ThothClient()
 
-def get_publishers(env_pub_name):
-    # Check that a list of IDs of publishers whose works should be uploaded
-    # has been provided as a JSON-formatted environment variable
-    try:
-        publishers_env = json.loads(environ.get(env_pub_name))
-    except:
-        logging.error('Failed to retrieve publisher IDs from environment variable')
-        sys.exit(1)
-
-    # Test that list is not empty - if so, the Thoth client call would erroneously
-    # retrieve the full list of works from all publishers
-    if len(publishers_env) < 1:
-        logging.error(
-            'No publisher IDs found in environment variable: list is empty')
-        sys.exit(1)
-
-    # Test that all supplied publisher IDs are valid - if a mistyped ID was passed to the Thoth
-    # client call, it would behave the same as a valid ID for which no relevant works exist
-    for publisher in publishers_env:
+    def get_publishers(self, env_pub_name):
+        # Check that a list of IDs of publishers whose works should be uploaded
+        # has been provided as a JSON-formatted environment variable
         try:
-            thoth.publisher(publisher)
-        except errors.ThothError:
-            # Don't include full error text as it's lengthy (contains full query/response)
-            logging.error('No record found for publisher {}: ID may be incorrect'.format(
-                publisher))
+            publishers_env = json.loads(environ.get(env_pub_name))
+        except:
+            logging.error(
+                'Failed to retrieve publisher IDs from environment variable')
             sys.exit(1)
 
-    publishers = json.dumps(publishers_env)
-    return publishers
+        # Test that list is not empty - if so, the Thoth client call would erroneously
+        # retrieve the full list of works from all publishers
+        if len(publishers_env) < 1:
+            logging.error(
+                'No publisher IDs found in environment variable: list is empty')
+            sys.exit(1)
+
+        # Test that all supplied publisher IDs are valid - if a mistyped ID was passed to the Thoth
+        # client call, it would behave the same as a valid ID for which no relevant works exist
+        for publisher in publishers_env:
+            try:
+                self.thoth.publisher(publisher)
+            except errors.ThothError:
+                # Don't include full error text as it's lengthy (contains full query/response)
+                logging.error('No record found for publisher {}: ID may be incorrect'.format(
+                    publisher))
+                sys.exit(1)
+
+        publishers = json.dumps(publishers_env)
+        return publishers
+
+    def get_thoth_ids(self, work_statuses, order, publishers, updated_at_with_relations):
+        # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
+        # but excludes Chapters and Book Sets. `bookIds` variant only retrieves their workIds.
+        thoth_works = self.thoth.bookIds(
+            # The default limit is 100; publishers' back catalogues may be bigger than that
+            limit='9999',
+            work_statuses=work_statuses,
+            order=order,
+            publishers=publishers,
+            updated_at_with_relations=updated_at_with_relations,
+        )
+
+        # Extract the Thoth work ID strings from the set of results
+        thoth_ids = [n.workId for n in thoth_works]
+
+        return thoth_ids
+
+    def remove_exceptions(self, thoth_ids, env_excep_name):
+        # If a list of exceptions has been provided, remove these from the results
+        # (e.g. works that are ineligible for upload due to not being available as PDFs)
+        if environ.get(env_excep_name) is not None:
+            try:
+                exceptions = json.loads(environ.get(env_excep_name))
+                thoth_ids = set(thoth_ids).difference(exceptions)
+            except:
+                # No need to early-exit; current use case for exceptions list is
+                # just to avoid attempting uploads which are expected to fail
+                logging.warning(
+                    'Failed to retrieve excepted works from environment variable')
+
+            return thoth_ids
 
 
-def get_query_parameters(platform):
-    if platform == 'Crossref':
+class CrossrefIDFinder(IDFinder):
+
+    def get_query_parameters(self):
         from datetime import datetime, timedelta, timezone
 
         # The schedule for finding and depositing updated metadata is once daily.
@@ -77,58 +108,30 @@ def get_query_parameters(platform):
         last_deposit_time_str = datetime.strftime(
             last_deposit_time, "%Y-%m-%dT%H:%M:%SZ")
 
-        work_statuses='[ACTIVE, FORTHCOMING]'
+        work_statuses = '[ACTIVE, FORTHCOMING]'
         # Start with the most recently updated
-        order='{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}'
-        updated_at_with_relations='{{timestamp: "{}", expression: GREATER_THAN}}'.format(
+        order = '{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}'
+        updated_at_with_relations = '{{timestamp: "{}", expression: GREATER_THAN}}'.format(
             last_deposit_time_str)
 
-    else:
+        return work_statuses, order, updated_at_with_relations
+
+    def post_process(self, thoth_ids):
+        pass
+
+
+class InternetArchiveIDFinder(IDFinder):
+
+    def get_query_parameters(self):
         # Obtain all active (published) works listed in Thoth from the selected publishers.
-        work_statuses='[ACTIVE]'
+        work_statuses = '[ACTIVE]'
         # Start with the earliest, so that the upload is logically ordered
-        order='{field: PUBLICATION_DATE, direction: ASC}'
+        order = '{field: PUBLICATION_DATE, direction: ASC}'
         updated_at_with_relations = None
 
-    return work_statuses, order, updated_at_with_relations
+        return work_statuses, order, updated_at_with_relations
 
-
-def get_thoth_ids(work_statuses, order, publishers, updated_at_with_relations):
-    # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
-    # but excludes Chapters and Book Sets. `bookIds` variant only retrieves their workIds.
-    thoth_works = thoth.bookIds(
-        # The default limit is 100; publishers' back catalogues may be bigger than that
-        limit='9999',
-        work_statuses=work_statuses,
-        order=order,
-        publishers=publishers,
-        updated_at_with_relations=updated_at_with_relations,
-    )
-
-    # Extract the Thoth work ID strings from the set of results
-    thoth_ids = [n.workId for n in thoth_works]
-
-    return thoth_ids
-
-
-def remove_exceptions(thoth_ids, env_excep_name):
-    # If a list of exceptions has been provided, remove these from the results
-    # (e.g. works that are ineligible for upload due to not being available as PDFs)
-    if environ.get(env_excep_name) is not None:
-        try:
-            exceptions = json.loads(environ.get(env_excep_name))
-            thoth_ids = set(thoth_ids).difference(exceptions)
-        except:
-            # No need to early-exit; current use case for exceptions list is
-            # just to avoid attempting uploads which are expected to fail
-            logging.warning(
-                'Failed to retrieve excepted works from environment variable')
-
-        return thoth_ids
-
-
-def post_process(platform, thoth_ids):
-    if platform == 'InternetArchive':
+    def post_process(self, thoth_ids):
         # Obtain all works listed in the Internet Archive's Thoth Archiving Network collection.
         # We only need the identifier; this matches the Thoth work ID.
         # If the collection later grows to include more publishers, we may want to
@@ -144,16 +147,21 @@ def post_process(platform, thoth_ids):
         # but do not appear as already uploaded to the IA collection
         # (minus any specified exceptions).
         new_ids = list(set(thoth_ids).difference(ia_ids))
-    else:
-        new_ids = thoth_ids
 
-    return new_ids
+        return new_ids
+
+
+def get_arguments():
+    # Simple argument parsing
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-p", "--platform")
+    args = parser.parse_args()
+    return args
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO,
                         format='%(levelname)s:%(asctime)s: %(message)s')
-    thoth = ThothClient()
 
     args = get_arguments()
     platform = args.platform
@@ -167,19 +175,21 @@ if __name__ == '__main__':
         # TODO rework handling of these variables to reduce branching
         env_pub_name = 'ENV_PUBLISHERS'
         env_excep_name = 'ENV_EXCEPTIONS'
+        id_finder = InternetArchiveIDFinder()
     else:
         env_pub_name = 'ENV_PUBLISHERS_CROSSREF'
         env_excep_name = 'ENV_EXCEPTIONS_CROSSREF'
+        id_finder = CrossrefIDFinder()
 
-    publishers = get_publishers(env_pub_name)
+    publishers = id_finder.get_publishers(env_pub_name)
 
-    work_statuses, order, updated_at_with_relations = get_query_parameters(platform)
+    work_statuses, order, updated_at_with_relations = id_finder.get_query_parameters()
 
-    thoth_ids = get_thoth_ids(work_statuses, order, publishers, updated_at_with_relations)
+    thoth_ids = id_finder.get_thoth_ids(work_statuses, order, publishers, updated_at_with_relations)
 
-    thoth_ids = remove_exceptions(thoth_ids, env_excep_name)
+    thoth_ids = id_finder.remove_exceptions(thoth_ids, env_excep_name)
 
-    new_ids = post_process(platform, thoth_ids)
+    new_ids = id_finder.post_process(thoth_ids)
 
     # Output this list (as an array of comma-separated, quote-enclosed strings)
     print(new_ids)
