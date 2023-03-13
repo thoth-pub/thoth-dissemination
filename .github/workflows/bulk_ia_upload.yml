@@ -32,7 +32,7 @@ jobs:
         id: get-ids
         run: |
           pip install -r requirements_obtain_new_ids.txt
-          output=$(python obtain_new_ids.py)
+          output=$(python obtain_new_ids.py --platform InternetArchive)
           echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
         env:
           ENV_PUBLISHERS: ${{ vars.ENV_PUBLISHERS }}
