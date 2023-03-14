@@ -16,7 +16,7 @@ on:
 
 jobs:
   manual_ia_upload:
-    uses: ./.github/workflows/ia_upload.yml
+    uses: ./.github/workflows/disseminate.yml
     with:
       work-ids: ${{ github.event.inputs.workIds }}
       platform: 'InternetArchive'

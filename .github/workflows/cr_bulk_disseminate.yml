@@ -14,7 +14,7 @@ on:
 
 jobs:
   ia-bulk-disseminate:
-    uses: ./.github/workflows/bulk_ia_upload.yml
+    uses: ./.github/workflows/bulk_disseminate.yml
     with:
       platform: 'Crossref'
       env_publishers: ${{ vars.CR_ENV_PUBLISHERS }}

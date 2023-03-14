@@ -16,7 +16,7 @@ on:
 
 jobs:
   ia-bulk-disseminate:
-    uses: ./.github/workflows/bulk_ia_upload.yml
+    uses: ./.github/workflows/bulk_disseminate.yml
     with:
       platform: 'InternetArchive'
       env_publishers: ${{ vars.IA_ENV_PUBLISHERS }}

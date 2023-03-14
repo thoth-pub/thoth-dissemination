@@ -41,7 +41,7 @@ jobs:
 
   bulk-disseminate:
     needs: run-script
-    uses: ./.github/workflows/ia_upload.yml
+    uses: ./.github/workflows/disseminate.yml
     with:
       work-ids: ${{ needs.run-script.outputs.NEW_IDS }}
       platform: ${{ inputs.platform }}
