@@ -22,11 +22,11 @@ class IDFinder():
     def __init__(self):
         self.thoth = ThothClient()
 
-    def get_publishers(self, env_pub_name):
+    def get_publishers(self):
         # Check that a list of IDs of publishers whose works should be uploaded
         # has been provided as a JSON-formatted environment variable
         try:
-            publishers_env = json.loads(environ.get(env_pub_name))
+            publishers_env = json.loads(environ.get('ENV_PUBLISHERS'))
         except:
             logging.error(
                 'Failed to retrieve publisher IDs from environment variable')
@@ -70,12 +70,12 @@ class IDFinder():
 
         return thoth_ids
 
-    def remove_exceptions(self, thoth_ids, env_excep_name):
+    def remove_exceptions(self, thoth_ids):
         # If a list of exceptions has been provided, remove these from the results
         # (e.g. works that are ineligible for upload due to not being available as PDFs)
-        if environ.get(env_excep_name) is not None:
+        if environ.get('ENV_EXCEPTIONS') is not None:
             try:
-                exceptions = json.loads(environ.get(env_excep_name))
+                exceptions = json.loads(environ.get('ENV_EXCEPTIONS'))
                 thoth_ids = set(thoth_ids).difference(exceptions)
             except:
                 # No need to early-exit; current use case for exceptions list is
@@ -166,28 +166,22 @@ if __name__ == '__main__':
     args = get_arguments()
     platform = args.platform
 
-    if not platform in {'InternetArchive', 'Crossref'}:
+    if platform == 'InternetArchive':
+        id_finder = InternetArchiveIDFinder()
+    elif platform == 'Crossref':
+        id_finder = CrossrefIDFinder()
+    else:
         logging.error(
             'Platform must be one of InternetArchive or Crossref')
         sys.exit(1)
 
-    if platform == 'InternetArchive':
-        # TODO rework handling of these variables to reduce branching
-        env_pub_name = 'ENV_PUBLISHERS'
-        env_excep_name = 'ENV_EXCEPTIONS'
-        id_finder = InternetArchiveIDFinder()
-    else:
-        env_pub_name = 'ENV_PUBLISHERS_CROSSREF'
-        env_excep_name = 'ENV_EXCEPTIONS_CROSSREF'
-        id_finder = CrossrefIDFinder()
-
-    publishers = id_finder.get_publishers(env_pub_name)
+    publishers = id_finder.get_publishers()
 
     work_statuses, order, updated_at_with_relations = id_finder.get_query_parameters()
 
     thoth_ids = id_finder.get_thoth_ids(work_statuses, order, publishers, updated_at_with_relations)
 
-    thoth_ids = id_finder.remove_exceptions(thoth_ids, env_excep_name)
+    thoth_ids = id_finder.remove_exceptions(thoth_ids)
 
     new_ids = id_finder.post_process(thoth_ids)
 

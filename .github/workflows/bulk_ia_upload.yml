@@ -1,18 +1,19 @@
-# Purpose: upload newly-published works from Thoth to Internet Archive.
-# Uploads all active published Thoth works not yet found in Internet Archive.
-# Work must have a valid URL supplied as the PDF Publication Canonical Location.
-# IA credentials for a user with write permissions to the Thoth Archiving Network
-# collection (e.g. thoth_pub) must be present as repository secrets
-# named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
-name: bulk-ia-upload
+# Purpose: disseminate newly-published works from Thoth to the specified platform.
+# Relevant credentials must be present as repository secrets.
+name: bulk-disseminate
 
 on:
-  schedule:
-    # 'at 00:15 on day-of-month 1'
-    # (scheduling is not guaranteed; runs at the start of the hour
-    # are more likely to be delayed)
-    - cron: '15 0 1 * *'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      env_publishers:
+        required: true
+        type: string
+      env_exceptions:
+        required: true
+        type: string
 
 jobs:
   run-script:
@@ -32,15 +33,16 @@ jobs:
         id: get-ids
         run: |
           pip install -r requirements_obtain_new_ids.txt
-          output=$(python obtain_new_ids.py --platform InternetArchive)
+          output=$(python obtain_new_ids.py --platform ${{ inputs.platform }})
           echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
         env:
-          ENV_PUBLISHERS: ${{ vars.ENV_PUBLISHERS }}
-          ENV_EXCEPTIONS: ${{ vars.ENV_EXCEPTIONS }}
+          ENV_PUBLISHERS: ${{ inputs.env_publishers }}
+          ENV_EXCEPTIONS: ${{ inputs.env_exceptions }}
 
-  bulk_ia_upload:
+  bulk-disseminate:
     needs: run-script
     uses: ./.github/workflows/ia_upload.yml
     with:
       work-ids: ${{ needs.run-script.outputs.NEW_IDS }}
+      platform: ${{ inputs.platform }}
     secrets: inherit

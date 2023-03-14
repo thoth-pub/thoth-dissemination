@@ -1,11 +1,6 @@
-# Logic shared between multiple workflows for uploading one or more works
-# (given as an array of work IDs) from Thoth to Internet Archive.
-# Work must have a valid URL supplied as the PDF Publication Canonical Location.
-# Work must not have previously been uploaded to Internet Archive.
-# IA credentials for a user with write permissions to the Thoth Archiving Network
-# collection (e.g. thoth_pub) must be present as repository secrets
-# named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
-name: ia-upload
+# Logic shared between multiple workflows for disseminating one or more works
+# (given as an array of work IDs) from Thoth to the specified platform.
+name: disseminate
 
 on:
   workflow_call:
@@ -13,9 +8,12 @@ on:
       work-ids:
         required: true
         type: string
+      platform:
+        required: true
+        type: string
 
 jobs:
-  upload_to_ia:
+  disseminate:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -28,7 +26,8 @@ jobs:
           entrypoint: /disseminator.py
           args: >-
             --work ${{ matrix.work-id }}
-            --platform InternetArchive
+            --platform ${{ inputs.platform }}
         env:
+          # TODO also include Crossref secrets (perhaps branching on platform)
           ia_s3_access: ${{ secrets.IA_S3_ACCESS }}
           ia_s3_secret: ${{ secrets.IA_S3_SECRET }}

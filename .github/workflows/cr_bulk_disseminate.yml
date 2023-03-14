@@ -1,0 +1,22 @@
+# Purpose: deposit newly-updated works' metadata from Thoth to Crossref.
+# Deposits all active/forthcoming Thoth works updated since last scheduled run.
+# Crossref credentials for each relevant publisher must be present as repository secrets
+# (TODO add specifics)
+name: cr-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 00:15 every day'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '15 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  ia-bulk-disseminate:
+    uses: ./.github/workflows/bulk_ia_upload.yml
+    with:
+      platform: 'Crossref'
+      env_publishers: ${{ vars.CR_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.CR_ENV_EXCEPTIONS }}
+    secrets: inherit
