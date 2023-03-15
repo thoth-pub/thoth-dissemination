@@ -85,7 +85,7 @@ class IDFinder():
                 logging.warning(
                     'Failed to retrieve excepted works from environment variable')
 
-            return thoth_ids
+        return thoth_ids
 
 
 class CrossrefIDFinder(IDFinder):
@@ -119,7 +119,7 @@ class CrossrefIDFinder(IDFinder):
         return work_statuses, order, updated_at_with_relations
 
     def post_process(self, thoth_ids):
-        pass
+        return thoth_ids
 
 
 class InternetArchiveIDFinder(IDFinder):
