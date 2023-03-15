@@ -6,7 +6,7 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '0.1.3'
+__version__ = '0.1.4'
 
 import argparse
 import logging
@@ -16,12 +16,14 @@ from iauploader import IAUploader
 from oapenuploader import OAPENUploader
 from souploader import SOUploader
 from swordv2uploader import SwordV2Uploader
+from crossrefuploader import CrossrefUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
     "OAPEN": OAPENUploader,
     "ScienceOpen": SOUploader,
     "SWORD": SwordV2Uploader,
+    "Crossref": CrossrefUploader,
 }
 
 ARGS = [
@@ -72,6 +74,10 @@ def get_arguments():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO,
                         format='%(levelname)s:%(asctime)s: %(message)s')
+    # DEBUG level urllib3 logs may contain sensitive information
+    # such as passwords (where sent as URL query parameters)
+    # and should never be output publicly (e.g. in GitHub Actions)
+    logging.getLogger("urllib3").setLevel(logging.INFO)
     # dotenv only required for running locally - when running
     # with Docker, --env-file option could be used instead
     dotenv_path = Path('./config.env')
