@@ -56,13 +56,15 @@ class IDFinder():
     def get_thoth_ids(self, work_statuses, order, publishers, updated_at_with_relations):
         # `books` query includes Monographs, Edited Books, Textbooks and Journal Issues
         # but excludes Chapters and Book Sets. `bookIds` variant only retrieves their workIds.
+        logging.info(work_statuses)
+        logging.info(updated_at_with_relations)
         thoth_works = self.thoth.bookIds(
             # The default limit is 100; publishers' back catalogues may be bigger than that
-            limit='9999',
-            work_statuses=work_statuses,
-            order=order,
+            limit='5',
+            # work_statuses=work_statuses,
+            # order=order,
             publishers=publishers,
-            updated_at_with_relations=updated_at_with_relations,
+            # updated_at_with_relations=updated_at_with_relations,
         )
 
         # Extract the Thoth work ID strings from the set of results
