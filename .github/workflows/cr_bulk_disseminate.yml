@@ -1,7 +1,7 @@
 # Purpose: deposit newly-updated works' metadata from Thoth to Crossref.
 # Deposits all active/forthcoming Thoth works updated since last scheduled run.
 # Crossref credentials for each relevant publisher must be present as repository secrets
-# (TODO add specifics)
+# named CROSSREF_USER_[publisher_id] and CROSSREF_PW_[publisher_id].
 name: cr-bulk-disseminate
 
 on:

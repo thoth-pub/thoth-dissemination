@@ -20,6 +20,11 @@ jobs:
       matrix:
         work-id: ${{ fromJSON(inputs.work-ids) }}
     steps:
+      - name: Make all platform credentials available to later steps (with names lowercased)
+        uses: oNaiPs/secrets-to-env-action@v1
+        with:
+          secrets: ${{ toJSON(secrets) }}
+          convert: lower
       - name: Run disseminator using Dockerhub image
         uses: docker://openbookpublishers/thoth-dissemination:latest
         with:
@@ -27,7 +32,3 @@ jobs:
           args: >-
             --work ${{ matrix.work-id }}
             --platform ${{ inputs.platform }}
-        env:
-          # TODO also include Crossref secrets (perhaps branching on platform)
-          ia_s3_access: ${{ secrets.IA_S3_ACCESS }}
-          ia_s3_secret: ${{ secrets.IA_S3_SECRET }}
