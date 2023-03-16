@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       workIds:
-        description: 'Thoth work IDs in array format, e.g. [id1, id2]'
+        description: 'Thoth work IDs in array format, e.g. ["id1", "id2"]'
         required: true
 
 jobs:
@@ -19,3 +19,4 @@ jobs:
     uses: ./.github/workflows/ia_upload.yml
     with:
       work-ids: ${{ github.event.inputs.workIds }}
+    secrets: inherit
