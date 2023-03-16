@@ -10,6 +10,7 @@ __version__ = '0.1.4'
 
 import argparse
 import logging
+import sys
 from dotenv import load_dotenv
 from pathlib import Path
 from iauploader import IAUploader
@@ -26,6 +27,8 @@ UPLOADERS = {
     "Crossref": CrossrefUploader,
 }
 
+UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())
+
 ARGS = [
     {
         "val": "--work",
@@ -36,9 +39,7 @@ ARGS = [
         "val": "--platform",
         "dest": "platform",
         "action": "store",
-        "help": "Platform to which to disseminate work. One of: {}".format(
-            ', '.join("%s" % (key) for (key, val) in UPLOADERS.items())
-        )
+        "help": "Platform to which to disseminate work. One of: {}".format(UPLOADERS_STR)
     }, {
         "val": "--export-url",
         "dest": "export_url",
@@ -52,7 +53,12 @@ ARGS = [
 def run(work_id, platform, export_url):
     """Execute a dissemination uploader based on input parameters"""
     logging.info('Beginning upload of {} to {}'.format(work_id, platform))
-    uploader = UPLOADERS[platform](work_id, export_url, __version__)
+    try:
+        uploader = UPLOADERS[platform](work_id, export_url, __version__)
+    except KeyError:
+        logging.error('{} not supported: platform must be one of {}'.format(
+            platform, UPLOADERS_STR))
+        sys.exit(1)
     uploader.run()
 
 
