@@ -79,55 +79,16 @@ class FigshareApi:
     def __init__(self):
         self.api_token = environ.get('figshare_token')
 
-    # TODO commonise these two methods
     def create_project(self, metadata):
         url = '{}/account/projects'.format(self.API_ROOT)
-        response = requests.post(url=url, json=metadata, headers={
-                                 'Authorization': 'token {}'.format(self.api_token)})
-        response_json = json.loads(response.text)
-        # print(response_json)
-        if response.status_code == 201:
-            # Return project id - response is { entity_id, location }
-            # TODO better error checking e.g. ensure id field is actually present
-            return response_json.get('entity_id')
-        else:
-            # Retrieve the error message from { code, message } response
-            logging.error('Error creating Figshare project: {}'.format(
-                response_json.get('message')))
-            sys.exit(1)
+        project_id = self.issue_request('POST', url, 201, 'entity_id', json_body=metadata)
+        return project_id
 
     def create_article(self, metadata, project_id):
         url = '{}/account/projects/{}/articles'.format(
             self.API_ROOT, project_id)
-        response = requests.post(url=url, json=metadata, headers={
-                                 'Authorization': 'token {}'.format(self.api_token)})
-        response_json = json.loads(response.text)
-        # print(response_json)
-        if response.status_code == 201:
-            # Return article id - response is { entity_id, location, warnings }
-            # TODO better error checking e.g. ensure id field is actually present
-            return response_json.get('entity_id')
-        else:
-            # Retrieve the error message from { code, message } response
-            logging.error('Error creating Figshare article: {}'.format(
-                response_json.get('message')))
-            sys.exit(1)
-
-    def upload_file(self, file_bytes, file_name, article_id):
-        upload_api = FigshareUploadApi(
-            file_bytes, file_name, article_id, self.API_ROOT, self.api_token)
-        upload_api.run()
-
-
-class FigshareUploadApi:
-    """Methods for interacting with Figshare upload service API"""
-
-    def __init__(self, file_bytes, file_name, article_id, api_root, api_token):
-        self.file_stream = BytesIO(file_bytes)
-        self.file_name = file_name
-        self.article_id = article_id
-        self.api_root = api_root
-        self.api_token = api_token
+        article_id = self.issue_request('POST', url, 201, 'entity_id', json_body=metadata)
+        return article_id
 
     def issue_request(self, method, url, expected_status, expected_key=None, data_body=None, json_body=None):
         headers = {'Authorization': 'token ' + self.api_token}
@@ -135,6 +96,10 @@ class FigshareUploadApi:
             method, url, headers=headers, data=data_body, json=json_body)
 
         if response.status_code != expected_status:
+            # TODO this isn't enough information
+            # Error responses sometimes include { code, message } json
+            # but the message can be unwieldy and the code is not user-friendly
+            # Print calling function, and/or add more INFO messages during process?
             logging.error('Error contacting Figshare API (status code {})'.format(
                 response.status_code))
             sys.exit(1)
@@ -153,20 +118,20 @@ class FigshareUploadApi:
                     'No data found in Figshare API for requested item {}'.format(expected_key))
                 sys.exit(1)
 
-    def construct_file_info(self):
+    def construct_file_info(self, file_bytes, file_name):
         md5 = hashlib.md5()
-        md5.update(self.file_stream.getvalue())
+        md5.update(file_bytes)
         file_info = {
-            'name': self.file_name,
+            'name': file_name,
             'md5': md5.hexdigest(),
-            'size': len(self.file_stream.getvalue())
+            'size': len(file_bytes)
         }
         return file_info
 
-    def initiate_new_upload(self):
+    def initiate_new_upload(self, article_id, file_bytes, file_name):
         url = '{}/account/articles/{}/files'.format(
-            self.api_root, self.article_id)
-        file_info = self.construct_file_info()
+            self.API_ROOT, article_id)
+        file_info = self.construct_file_info(file_bytes, file_name)
         file_url = self.issue_request(
             'POST', url, 201, 'location', json_body=file_info)
         return file_url
@@ -176,18 +141,19 @@ class FigshareUploadApi:
             'GET', file_url, 200, 'upload_url')
         return upload_url
 
-    def upload_part(self, upload_url, part):
+    def upload_part(self, upload_url, file_stream, part):
         url = '{}/{}'.format(upload_url, part['partNo'])
-        self.file_stream.seek(part['startOffset'])
-        data = self.file_stream.read(
+        file_stream.seek(part['startOffset'])
+        data = file_stream.read(
             part['endOffset'] - part['startOffset'] + 1)
         self.issue_request('PUT', url, 200, data_body=data)
 
-    def upload_data(self, upload_url):
+    def upload_data(self, upload_url, file_bytes):
         # Upload service API may require the data to be submitted in multiple parts.
         parts = self.issue_request('GET', upload_url, 200, 'parts')
+        file_stream = BytesIO(file_bytes)
         for part in parts:
-            self.upload_part(upload_url, part)
+            self.upload_part(upload_url, file_stream, part)
 
     def complete_upload(self, file_url):
         self.issue_request('POST', file_url, 202)
@@ -201,12 +167,12 @@ class FigshareUploadApi:
             logging.info('Error checking uploaded file: status is {}'.status)
             sys.exit(1)
 
-    def run(self):
+    def upload_file(self, file_bytes, file_name, article_id):
         # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
-        file_url = self.initiate_new_upload()
+        file_url = self.initiate_new_upload(article_id, file_bytes, file_name)
         # File data needs to be uploaded to a separate URL at the Figshare upload service API.
         upload_url = self.get_upload_url(file_url)
-        self.upload_data(upload_url)
+        self.upload_data(upload_url, file_bytes)
         # Contact main Figshare API again to confirm we've finished uploading data.
         self.complete_upload(file_url)
         # Check that the data was processed successfully.
