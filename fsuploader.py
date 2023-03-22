@@ -87,7 +87,8 @@ class FigshareApi:
     def create_article(self, metadata, project_id):
         url = '{}/account/projects/{}/articles'.format(
             self.API_ROOT, project_id)
-        article_id = self.issue_request('POST', url, 201, 'entity_id', json_body=metadata)
+        article_url = self.issue_request('POST', url, 201, 'location', json_body=metadata)
+        article_id = article_url.split('/')[-1]
         return article_id
 
     def issue_request(self, method, url, expected_status, expected_key=None, data_body=None, json_body=None):
