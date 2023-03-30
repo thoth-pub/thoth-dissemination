@@ -8,6 +8,7 @@ import sys
 import json
 import requests
 import hashlib
+import re
 from io import BytesIO
 from os import environ
 from uploader import Uploader
@@ -29,7 +30,11 @@ class FigshareUploader(Uploader):
         # - Which Publications to upload? Just PDF? Just OA versions? Or all?
         # Must correctly replicate manual upload "embargo" logic if uploading paywalled EPUBs/MOBIs etc.
         api = FigshareApi()
-        (project_metadata, article_metadata) = self.parse_metadata()
+
+        # Obtain the current set of available licences from the Figshare API
+        licence_list = api.get_licence_list()
+
+        (project_metadata, article_metadata) = self.parse_metadata(licence_list)
 
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Figshare metadata fields
@@ -50,24 +55,113 @@ class FigshareUploader(Uploader):
         logging.info(
             'Successfully uploaded to Figshare: article id {}'.format(article_id))
 
-    def parse_metadata(self):
+    def parse_metadata(self, licence_list):
         """Convert work metadata into Figshare format"""
         work_metadata = self.metadata.get('data').get('work')
+        try:
+            long_abstract = work_metadata.get('longAbstract')
+        except KeyError:
+            logging.error('Cannot upload to Figshare: work must have a Long Abstract')
+            sys.exit(1)
         project_metadata = {
-            # Minimal metadata for testing
-            # The only other supported fields are description and funding
-            'title': work_metadata.get('title'),
+            # Only title is mandatory
+            'title': work_metadata['title'], # mandatory in Thoth
+            'description': long_abstract,
+            # The only other supported field is funding
         }
         article_metadata = {
-            # Minimal metadata for testing
             # Note manual upload testing was done with minimal metadata -
             # can view json representation of manual uploads for pointers.
-            'title': work_metadata.get('title'),
+            # Mandatory fields for creation:
+            'title': work_metadata['title'], # mandatory in Thoth
+            # Mandatory fields for publication:
+            'description': long_abstract,
+            'defined_type': self.get_figshare_type(work_metadata),
+            'license': self.get_figshare_licence(work_metadata, licence_list),
+            'authors': self.get_figshare_authors(work_metadata),
+            'tags': self.get_figshare_tags(work_metadata),
+            # Optional fields:
             # resource_title = text value for hyperlink to resource_doi
         }
 
         # TODO check whether article metadata will need to vary depending on publication type
         return (project_metadata, article_metadata)
+
+    @staticmethod
+    def get_figshare_type(metadata):
+        # Options as listed in documentation are:
+        # figure | online resource | preprint | book | conference contribution
+        # media | dataset | poster | journal contribution | presentation | thesis | software
+        # However, options from ArticleSearch item_type full list also seem to be accepted:
+        # 1 - Figure, 2 - Media, 3 - Dataset, 5 - Poster, 6 - Journal contribution, 7 - Presentation,
+        # 8 - Thesis, 9 - Software, 11 - Online resource, 12 - Preprint, 13 - Book, 14 - Conference contribution,
+        # 15 - Chapter, 16 - Peer review, 17 - Educational resource, 18 - Report, 19 - Standard, 20 - Composition,
+        # 21 - Funding, 22 - Physical object, 23 - Data management plan, 24 - Workflow, 25 - Monograph,
+        # 26 - Performance, 27 - Event, 28 - Service, 29 - Model
+        match metadata.get('workType'):
+            case 'MONOGRAPH':
+                return 'monograph'
+            case 'TEXTBOOK':
+                return 'educational resource'
+            case 'BOOK_CHAPTER':
+                return 'chapter'
+            case 'EDITED_BOOK', 'BOOK_SET', 'JOURNAL_ISSUE':
+                return 'book'
+            case other:
+                logging.error('Unsupported value for workType metadata field: {}'.format(other))
+                sys.exit(1)
+
+    @staticmethod
+    def get_figshare_licence(metadata, licence_list):
+        # Find the Figshare licence object corresponding to the Thoth licence URL.
+        # Note URLs must match exactly, barring http(s) and www prefixes -
+        # e.g. "creativecommons.org/licenses/by/4.0/legalcode" will not match to "creativecommons.org/licenses/by/4.0/".
+        # If multiple Figshare licence objects have the same URL, the lowest numbered will be used.
+        # If Thoth licence URL field is empty or no Figshare licence exists for it, raise an error.
+        thoth_licence = metadata.get('license')
+        if thoth_licence is None:
+            logging.error('Cannot upload to Figshare: work must have a Licence')
+            sys.exit(1)
+        # Thoth licence field is unchecked free text - try to ensure it matches
+        # Figshare licence options by normalising to remove http(s) and www prefixes.
+        # (IGNORECASE may be redundant if Thoth licences are lowercased on entry into database)
+        regex = re.compile('^(?:https?://)?(?:www\\.)?', re.IGNORECASE)
+        thoth_licence = regex.sub('', thoth_licence)
+        # Figshare requires licence information to be submitted as the integer representing the licence object.
+        licence_int = None
+        for fs_licence in licence_list:
+            if thoth_licence == fs_licence.get('url'):
+                licence_int = fs_licence.get('value')
+                break
+        if licence_int == None:
+            logging.error('Licence {} not supported by Figshare'.format(thoth_licence))
+            sys.exit(1)
+        return licence_int
+
+    @staticmethod
+    def get_figshare_authors(metadata):
+        # TBD which contributors should be submitted - assume only
+        # main contributors, in line with Internet Archive requirements.
+        # Figshare also accepts other author details such as ORCIDs, however,
+        # this can lead to rejected submissions if a record already exists
+        # within Figshare for the author with that ORCID (Thoth doesn't track this).
+        # fullName is mandatory so we do not expect KeyErrors
+        authors = [{'name': n['fullName']} for n in metadata.get('contributions')
+            if n.get('mainContribution') == True]
+        if len(authors) < 1:
+            logging.error('Cannot upload to Figshare: work must have at least one Main Contribution')
+            sys.exit(1)
+        return authors
+
+    @staticmethod
+    def get_figshare_tags(metadata):
+        # subjectCode is mandatory so we do not expect KeyErrors
+        tags = [n['subjectCode'] for n in metadata.get
+            ('subjects') if n.get('subjectType') == 'KEYWORD']
+        if len(tags) < 1:
+            logging.error('Cannot upload to Figshare: work must have at least one Subject of type Keyword')
+            sys.exit(1)
+        return tags
 
 
 class FigshareApi:
@@ -78,6 +172,29 @@ class FigshareApi:
 
     def __init__(self):
         self.api_token = environ.get('figshare_token')
+
+    def get_licence_list(self):
+        url = '{}/account/licenses'.format(self.API_ROOT)
+        # We need the whole response from issue_request, not just a specific JSON key value
+        # - TODO this could be handled better to avoid repeating the json.loads() call etc
+        licence_list_bytes = self.issue_request('GET', url, 200)
+        try:
+            licence_list = json.loads(licence_list_bytes)
+        except ValueError:
+            logging.error(
+                'Could not read licence list from Figshare API - invalid JSON')
+            sys.exit(1)
+        # Figshare licences format is not strongly policed -
+        # normalise them all to remove http(s) and www prefixes
+        regex = re.compile('^(?:https?://)?(?:www\\.)?', re.IGNORECASE)
+        for licence in licence_list:
+            try:
+                licence.update(url=regex.sub('', licence['url']))
+            except KeyError:
+                logging.error(
+                    'No URL found in licence info from Figshare API')
+                sys.exit(1)
+        return licence_list
 
     def create_project(self, metadata):
         url = '{}/account/projects'.format(self.API_ROOT)
@@ -118,6 +235,10 @@ class FigshareApi:
                 logging.error(
                     'No data found in Figshare API for requested item {}'.format(expected_key))
                 sys.exit(1)
+
+        # If no expected key was specified, return the whole response
+        # (this is to accommodate get_licence_list requirements - TODO improve?)
+        return response.content
 
     def construct_file_info(self, file_bytes, file_name):
         md5 = hashlib.md5()
