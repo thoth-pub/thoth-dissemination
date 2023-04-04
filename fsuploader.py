@@ -105,9 +105,26 @@ class FigshareUploader(Uploader):
             'custom_fields': {
                 'Thoth Work ID': self.work_id,
             },
-            # Optional fields:
-            # resource_title = text value for hyperlink to resource_doi
         }
+        # Optional fields (must not be None):
+        pub_date = work_metadata.get('publicationDate')
+        if pub_date is not None:
+            article_metadata.update({
+                'timeline': {
+                    'publisherPublication': pub_date,
+                },
+            })
+        doi = work_metadata.get('doi')
+        if doi is not None:
+            # Must be DOI only, without URL domain
+            # Thoth database guarantees consistent URL format
+            doi = doi.replace('https://doi.org/', '')
+            article_metadata.update({
+                'resource_doi': doi,
+                # resource_title = display text for hyperlink to resource_doi
+                # Mandatory if resource_doi is supplied; use publisher name as not displayed elsewhere
+                'resource_title': work_metadata['imprint']['publisher']['publisherName'], # all mandatory in Thoth
+            })
 
         # TODO check whether article metadata will need to vary depending on publication type
         return (project_metadata, article_metadata)
