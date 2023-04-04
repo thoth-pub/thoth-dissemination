@@ -31,6 +31,14 @@ class FigshareUploader(Uploader):
         # Must correctly replicate manual upload "embargo" logic if uploading paywalled EPUBs/MOBIs etc.
         api = FigshareApi()
 
+        # Test that no record associated with this work already exists in Figshare repository
+        # TODO first check that the custom field containing the Thoth Work ID exists
+        search_results = api.search_projects(self.work_id)
+        if len(search_results) > 0:
+            logging.error(
+                'Cannot upload to Figshare: an item with this Work ID already exists')
+            sys.exit(1)
+
         # Obtain the current set of available licences from the Figshare API
         licence_list = api.get_licence_list()
 
@@ -67,6 +75,15 @@ class FigshareUploader(Uploader):
             # Only title is mandatory
             'title': work_metadata['title'], # mandatory in Thoth
             'description': long_abstract,
+            # Must submit a group ID for project to be created under "group" storage
+            # rather than "individual" - allows use of group-specific custom fields
+            # Thoth Archiving Network has group ID 49106 on Loughborough repository
+            # (TODO this should be abstracted out e.g. in case we add other Figshare repositories)
+            'group_id': 49106,
+            # Required by us for tracking uploads:
+            'custom_fields': {
+                'Thoth Work ID': self.work_id,
+            },
             # The only other supported field is funding
         }
         article_metadata = {
@@ -80,6 +97,10 @@ class FigshareUploader(Uploader):
             'license': self.get_figshare_licence(work_metadata, licence_list),
             'authors': self.get_figshare_authors(work_metadata),
             'tags': self.get_figshare_tags(work_metadata),
+            # Required by us for tracking uploads:
+            'custom_fields': {
+                'Thoth Work ID': self.work_id,
+            },
             # Optional fields:
             # resource_title = text value for hyperlink to resource_doi
         }
@@ -207,6 +228,21 @@ class FigshareApi:
         article_url = self.issue_request('POST', url, 201, 'location', json_body=metadata)
         article_id = article_url.split('/')[-1]
         return article_id
+
+    def search_projects(self, thoth_work_id):
+        url = '{}/account/projects/search'.format(self.API_ROOT)
+        query = {
+            'search_for': thoth_work_id,
+        }
+        # TODO same issue with handling response as in get_licence_list
+        results = self.issue_request('POST', url, 200, json_body=query)
+        try:
+            results_array = json.loads(results)
+        except ValueError:
+            logging.error(
+                'Could not read search response from Figshare API - invalid JSON')
+            sys.exit(1)
+        return results_array
 
     def issue_request(self, method, url, expected_status, expected_key=None, data_body=None, json_body=None):
         headers = {'Authorization': 'token ' + self.api_token}
