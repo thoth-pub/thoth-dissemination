@@ -33,7 +33,7 @@ class FigshareUploader(Uploader):
 
         # Test that no record associated with this work already exists in Figshare repository
         # TODO first check that the custom field containing the Thoth Work ID exists
-        search_results = api.search_projects(self.work_id)
+        search_results = api.search_articles(self.work_id)
         if len(search_results) > 0:
             logging.error(
                 'Cannot upload to Figshare: an item with this Work ID already exists')
@@ -229,8 +229,11 @@ class FigshareApi:
         article_id = article_url.split('/')[-1]
         return article_id
 
-    def search_projects(self, thoth_work_id):
-        url = '{}/account/projects/search'.format(self.API_ROOT)
+    def search_articles(self, thoth_work_id):
+        # Ideally we would be searching for projects containing the work ID,
+        # not articles - however, Figshare project search apparently fails to
+        # find results in custom fields (while Figshare article search succeeds)
+        url = '{}/account/articles/search'.format(self.API_ROOT)
         query = {
             'search_for': thoth_work_id,
         }
