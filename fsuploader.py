@@ -59,6 +59,10 @@ class FigshareUploader(Uploader):
         api.upload_file(pdf_bytes, '{}.pdf'.format(filename), article_id)
         api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
 
+        # Publish article and project
+        api.publish_article(article_id)
+        api.publish_project(project_id)
+
         # Placeholder message
         logging.info(
             'Successfully uploaded to Figshare: article id {}'.format(article_id))
@@ -228,6 +232,14 @@ class FigshareApi:
         article_url = self.issue_request('POST', url, 201, 'location', json_body=metadata)
         article_id = article_url.split('/')[-1]
         return article_id
+
+    def publish_project(self, project_id):
+        url = '{}/account/projects/{}/publish'.format(self.API_ROOT, project_id)
+        self.issue_request('POST', url, 200)
+
+    def publish_article(self, article_id):
+        url = '{}/account/articles/{}/publish'.format(self.API_ROOT, article_id)
+        self.issue_request('POST', url, 201)
 
     def search_articles(self, thoth_work_id):
         # Ideally we would be searching for projects containing the work ID,
