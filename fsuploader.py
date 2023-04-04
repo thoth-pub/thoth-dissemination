@@ -105,7 +105,7 @@ class FigshareUploader(Uploader):
                 return 'educational resource'
             case 'BOOK_CHAPTER':
                 return 'chapter'
-            case 'EDITED_BOOK', 'BOOK_SET', 'JOURNAL_ISSUE':
+            case 'EDITED_BOOK' | 'BOOK_SET' | 'JOURNAL_ISSUE':
                 return 'book'
             case other:
                 logging.error('Unsupported value for workType metadata field: {}'.format(other))
@@ -286,7 +286,7 @@ class FigshareApi:
         # or 'moving_to_final' if processing is still in progress
         # (likely errors should be caught early in processing).
         if status not in {'moving_to_final', 'available'}:
-            logging.info('Error checking uploaded file: status is {}'.status)
+            logging.info('Error checking uploaded file: status is {}'.format(status))
             sys.exit(1)
 
     def upload_file(self, file_bytes, file_name, article_id):
