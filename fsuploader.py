@@ -11,6 +11,7 @@ import hashlib
 import re
 from io import BytesIO
 from os import environ
+from time import sleep
 from uploader import Uploader
 
 
@@ -349,13 +350,34 @@ class FigshareApi:
         self.issue_request('POST', file_url, 202)
 
     def check_upload_status(self, file_url):
-        status = self.issue_request('GET', file_url, 200, 'status')
-        # Status may be 'available' if upload has been processed successfully,
-        # or 'moving_to_final' if processing is still in progress
-        # (likely errors should be caught early in processing).
-        if status not in {'moving_to_final', 'available'}:
-            logging.info('Error checking uploaded file: status is {}'.format(status))
-            sys.exit(1)
+        # Possible statuses are not documented, but include:
+        # - created: API is still awaiting more content, i.e. complete_upload has not succeeded.
+        # - ic_failure: an error was found in the upload, e.g. MD5 hash mismatch.
+        # - ic_checking: the upload is still being checked.
+        # - moving_to_final: this presumably means checking has been completed.
+        # - available: upload has been successfully finalised.
+        # Upload checking time appears to vary widely, and it may not be practical
+        # to keep re-checking until 'available' is reached.
+        # We can assume that 'created' and 'ic_failure' at this stage indicate failure,
+        # and 'moving_to_final' and 'available' indicate success.
+        # If status is still 'ic_checking' after three tries, assume (hope!) it will succeed.
+        tries = 0
+        while True:
+            status = self.issue_request('GET', file_url, 200, 'status')
+            # print(status)
+            match status:
+                case 'available' | 'moving_to_final':
+                    break
+                case 'ic_checking':
+                    tries += 1
+                    if tries <= 3:
+                        sleep(5)
+                    else:
+                        break
+                case 'created' | 'ic_failure' | _ :
+                    logging.info(
+                        'Error checking uploaded file: status is {}'.format(status))
+                    sys.exit(1)
 
     def upload_file(self, file_bytes, file_name, article_id):
         # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
