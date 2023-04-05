@@ -249,6 +249,15 @@ class FigshareApi:
             self.API_ROOT, project_id)
         article_url = self.issue_request('POST', url, 201, 'location', json_body=metadata)
         article_id = article_url.split('/')[-1]
+        # Workaround for a Figshare issue where the logged-in user is always added
+        # as an author (support ticket #438719). Thoth Archive Admin user on Loughborough
+        # TEST repository has ID 2935478 (on live repository, ID is 3575380).
+        # TODO if necessary to keep this in, abstract the user ID out.
+        # TODO if the user HASN'T been added, this will return 404 - need to treat as success.
+        thoth_author_id = 2935478
+        delete_url = url = '{}/account/articles/{}/authors/{}'.format(
+            self.API_ROOT, article_id, thoth_author_id)
+        self.issue_request('DELETE', delete_url, 204)
         return article_id
 
     def publish_project(self, project_id):
