@@ -49,24 +49,37 @@ class FigshareUploader(Uploader):
         # as a supplement to filling out Figshare metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         pdf_bytes = self.get_pdf_bytes()
+        xml_bytes = self.get_xml_bytes()
         # Filename TBD: use work ID for now
         filename = self.work_id
 
-        # Minimal test with single article and no files
+        # Create a project to represent the Work
         project_id = api.create_project(project_metadata)
-        article_id = api.create_article(article_metadata, project_id)
 
-        # Add files
-        api.upload_file(pdf_bytes, '{}.pdf'.format(filename), article_id)
-        api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
+        # Create an article to represent the PDF publication,
+        # and add the PDF file and full JSON metadata file to it
+        pdf_article_id = api.create_article(article_metadata, project_id)
+        api.upload_file(pdf_bytes, '{}.pdf'.format(filename), pdf_article_id)
+        api.upload_file(metadata_bytes, '{}.json'.format(filename), pdf_article_id)
 
-        # Publish article and project
-        api.publish_article(article_id)
+        # Create an article to represent the XML publication,
+        # and add the XML file and full JSON metadata file to it
+        xml_article_id = api.create_article(article_metadata, project_id)
+        # All current Thoth XML publications list a ZIP file for their URL
+        # rather than anything in application/xml format
+        # Upload as-is rather than extracting and uploading individually -
+        # the upload will lack previews, but display structure more readably
+        api.upload_file(xml_bytes, '{}.zip'.format(filename), xml_article_id)
+        api.upload_file(metadata_bytes, '{}.json'.format(filename), xml_article_id)
+
+        # Publish articles and project
+        api.publish_article(pdf_article_id)
+        api.publish_article(xml_article_id)
         api.publish_project(project_id)
 
         # Placeholder message
         logging.info(
-            'Successfully uploaded to Figshare: article id {}'.format(article_id))
+            'Successfully uploaded to Figshare: project id {}'.format(project_id))
 
     def parse_metadata(self, licence_list):
         """Convert work metadata into Figshare format"""

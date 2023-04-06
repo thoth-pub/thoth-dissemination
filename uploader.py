@@ -52,6 +52,15 @@ class Uploader():
         # Download PDF bytes from PDF URL
         return self.get_data_from_url(pdf_url, 'application/pdf')
 
+    def get_xml_bytes(self):
+        """Retrieve canonical work XML from URL specified in work metadata"""
+        # Extract XML URL from Thoth metadata
+        xml_url = self.get_xml_url()
+        # Download XML bytes from XML URL
+        # All current Thoth XML publications list a ZIP file for their URL
+        # rather than anything in application/xml format
+        return self.get_data_from_url(xml_url, 'application/zip')
+
     def get_formatted_metadata(self, format):
         """Retrieve work metadata from Thoth Export API in specified format"""
         metadata_url = self.export_url + '/specifications/' + \
@@ -94,6 +103,27 @@ class Uploader():
             return pdf_url
         except (IndexError, ValueError):
             logging.error('No PDF Full Text URL found for Work')
+            sys.exit(1)
+
+    def get_xml_url(self):
+        """Extract canonical work XML URL from work metadata"""
+        publications = self.metadata.get(
+            'data').get('work').get('publications')
+        # TODO rework so that calling function can determine whether or not to error/exit
+        # (so far we've been assuming that a PDF is mandatory for all workflows,
+        # but for e.g. Figshare we may want to just upload anything/everything available)
+        try:
+            # There should be a maximum of one XML publication with a maximum of
+            # one canonical location; more than one would be a Thoth database error
+            xml_locations = [n.get('locations') for n in publications if n.get(
+                'publicationType') == 'XML'][0]
+            xml_url = [n.get('fullTextUrl')
+                       for n in xml_locations if n.get('canonical')][0]
+            if not xml_url:
+                raise ValueError
+            return xml_url
+        except (IndexError, ValueError):
+            logging.error('No XML Full Text URL found for Work')
             sys.exit(1)
 
     def get_cover_url(self):
