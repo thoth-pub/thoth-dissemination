@@ -12,6 +12,7 @@ import re
 from io import BytesIO
 from os import environ
 from time import sleep
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -56,26 +57,34 @@ class FigshareUploader(Uploader):
         # Create a project to represent the Work
         project_id = api.create_project(project_metadata)
 
-        # Create an article to represent the PDF publication,
-        # and add the PDF file and full JSON metadata file to it
-        pdf_article_id = api.create_article(article_metadata, project_id)
-        api.upload_file(pdf_bytes, '{}.pdf'.format(filename), pdf_article_id)
-        api.upload_file(metadata_bytes, '{}.json'.format(filename), pdf_article_id)
+        # Any failure after this point will leave incomplete data in
+        # Figshare storage which will need to be removed.
+        try:
+            # Create an article to represent the PDF publication,
+            # and add the PDF file and full JSON metadata file to it
+            pdf_article_id = api.create_article(article_metadata, project_id)
+            api.upload_file(pdf_bytes, '{}.pdf'.format(filename), pdf_article_id)
+            api.upload_file(metadata_bytes, '{}.json'.format(filename), pdf_article_id)
 
-        # Create an article to represent the XML publication,
-        # and add the XML file and full JSON metadata file to it
-        xml_article_id = api.create_article(article_metadata, project_id)
-        # All current Thoth XML publications list a ZIP file for their URL
-        # rather than anything in application/xml format
-        # Upload as-is rather than extracting and uploading individually -
-        # the upload will lack previews, but display structure more readably
-        api.upload_file(xml_bytes, '{}.zip'.format(filename), xml_article_id)
-        api.upload_file(metadata_bytes, '{}.json'.format(filename), xml_article_id)
+            # Create an article to represent the XML publication,
+            # and add the XML file and full JSON metadata file to it
+            xml_article_id = api.create_article(article_metadata, project_id)
+            # All current Thoth XML publications list a ZIP file for their URL
+            # rather than anything in application/xml format
+            # Upload as-is rather than extracting and uploading individually -
+            # the upload will lack previews, but display structure more readably
+            api.upload_file(xml_bytes, '{}.zip'.format(filename), xml_article_id)
+            api.upload_file(metadata_bytes, '{}.json'.format(filename), xml_article_id)
 
-        # Publish articles and project
-        api.publish_article(pdf_article_id)
-        api.publish_article(xml_article_id)
-        api.publish_project(project_id)
+            # Publish articles and project
+            api.publish_article(pdf_article_id)
+            api.publish_article(xml_article_id)
+            api.publish_project(project_id)
+        except DisseminationError as error:
+            # Report failure, and remove any partially-created items from Figshare storage
+            logging.error(error)
+            api.clean_up(project_id)
+            sys.exit(1)
 
         # Placeholder message
         logging.info(
@@ -233,7 +242,11 @@ class FigshareApi:
         url = '{}/account/licenses'.format(self.API_ROOT)
         # We need the whole response from issue_request, not just a specific JSON key value
         # - TODO this could be handled better to avoid repeating the json.loads() call etc
-        licence_list_bytes = self.issue_request('GET', url, 200)
+        try:
+            licence_list_bytes = self.issue_request('GET', url, 200)
+        except DisseminationError as error:
+            logging.error('Getting licence list failed: {}'.format(error))
+            sys.exit(1)
         try:
             licence_list = json.loads(licence_list_bytes)
         except ValueError:
@@ -254,13 +267,20 @@ class FigshareApi:
 
     def create_project(self, metadata):
         url = '{}/account/projects'.format(self.API_ROOT)
-        project_id = self.issue_request('POST', url, 201, 'entity_id', json_body=metadata)
+        try:
+            project_id = self.issue_request('POST', url, 201, 'entity_id', json_body=metadata)
+        except DisseminationError as error:
+            logging.error('Creating project failed: {}'.format(error))
+            sys.exit(1)
         return project_id
 
     def create_article(self, metadata, project_id):
         url = '{}/account/projects/{}/articles'.format(
             self.API_ROOT, project_id)
-        article_url = self.issue_request('POST', url, 201, 'location', json_body=metadata)
+        try:
+            article_url = self.issue_request('POST', url, 201, 'location', json_body=metadata)
+        except DisseminationError as error:
+            raise DisseminationError('Creating article failed: {}'.format(error))
         article_id = article_url.split('/')[-1]
         # Workaround for a Figshare issue where the logged-in user is always added
         # as an author (support ticket #438719). Thoth Archive Admin user on Loughborough
@@ -270,16 +290,26 @@ class FigshareApi:
         thoth_author_id = 2935478
         delete_url = url = '{}/account/articles/{}/authors/{}'.format(
             self.API_ROOT, article_id, thoth_author_id)
-        self.issue_request('DELETE', delete_url, 204)
+        try:
+            self.issue_request('DELETE', delete_url, 204)
+        except DisseminationError as error:
+            raise DisseminationError(
+                'Failed to remove user account from author list: {}'.format(error))
         return article_id
 
     def publish_project(self, project_id):
         url = '{}/account/projects/{}/publish'.format(self.API_ROOT, project_id)
-        self.issue_request('POST', url, 200)
+        try:
+            self.issue_request('POST', url, 200)
+        except DisseminationError as error:
+            raise DisseminationError('Publishing project failed: {}'.format(error))
 
     def publish_article(self, article_id):
         url = '{}/account/articles/{}/publish'.format(self.API_ROOT, article_id)
-        self.issue_request('POST', url, 201)
+        try:
+            self.issue_request('POST', url, 201)
+        except DisseminationError as error:
+            raise DisseminationError('Publishing article failed: {}'.format(error))
 
     def search_articles(self, thoth_work_id):
         # Ideally we would be searching for projects containing the work ID,
@@ -289,8 +319,12 @@ class FigshareApi:
         query = {
             'search_for': thoth_work_id,
         }
-        # TODO same issue with handling response as in get_licence_list
-        results = self.issue_request('POST', url, 200, json_body=query)
+        try:
+            # TODO same issue with handling response as in get_licence_list
+            results = self.issue_request('POST', url, 200, json_body=query)
+        except DisseminationError as error:
+            logging.error('Article search failed: {}'.format(error))
+            sys.exit(1)
         try:
             results_array = json.loads(results)
         except ValueError:
@@ -298,6 +332,17 @@ class FigshareApi:
                 'Could not read search response from Figshare API - invalid JSON')
             sys.exit(1)
         return results_array
+
+    def clean_up(self, project_id=None):
+        # Deleting a project should delete any articles/files under it (if under "group" storage).
+        # This will fail if the project or any of its articles is already published.
+        if project_id is not None:
+            url = '{}/account/projects/{}'.format(self.API_ROOT, project_id)
+            try:
+                self.issue_request('DELETE', url, 204)
+            except DisseminationError as error:
+                # Can't do anything about this. Calling function will exit.
+                logging.error('Failed to delete incomplete project: {}'.format(error))
 
     def issue_request(self, method, url, expected_status, expected_key=None, data_body=None, json_body=None):
         headers = {'Authorization': 'token ' + self.api_token}
@@ -309,9 +354,8 @@ class FigshareApi:
             # Error responses sometimes include { code, message } json
             # but the message can be unwieldy and the code is not user-friendly
             # Print calling function, and/or add more INFO messages during process?
-            logging.error('Error contacting Figshare API (status code {})'.format(
+            raise DisseminationError('Error contacting Figshare API (status code {})'.format(
                 response.status_code))
-            sys.exit(1)
 
         if expected_key is not None:
             try:
@@ -319,13 +363,12 @@ class FigshareApi:
                 key_value = response_json[expected_key]
                 return key_value
             except ValueError:
-                logging.error(
+                raise DisseminationError(
                     'Unexpected response from Figshare API: {}'.format(response.text))
-                sys.exit(1)
+
             except KeyError:
-                logging.error(
+                raise DisseminationError(
                     'No data found in Figshare API for requested item {}'.format(expected_key))
-                sys.exit(1)
 
         # If no expected key was specified, return the whole response
         # (this is to accommodate get_licence_list requirements - TODO improve?)
@@ -345,13 +388,19 @@ class FigshareApi:
         url = '{}/account/articles/{}/files'.format(
             self.API_ROOT, article_id)
         file_info = self.construct_file_info(file_bytes, file_name)
-        file_url = self.issue_request(
-            'POST', url, 201, 'location', json_body=file_info)
+        try:
+            file_url = self.issue_request(
+                'POST', url, 201, 'location', json_body=file_info)
+        except DisseminationError:
+            raise
         return file_url
 
     def get_upload_url(self, file_url):
-        upload_url = self.issue_request(
-            'GET', file_url, 200, 'upload_url')
+        try:
+            upload_url = self.issue_request(
+                'GET', file_url, 200, 'upload_url')
+        except DisseminationError:
+            raise
         return upload_url
 
     def upload_part(self, upload_url, file_stream, part):
@@ -359,17 +408,29 @@ class FigshareApi:
         file_stream.seek(part['startOffset'])
         data = file_stream.read(
             part['endOffset'] - part['startOffset'] + 1)
-        self.issue_request('PUT', url, 200, data_body=data)
+        try:
+            self.issue_request('PUT', url, 200, data_body=data)
+        except DisseminationError:
+            raise
 
     def upload_data(self, upload_url, file_bytes):
         # Upload service API may require the data to be submitted in multiple parts.
-        parts = self.issue_request('GET', upload_url, 200, 'parts')
+        try:
+            parts = self.issue_request('GET', upload_url, 200, 'parts')
+        except DisseminationError:
+            raise
         file_stream = BytesIO(file_bytes)
         for part in parts:
-            self.upload_part(upload_url, file_stream, part)
+            try:
+                self.upload_part(upload_url, file_stream, part)
+            except DisseminationError:
+                raise
 
     def complete_upload(self, file_url):
-        self.issue_request('POST', file_url, 202)
+        try:
+            self.issue_request('POST', file_url, 202)
+        except DisseminationError:
+            raise
 
     def check_upload_status(self, file_url):
         # Possible statuses are not documented, but include:
@@ -385,7 +446,10 @@ class FigshareApi:
         # If status is still 'ic_checking' after three tries, assume (hope!) it will succeed.
         tries = 0
         while True:
-            status = self.issue_request('GET', file_url, 200, 'status')
+            try:
+                status = self.issue_request('GET', file_url, 200, 'status')
+            except DisseminationError:
+                raise
             # print(status)
             match status:
                 case 'available' | 'moving_to_final':
@@ -397,17 +461,19 @@ class FigshareApi:
                     else:
                         break
                 case 'created' | 'ic_failure' | _ :
-                    logging.info(
+                    raise DisseminationError(
                         'Error checking uploaded file: status is {}'.format(status))
-                    sys.exit(1)
 
     def upload_file(self, file_bytes, file_name, article_id):
-        # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
-        file_url = self.initiate_new_upload(article_id, file_bytes, file_name)
-        # File data needs to be uploaded to a separate URL at the Figshare upload service API.
-        upload_url = self.get_upload_url(file_url)
-        self.upload_data(upload_url, file_bytes)
-        # Contact main Figshare API again to confirm we've finished uploading data.
-        self.complete_upload(file_url)
-        # Check that the data was processed successfully.
-        self.check_upload_status(file_url)
+        try:
+            # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
+            file_url = self.initiate_new_upload(article_id, file_bytes, file_name)
+            # File data needs to be uploaded to a separate URL at the Figshare upload service API.
+            upload_url = self.get_upload_url(file_url)
+            self.upload_data(upload_url, file_bytes)
+            # Contact main Figshare API again to confirm we've finished uploading data.
+            self.complete_upload(file_url)
+            # Check that the data was processed successfully.
+            self.check_upload_status(file_url)
+        except DisseminationError as error:
+            raise DisseminationError('Uploading file failed: {}'.format(error))
