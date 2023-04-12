@@ -87,14 +87,19 @@ class FigshareUploader(Uploader):
                     filename, PUB_FORMATS[publication[0]].split('/')[-1]), article_id)
                 api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
                 api.publish_article(article_id)
-
-            # Publish project
-            api.publish_project(project_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage
             logging.error(error)
             api.clean_up(project_id)
             sys.exit(1)
+
+        # Publish project
+        # Don't do this within the try block for Loughborough repository
+        # as it's configured to require review before publishing -
+        # articles will therefore be "pending" at this stage so
+        # publishing project itself would always fail and trigger cleanup.
+        # (TBD whether this will have any effect or if a manual publication step is required)
+        api.publish_project(project_id)
 
         # Placeholder message
         logging.info(
