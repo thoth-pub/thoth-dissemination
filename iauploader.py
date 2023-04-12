@@ -9,6 +9,7 @@ from internetarchive import get_item, upload, exceptions as ia_except
 from io import BytesIO
 from os import environ
 from requests import exceptions as req_except
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -32,7 +33,12 @@ class IAUploader(Uploader):
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Internet Archive metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
-        pdf_bytes = self.get_pdf_bytes()
+        # Can't continue if no PDF file is present
+        try:
+            pdf_bytes = self.get_pdf_bytes()
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Convert Thoth work metadata into Internet Archive format
         ia_metadata = self.parse_metadata()

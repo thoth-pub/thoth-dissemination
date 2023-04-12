@@ -8,6 +8,7 @@ import sys
 import sword2
 from io import BytesIO
 from os import environ
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -20,7 +21,12 @@ class SwordV2Uploader(Uploader):
 
         # Metadata file format TBD: use CSV for now
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
-        pdf_bytes = self.get_pdf_bytes()
+        # Can't continue if no PDF file is present
+        try:
+            pdf_bytes = self.get_pdf_bytes()
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Convert Thoth work metadata into SWORD v2 format
         sword_metadata = self.parse_metadata()

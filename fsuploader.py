@@ -49,8 +49,12 @@ class FigshareUploader(Uploader):
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Figshare metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
-        pdf_bytes = self.get_pdf_bytes()
-        xml_bytes = self.get_xml_bytes()
+        try:
+            pdf_bytes = self.get_pdf_bytes()
+            xml_bytes = self.get_xml_bytes()
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
         # Filename TBD: use work ID for now
         filename = self.work_id
 

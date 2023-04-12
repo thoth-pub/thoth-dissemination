@@ -7,6 +7,7 @@ import logging
 import sys
 import json
 import requests
+from errors import DisseminationError
 from thothlibrary import ThothClient, ThothError
 
 
@@ -47,25 +48,35 @@ class Uploader():
 
     def get_pdf_bytes(self):
         """Retrieve canonical work PDF from URL specified in work metadata"""
-        # Extract PDF URL from Thoth metadata
-        pdf_url = self.get_pdf_url()
-        # Download PDF bytes from PDF URL
-        return self.get_data_from_url(pdf_url, 'application/pdf')
+        try:
+            # Extract PDF URL from Thoth metadata
+            pdf_url = self.get_pdf_url()
+            # Download PDF bytes from PDF URL
+            return self.get_data_from_url(pdf_url, 'application/pdf')
+        except DisseminationError:
+            raise
 
     def get_xml_bytes(self):
         """Retrieve canonical work XML from URL specified in work metadata"""
-        # Extract XML URL from Thoth metadata
-        xml_url = self.get_xml_url()
-        # Download XML bytes from XML URL
-        # All current Thoth XML publications list a ZIP file for their URL
-        # rather than anything in application/xml format
-        return self.get_data_from_url(xml_url, 'application/zip')
+        try:
+            # Extract XML URL from Thoth metadata
+            xml_url = self.get_xml_url()
+            # Download XML bytes from XML URL
+            # All current Thoth XML publications list a ZIP file for their URL
+            # rather than anything in application/xml format
+            return self.get_data_from_url(xml_url, 'application/zip')
+        except DisseminationError:
+            raise
 
     def get_formatted_metadata(self, format):
         """Retrieve work metadata from Thoth Export API in specified format"""
         metadata_url = self.export_url + '/specifications/' + \
             format + '/work/' + self.work_id
-        return self.get_data_from_url(metadata_url)
+        try:
+            return self.get_data_from_url(metadata_url)
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
     def get_cover_image(self):
         """
@@ -85,7 +96,11 @@ class Uploader():
                     'Format for cover image at URL "{}" is not yet supported'.format(cover_url))
                 sys.exit(1)
 
-        return self.get_data_from_url(cover_url, expected_format)
+        try:
+            return self.get_data_from_url(cover_url, expected_format)
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
     def get_pdf_url(self):
         """Extract canonical work PDF URL from work metadata"""
@@ -102,16 +117,12 @@ class Uploader():
                 raise ValueError
             return pdf_url
         except (IndexError, ValueError):
-            logging.error('No PDF Full Text URL found for Work')
-            sys.exit(1)
+            raise DisseminationError('No PDF Full Text URL found for Work')
 
     def get_xml_url(self):
         """Extract canonical work XML URL from work metadata"""
         publications = self.metadata.get(
             'data').get('work').get('publications')
-        # TODO rework so that calling function can determine whether or not to error/exit
-        # (so far we've been assuming that a PDF is mandatory for all workflows,
-        # but for e.g. Figshare we may want to just upload anything/everything available)
         try:
             # There should be a maximum of one XML publication with a maximum of
             # one canonical location; more than one would be a Thoth database error
@@ -123,8 +134,7 @@ class Uploader():
                 raise ValueError
             return xml_url
         except (IndexError, ValueError):
-            logging.error('No XML Full Text URL found for Work')
-            sys.exit(1)
+            raise DisseminationError('No XML Full Text URL found for Work')
 
     def get_cover_url(self):
         """Extract cover URL from work metadata"""
@@ -176,19 +186,16 @@ class Uploader():
             url_headers = requests.head(url, allow_redirects=True)
 
             if url_headers.status_code != 200:
-                logging.error('Error retrieving data from "{}": {}'.format(
+                raise DisseminationError('Error retrieving data from "{}": {}'.format(
                     url, url_headers.text))
-                sys.exit(1)
             elif url_headers.headers.get('Content-Type') != expected_format:
-                logging.error('Data at "{}" is not in format "{}"'.format(
+                raise DisseminationError('Data at "{}" is not in format "{}"'.format(
                     url, expected_format))
-                sys.exit(1)
 
         url_content = requests.get(url)
         if url_content.status_code == 200:
             # Return downloaded data as bytes
             return url_content.content
         else:
-            logging.error('Error retrieving data from "{}": {}'.format(
+            raise DisseminationError('Error retrieving data from "{}": {}'.format(
                 url, url_content.text))
-            sys.exit(1)
