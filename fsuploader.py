@@ -13,7 +13,7 @@ from io import BytesIO
 from os import environ
 from time import sleep
 from errors import DisseminationError
-from uploader import Uploader
+from uploader import Uploader, PUB_FORMATS
 
 
 class FigshareUploader(Uploader):
@@ -49,12 +49,20 @@ class FigshareUploader(Uploader):
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Figshare metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
-        try:
-            pdf_bytes = self.get_publication_bytes('PDF')
-            xml_bytes = self.get_publication_bytes('XML')
-        except DisseminationError as error:
-            logging.error(error)
+
+        # Include all available publication files. Don't fail if
+        # one is missing, but do fail if none are found at all.
+        publications = []
+        for format in PUB_FORMATS:
+            try:
+                publication_bytes = self.get_publication_bytes(format)
+                publications.append((format, publication_bytes))
+            except DisseminationError as error:
+                pass
+        if len(publications) < 1:
+            logging.error('No uploadable publication files found')
             sys.exit(1)
+
         # Filename TBD: use work ID for now
         filename = self.work_id
 
@@ -64,25 +72,23 @@ class FigshareUploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # Figshare storage which will need to be removed.
         try:
-            # Create an article to represent the PDF publication,
-            # and add the PDF file and full JSON metadata file to it
-            pdf_article_id = api.create_article(article_metadata, project_id)
-            api.upload_file(pdf_bytes, '{}.pdf'.format(filename), pdf_article_id)
-            api.upload_file(metadata_bytes, '{}.json'.format(filename), pdf_article_id)
-
-            # Create an article to represent the XML publication,
-            # and add the XML file and full JSON metadata file to it
-            xml_article_id = api.create_article(article_metadata, project_id)
+            # Create an article to represent each publication,
+            # add the publication file and full JSON metadata file to it,
+            # then publish it
             # All current Thoth XML publications list a ZIP file for their URL
             # rather than anything in application/xml format
             # Upload as-is rather than extracting and uploading individually -
             # the upload will lack previews, but display structure more readably
-            api.upload_file(xml_bytes, '{}.zip'.format(filename), xml_article_id)
-            api.upload_file(metadata_bytes, '{}.json'.format(filename), xml_article_id)
+            for publication in publications:
+                article_id = api.create_article(article_metadata, project_id)
+                api.upload_file(publication[1], '{}.{}'.format(
+                    # TODO conveniently this works for both existing formats,
+                    # but should replace with something more robust
+                    filename, PUB_FORMATS[publication[0]].split('/')[-1]), article_id)
+                api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
+                api.publish_article(article_id)
 
-            # Publish articles and project
-            api.publish_article(pdf_article_id)
-            api.publish_article(xml_article_id)
+            # Publish project
             api.publish_project(project_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage
