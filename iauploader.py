@@ -35,7 +35,7 @@ class IAUploader(Uploader):
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         # Can't continue if no PDF file is present
         try:
-            pdf_bytes = self.get_pdf_bytes()
+            pdf_bytes = self.get_publication_bytes('PDF')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)

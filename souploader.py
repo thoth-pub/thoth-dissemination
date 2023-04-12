@@ -44,7 +44,7 @@ class SOUploader(Uploader):
         cover_bytes = self.get_cover_image()
         # Can't continue if no PDF file is present
         try:
-            pdf_bytes = self.get_pdf_bytes()
+            pdf_bytes = self.get_publication_bytes('PDF')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)

@@ -23,7 +23,7 @@ class SwordV2Uploader(Uploader):
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
         # Can't continue if no PDF file is present
         try:
-            pdf_bytes = self.get_pdf_bytes()
+            pdf_bytes = self.get_publication_bytes('PDF')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)

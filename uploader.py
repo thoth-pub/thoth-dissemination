@@ -11,6 +11,13 @@ from errors import DisseminationError
 from thothlibrary import ThothClient, ThothError
 
 
+PUB_FORMATS = {
+    'PDF': 'application/pdf',
+    # All current Thoth XML publications list a ZIP file for their URL
+    # rather than anything in application/xml format
+    'XML': 'application/zip',
+}
+
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
@@ -46,25 +53,13 @@ class Uploader():
 
         return metadata_json
 
-    def get_pdf_bytes(self):
-        """Retrieve canonical work PDF from URL specified in work metadata"""
+    def get_publication_bytes(self, publication_type):
+        """Retrieve canonical work publication from URL specified in work metadata"""
         try:
-            # Extract PDF URL from Thoth metadata
-            pdf_url = self.get_pdf_url()
-            # Download PDF bytes from PDF URL
-            return self.get_data_from_url(pdf_url, 'application/pdf')
-        except DisseminationError:
-            raise
-
-    def get_xml_bytes(self):
-        """Retrieve canonical work XML from URL specified in work metadata"""
-        try:
-            # Extract XML URL from Thoth metadata
-            xml_url = self.get_xml_url()
-            # Download XML bytes from XML URL
-            # All current Thoth XML publications list a ZIP file for their URL
-            # rather than anything in application/xml format
-            return self.get_data_from_url(xml_url, 'application/zip')
+            # Extract publication URL from Thoth metadata
+            publication_url = self.get_publication_url(publication_type)
+            # Download publication bytes from publication URL
+            return self.get_data_from_url(publication_url, PUB_FORMATS[publication_type])
         except DisseminationError:
             raise
 
@@ -102,39 +97,22 @@ class Uploader():
             logging.error(error)
             sys.exit(1)
 
-    def get_pdf_url(self):
-        """Extract canonical work PDF URL from work metadata"""
+    def get_publication_url(self, publication_type):
+        """Extract canonical work publication URL from work metadata"""
         publications = self.metadata.get(
             'data').get('work').get('publications')
         try:
-            # There should be a maximum of one PDF publication with a maximum of
+            # There should be a maximum of one publication per type with a maximum of
             # one canonical location; more than one would be a Thoth database error
-            pdf_locations = [n.get('locations') for n in publications if n.get(
-                'publicationType') == 'PDF'][0]
-            pdf_url = [n.get('fullTextUrl')
-                       for n in pdf_locations if n.get('canonical')][0]
-            if not pdf_url:
+            publication_locations = [n.get('locations') for n in publications if n.get(
+                'publicationType') == publication_type][0]
+            publication_url = [n.get('fullTextUrl')
+                       for n in publication_locations if n.get('canonical')][0]
+            if not publication_url:
                 raise ValueError
-            return pdf_url
+            return publication_url
         except (IndexError, ValueError):
-            raise DisseminationError('No PDF Full Text URL found for Work')
-
-    def get_xml_url(self):
-        """Extract canonical work XML URL from work metadata"""
-        publications = self.metadata.get(
-            'data').get('work').get('publications')
-        try:
-            # There should be a maximum of one XML publication with a maximum of
-            # one canonical location; more than one would be a Thoth database error
-            xml_locations = [n.get('locations') for n in publications if n.get(
-                'publicationType') == 'XML'][0]
-            xml_url = [n.get('fullTextUrl')
-                       for n in xml_locations if n.get('canonical')][0]
-            if not xml_url:
-                raise ValueError
-            return xml_url
-        except (IndexError, ValueError):
-            raise DisseminationError('No XML Full Text URL found for Work')
+            raise DisseminationError('No {} Full Text URL found for Work'.format(publication_type))
 
     def get_cover_url(self):
         """Extract cover URL from work metadata"""

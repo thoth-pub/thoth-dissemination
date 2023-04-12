@@ -50,8 +50,8 @@ class FigshareUploader(Uploader):
         # as a supplement to filling out Figshare metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         try:
-            pdf_bytes = self.get_pdf_bytes()
-            xml_bytes = self.get_xml_bytes()
+            pdf_bytes = self.get_publication_bytes('PDF')
+            xml_bytes = self.get_publication_bytes('XML')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
