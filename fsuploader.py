@@ -80,7 +80,9 @@ class FigshareUploader(Uploader):
             # Upload as-is rather than extracting and uploading individually -
             # the upload will lack previews, but display structure more readably
             for publication in publications:
-                article_id = api.create_article(article_metadata, project_id)
+                # Append publication type to article title, to tell them apart
+                article_id = api.create_article(dict(article_metadata,
+                    title='{} ({})'.format(article_metadata['title'], publication[0])), project_id)
                 api.upload_file(publication[1], '{}.{}'.format(
                     # TODO conveniently this works for both existing formats,
                     # but should replace with something more robust
@@ -92,6 +94,10 @@ class FigshareUploader(Uploader):
             logging.error(error)
             api.clean_up(project_id)
             sys.exit(1)
+        except:
+            # Unexpected failure. Let program crash, but still need to tidy Figshare storage.
+            api.clean_up(project_id)
+            raise
 
         # Publish project
         # Don't do this within the try block for Loughborough repository
@@ -115,11 +121,12 @@ class FigshareUploader(Uploader):
             sys.exit(1)
         project_metadata = {
             # Only title is mandatory
-            'title': work_metadata['title'], # mandatory in Thoth
+            'title': work_metadata['fullTitle'], # mandatory in Thoth
             'description': long_abstract,
             # Must submit a group ID for project to be created under "group" storage
             # rather than "individual" - allows use of group-specific custom fields
-            # Thoth Archiving Network has group ID 49106 on Loughborough repository
+            # Thoth Archiving Network has group ID 49106 on Loughborough TEST repository
+            # and group ID 48292 on Loughborough LIVE repository.
             # (TODO this should be abstracted out e.g. in case we add other Figshare repositories)
             'group_id': 49106,
             # Required by us for tracking uploads:
@@ -132,7 +139,7 @@ class FigshareUploader(Uploader):
             # Note manual upload testing was done with minimal metadata -
             # can view json representation of manual uploads for pointers.
             # Mandatory fields for creation:
-            'title': work_metadata['title'], # mandatory in Thoth
+            'title': work_metadata['fullTitle'], # mandatory in Thoth
             # Mandatory fields for publication:
             'description': long_abstract,
             'defined_type': self.get_figshare_type(work_metadata),
@@ -150,6 +157,7 @@ class FigshareUploader(Uploader):
             article_metadata.update({
                 'timeline': {
                     'publisherPublication': pub_date,
+                    'firstOnline': pub_date,
                 },
             })
         doi = work_metadata.get('doi')
@@ -164,7 +172,6 @@ class FigshareUploader(Uploader):
                 'resource_title': work_metadata['imprint']['publisher']['publisherName'], # all mandatory in Thoth
             })
 
-        # TODO check whether article metadata will need to vary depending on publication type
         return (project_metadata, article_metadata)
 
     @staticmethod
@@ -222,6 +229,7 @@ class FigshareUploader(Uploader):
     def get_figshare_authors(metadata):
         # TBD which contributors should be submitted - assume only
         # main contributors, in line with Internet Archive requirements.
+        # Note they will be displayed as "Authored by:" irrespective of contribution type.
         # Figshare also accepts other author details such as ORCIDs, however,
         # this can lead to rejected submissions if a record already exists
         # within Figshare for the author with that ORCID (Thoth doesn't track this).
@@ -299,7 +307,7 @@ class FigshareApi:
         article_id = article_url.split('/')[-1]
         # Workaround for a Figshare issue where the logged-in user is always added
         # as an author (support ticket #438719). Thoth Archive Admin user on Loughborough
-        # TEST repository has ID 2935478 (on live repository, ID is 3575380).
+        # TEST repository has ID 2935478 (on live repository, ID is 14831581).
         # TODO if necessary to keep this in, abstract the user ID out.
         # TODO if the user HASN'T been added, this will return 404 - need to treat as success.
         thoth_author_id = 2935478
@@ -389,7 +397,8 @@ class FigshareApi:
         # (this is to accommodate get_licence_list requirements - TODO improve?)
         return response.content
 
-    def construct_file_info(self, file_bytes, file_name):
+    @staticmethod
+    def construct_file_info(file_bytes, file_name):
         md5 = hashlib.md5()
         md5.update(file_bytes)
         file_info = {
@@ -434,12 +443,12 @@ class FigshareApi:
             parts = self.issue_request('GET', upload_url, 200, 'parts')
         except DisseminationError:
             raise
-        file_stream = BytesIO(file_bytes)
-        for part in parts:
-            try:
-                self.upload_part(upload_url, file_stream, part)
-            except DisseminationError:
-                raise
+        with BytesIO(file_bytes) as file_stream:
+            for part in parts:
+                try:
+                    self.upload_part(upload_url, file_stream, part)
+                except DisseminationError:
+                    raise
 
     def complete_upload(self, file_url):
         try:
@@ -465,7 +474,6 @@ class FigshareApi:
                 status = self.issue_request('GET', file_url, 200, 'status')
             except DisseminationError:
                 raise
-            # print(status)
             match status:
                 case 'available' | 'moving_to_final':
                     break
