@@ -52,6 +52,7 @@ class FigshareUploader(Uploader):
 
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
+        # (Any paywalled publications will not be retrieved.)
         publications = {}
         for format in PUB_FORMATS:
             try:

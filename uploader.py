@@ -21,7 +21,37 @@ PUB_FORMATS = {
     'XML': {
         'content_type': 'application/zip',
         'file_extension': '.zip',
-    }
+    },
+    # The following have not been fully tested as most current examples
+    # in Thoth are paywalled and cannot be accessed by the disseminator
+    'EPUB': {
+        'content_type': 'application/epub+zip',
+        'file_extension': '.epub',
+    },
+    'AZW3': {
+        'content_type': 'application/vnd.amazon.ebook',
+        'file_extension': '.azw3',
+    },
+    'MOBI': {
+        'content_type': 'application/x-mobipocket-ebook',
+        'file_extension': '.mobi',
+    },
+    # The following have not been tested as no examples exist in Thoth yet
+    'DOCX': {
+        'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'file_extension': '.docx',
+    },
+    'FICTION_BOOK': {
+        'content_type': 'text/xml',
+        'file_extension': '.fb2',
+    },
+    # Not clear how to handle HTML publications: fetching from the Full Text URL
+    # is likely to return just the main (TOC) page as the content is under separate
+    # links. May also be 'text/html' and '.html' rather than the below.
+    # 'HTML': {
+    #     'content_type': 'application/xhtml+xml',
+    #     'file_extension': '.xhtml',
+    # },
 }
 
 class Uploader():
