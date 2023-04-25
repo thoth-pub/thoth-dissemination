@@ -52,11 +52,11 @@ class FigshareUploader(Uploader):
 
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
-        publications = []
+        publications = {}
         for format in PUB_FORMATS:
             try:
                 publication_bytes = self.get_publication_bytes(format)
-                publications.append((format, publication_bytes))
+                publications[format] = publication_bytes
             except DisseminationError as error:
                 pass
         if len(publications) < 1:
@@ -79,14 +79,12 @@ class FigshareUploader(Uploader):
             # rather than anything in application/xml format
             # Upload as-is rather than extracting and uploading individually -
             # the upload will lack previews, but display structure more readably
-            for publication in publications:
+            for pub_format, pub_bytes in publications.items():
                 # Append publication type to article title, to tell them apart
                 article_id = api.create_article(dict(article_metadata,
-                    title='{} ({})'.format(article_metadata['title'], publication[0])), project_id)
-                api.upload_file(publication[1], '{}.{}'.format(
-                    # TODO conveniently this works for both existing formats,
-                    # but should replace with something more robust
-                    filename, PUB_FORMATS[publication[0]].split('/')[-1]), article_id)
+                    title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
+                api.upload_file(pub_bytes, '{}{}'.format(
+                    filename, PUB_FORMATS[pub_format]['file_extension']), article_id)
                 api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
                 api.publish_article(article_id)
         except DisseminationError as error:

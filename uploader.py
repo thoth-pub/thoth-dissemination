@@ -12,10 +12,16 @@ from thothlibrary import ThothClient, ThothError
 
 
 PUB_FORMATS = {
-    'PDF': 'application/pdf',
+    'PDF': {
+        'content_type': 'application/pdf',
+        'file_extension': '.pdf',
+    },
     # All current Thoth XML publications list a ZIP file for their URL
     # rather than anything in application/xml format
-    'XML': 'application/zip',
+    'XML': {
+        'content_type': 'application/zip',
+        'file_extension': '.zip',
+    }
 }
 
 class Uploader():
@@ -59,7 +65,7 @@ class Uploader():
             # Extract publication URL from Thoth metadata
             publication_url = self.get_publication_url(publication_type)
             # Download publication bytes from publication URL
-            return self.get_data_from_url(publication_url, PUB_FORMATS[publication_type])
+            return self.get_data_from_url(publication_url, PUB_FORMATS[publication_type]['content_type'])
         except DisseminationError:
             raise
 
