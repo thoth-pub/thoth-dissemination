@@ -200,27 +200,31 @@ class FigshareUploader(Uploader):
     @staticmethod
     def get_figshare_licence(metadata, licence_list):
         # Find the Figshare licence object corresponding to the Thoth licence URL.
-        # Note URLs must match exactly, barring http(s) and www prefixes -
+        # Note URLs must match exactly, barring http(s) and www prefixes and final '/' -
         # e.g. "creativecommons.org/licenses/by/4.0/legalcode" will not match to "creativecommons.org/licenses/by/4.0/".
-        # If multiple Figshare licence objects have the same URL, the lowest numbered will be used.
+        # If multiple Figshare licence objects have the same URL, the first in the list will be used.
         # If Thoth licence URL field is empty or no Figshare licence exists for it, raise an error.
-        thoth_licence = metadata.get('license')
-        if thoth_licence is None:
+        thoth_licence_raw = metadata.get('license')
+        if thoth_licence_raw is None:
             logging.error('Cannot upload to Figshare: work must have a Licence')
             sys.exit(1)
-        # Thoth licence field is unchecked free text - try to ensure it matches
-        # Figshare licence options by normalising to remove http(s) and www prefixes.
-        # (IGNORECASE may be redundant if Thoth licences are lowercased on entry into database)
-        regex = re.compile('^(?:https?://)?(?:www\\.)?', re.IGNORECASE)
-        thoth_licence = regex.sub('', thoth_licence)
+        # Thoth licence field is unchecked free text and Figshare licences format
+        # is not strongly policed. When checking for matches, we therefore want to
+        # disregard http(s) and www prefixes, and optional final '/'.
+        match_pattern = '^(?:https?://)?(?:www\.)?{}/?$'
+        # Retrieve a normalised version of the Thoth licence, without prefixes.
+        # We'll re-insert this into the match pattern for comparison with the non-normalised Figshare licences.
+        # (IGNORECASE may be redundant here if Thoth licences are lowercased on entry into database)
+        try:
+            thoth_licence = re.fullmatch(match_pattern.format('(.*)'), thoth_licence_raw, re.IGNORECASE).group(1)
+        except AttributeError:
+            logging.error('Work licence {} not in expected URL format'.format(thoth_licence))
+            sys.exit(1)
         # Figshare requires licence information to be submitted as the integer representing the licence object.
-        licence_int = None
-        for fs_licence in licence_list:
-            if thoth_licence == fs_licence.get('url'):
-                licence_int = fs_licence.get('value')
-                break
+        licence_int = next((fs_licence.get('value') for fs_licence in licence_list
+            if re.fullmatch(match_pattern.format(thoth_licence), fs_licence.get('url'), re.IGNORECASE) is not None), None)
         if licence_int == None:
-            logging.error('Licence {} not supported by Figshare'.format(thoth_licence))
+            logging.error('Work licence {} not supported by Figshare'.format(thoth_licence))
             sys.exit(1)
         return licence_int
 
@@ -275,16 +279,6 @@ class FigshareApi:
             logging.error(
                 'Could not read licence list from Figshare API - invalid JSON')
             sys.exit(1)
-        # Figshare licences format is not strongly policed -
-        # normalise them all to remove http(s) and www prefixes
-        regex = re.compile('^(?:https?://)?(?:www\\.)?', re.IGNORECASE)
-        for licence in licence_list:
-            try:
-                licence.update(url=regex.sub('', licence['url']))
-            except KeyError:
-                logging.error(
-                    'No URL found in licence info from Figshare API')
-                sys.exit(1)
         return licence_list
 
     def create_project(self, metadata):
