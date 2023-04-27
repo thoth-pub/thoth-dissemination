@@ -19,6 +19,10 @@ from uploader import Uploader, PUB_FORMATS
 class FigshareUploader(Uploader):
     """Dissemination logic for Figshare"""
 
+    def __init__(self, work_id, export_url, version):
+        super().__init__(work_id, export_url, version)
+        self.api = FigshareApi()
+
     def upload_to_platform(self):
         """Upload work in required format to Figshare"""
         # Required steps:
@@ -31,20 +35,17 @@ class FigshareUploader(Uploader):
         # or duplicated under each Publication-Article?
         # - Which Publications to upload? Just PDF? Just OA versions? Or all?
         # Must correctly replicate manual upload "embargo" logic if uploading paywalled EPUBs/MOBIs etc.
-        api = FigshareApi()
 
         # Test that no record associated with this work already exists in Figshare repository
         # TODO first check that the custom field containing the Thoth Work ID exists
-        search_results = api.search_articles(self.work_id)
+        search_results = self.api.search_articles(self.work_id)
         if len(search_results) > 0:
             logging.error(
                 'Cannot upload to Figshare: an item with this Work ID already exists')
             sys.exit(1)
 
-        # Obtain the current set of available licences from the Figshare API
-        licence_list = api.get_licence_list()
+        (project_metadata, article_metadata) = self.parse_metadata()
 
-        (project_metadata, article_metadata) = self.parse_metadata(licence_list)
 
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Figshare metadata fields
@@ -68,7 +69,7 @@ class FigshareUploader(Uploader):
         filename = self.work_id
 
         # Create a project to represent the Work
-        project_id = api.create_project(project_metadata)
+        project_id = self.api.create_project(project_metadata)
 
         # Any failure after this point will leave incomplete data in
         # Figshare storage which will need to be removed.
@@ -82,20 +83,20 @@ class FigshareUploader(Uploader):
             # the upload will lack previews, but display structure more readably
             for pub_format, pub_bytes in publications.items():
                 # Append publication type to article title, to tell them apart
-                article_id = api.create_article(dict(article_metadata,
+                article_id = self.api.create_article(dict(article_metadata,
                     title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
-                api.upload_file(pub_bytes, '{}{}'.format(
+                self.api.upload_file(pub_bytes, '{}{}'.format(
                     filename, PUB_FORMATS[pub_format]['file_extension']), article_id)
-                api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
-                api.publish_article(article_id)
+                self.api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
+                self.api.publish_article(article_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage
             logging.error(error)
-            api.clean_up(project_id)
+            self.api.clean_up(project_id)
             sys.exit(1)
         except:
             # Unexpected failure. Let program crash, but still need to tidy Figshare storage.
-            api.clean_up(project_id)
+            self.api.clean_up(project_id)
             raise
 
         # Publish project
@@ -104,13 +105,13 @@ class FigshareUploader(Uploader):
         # articles will therefore be "pending" at this stage so
         # publishing project itself would always fail and trigger cleanup.
         # (TBD whether this will have any effect or if a manual publication step is required)
-        api.publish_project(project_id)
+        self.api.publish_project(project_id)
 
         # Placeholder message
         logging.info(
             'Successfully uploaded to Figshare: project id {}'.format(project_id))
 
-    def parse_metadata(self, licence_list):
+    def parse_metadata(self):
         """Convert work metadata into Figshare format"""
         work_metadata = self.metadata.get('data').get('work')
         try:
@@ -142,7 +143,7 @@ class FigshareUploader(Uploader):
             # Mandatory fields for publication:
             'description': long_abstract,
             'defined_type': self.get_figshare_type(work_metadata),
-            'license': self.get_figshare_licence(work_metadata, licence_list),
+            'license': self.get_figshare_licence(work_metadata),
             'authors': self.get_figshare_authors(work_metadata),
             'tags': self.get_figshare_tags(work_metadata),
             # Required by us for tracking uploads:
@@ -197,8 +198,7 @@ class FigshareUploader(Uploader):
                 logging.error('Unsupported value for workType metadata field: {}'.format(other))
                 sys.exit(1)
 
-    @staticmethod
-    def get_figshare_licence(metadata, licence_list):
+    def get_figshare_licence(self, metadata):
         # Find the Figshare licence object corresponding to the Thoth licence URL.
         # Note URLs must match exactly, barring http(s) and www prefixes and final '/' -
         # e.g. "creativecommons.org/licenses/by/4.0/legalcode" will not match to "creativecommons.org/licenses/by/4.0/".
@@ -208,6 +208,8 @@ class FigshareUploader(Uploader):
         if thoth_licence_raw is None:
             logging.error('Cannot upload to Figshare: work must have a Licence')
             sys.exit(1)
+        # Obtain the current set of available licences from the Figshare API
+        licence_list = self.api.get_licence_list()
         # Thoth licence field is unchecked free text and Figshare licences format
         # is not strongly policed. When checking for matches, we therefore want to
         # disregard http(s) and www prefixes, and optional final '/'.
