@@ -268,25 +268,17 @@ class FigshareApi:
 
     def get_licence_list(self):
         url = '{}/account/licenses'.format(self.API_ROOT)
-        # We need the whole response from issue_request, not just a specific JSON key value
-        # - TODO this could be handled better to avoid repeating the json.loads() call etc
         try:
-            licence_list_bytes = self.issue_request('GET', url, 200)
+            licence_list = self.issue_request('GET', url, 200, expected_keys=[])
+            return licence_list
         except DisseminationError as error:
             logging.error('Getting licence list failed: {}'.format(error))
             sys.exit(1)
-        try:
-            licence_list = json.loads(licence_list_bytes)
-        except ValueError:
-            logging.error(
-                'Could not read licence list from Figshare API - invalid JSON')
-            sys.exit(1)
-        return licence_list
 
     def create_project(self, metadata):
         url = '{}/account/projects'.format(self.API_ROOT)
         try:
-            project_id = self.issue_request('POST', url, 201, 'entity_id', json_body=metadata)
+            project_id = self.issue_request('POST', url, 201, expected_keys=['entity_id'], json_body=metadata)
         except DisseminationError as error:
             logging.error('Creating project failed: {}'.format(error))
             sys.exit(1)
@@ -296,7 +288,7 @@ class FigshareApi:
         url = '{}/account/projects/{}/articles'.format(
             self.API_ROOT, project_id)
         try:
-            article_url = self.issue_request('POST', url, 201, 'location', json_body=metadata)
+            article_url = self.issue_request('POST', url, 201, expected_keys=['location'], json_body=metadata)
         except DisseminationError as error:
             raise DisseminationError('Creating article failed: {}'.format(error))
         article_id = article_url.split('/')[-1]
@@ -338,18 +330,11 @@ class FigshareApi:
             'search_for': thoth_work_id,
         }
         try:
-            # TODO same issue with handling response as in get_licence_list
-            results = self.issue_request('POST', url, 200, json_body=query)
+            results = self.issue_request('POST', url, 200, expected_keys=[], json_body=query)
+            return results
         except DisseminationError as error:
             logging.error('Article search failed: {}'.format(error))
             sys.exit(1)
-        try:
-            results_array = json.loads(results)
-        except ValueError:
-            logging.error(
-                'Could not read search response from Figshare API - invalid JSON')
-            sys.exit(1)
-        return results_array
 
     def clean_up(self, project_id=None):
         # Deleting a project should delete any articles/files under it (if under "group" storage).
@@ -362,35 +347,55 @@ class FigshareApi:
                 # Can't do anything about this. Calling function will exit.
                 logging.error('Failed to delete incomplete project: {}'.format(error))
 
-    def issue_request(self, method, url, expected_status, expected_key=None, data_body=None, json_body=None):
+    def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):
         headers = {'Authorization': 'token ' + self.api_token}
         response = requests.request(
             method, url, headers=headers, data=data_body, json=json_body)
 
+        try:
+            # Body is often JSON, whether detailing success or error
+            response_json = json.loads(response.content)
+        except ValueError:
+            if expected_keys is not None:
+                # We wanted JSON and didn't get it - something's failed, regardless of status code
+                raise DisseminationError(
+                    'Figshare API returned unexpected response "{}"'.format(response.text))
+            else:
+                # We don't need the response - doesn't matter that it isn't JSON
+                response_json = None
+                pass
+
         if response.status_code != expected_status:
-            # TODO this isn't enough information
-            # Error responses sometimes include { code, message } json
-            # but the message can be unwieldy and the code is not user-friendly
-            # Print calling function, and/or add more INFO messages during process?
-            raise DisseminationError('Error contacting Figshare API (status code {})'.format(
-                response.status_code))
+            error_message = 'Figshare API error (HTTP status {})'.format(
+                response.status_code)
+            if response_json is not None:
+                figshare_message = response_json.get('message')
+                if figshare_message is not None:
+                    # Error message is occasionally very lengthy; only include first line
+                    # (this will always include full message if there are no line breaks)
+                    figshare_message_short = figshare_message.splitlines()[0]
+                    error_message += ' "{}"'.format(figshare_message_short)
+                logging.debug(figshare_message)
+            raise DisseminationError(error_message)
 
-        if expected_key is not None:
-            try:
-                response_json = json.loads(response.content)
-                key_value = response_json[expected_key]
-                return key_value
-            except ValueError:
-                raise DisseminationError(
-                    'Unexpected response from Figshare API: {}'.format(response.text))
-
-            except KeyError:
-                raise DisseminationError(
-                    'No data found in Figshare API for requested item {}'.format(expected_key))
-
-        # If no expected key was specified, return the whole response
-        # (this is to accommodate get_licence_list requirements - TODO improve?)
-        return response.content
+        if expected_keys is not None:
+            # Some or all of the JSON response is required
+            if len(expected_keys) < 1:
+                # The full response is required
+                return response_json
+            else:
+                key_values = []
+                for key in expected_keys:
+                    try:
+                        key_value = response_json[key]
+                        key_values.append(key_value)
+                    except KeyError:
+                        raise DisseminationError(
+                            'No data found in Figshare API for requested item {}'.format(key))
+                if len(key_values) == 1:
+                    return key_values[0]
+                else:
+                    return key_values
 
     @staticmethod
     def construct_file_info(file_bytes, file_name):
@@ -409,7 +414,7 @@ class FigshareApi:
         file_info = self.construct_file_info(file_bytes, file_name)
         try:
             file_url = self.issue_request(
-                'POST', url, 201, 'location', json_body=file_info)
+                'POST', url, 201, expected_keys=['location'], json_body=file_info)
         except DisseminationError:
             raise
         return file_url
@@ -417,7 +422,7 @@ class FigshareApi:
     def get_upload_url(self, file_url):
         try:
             upload_url = self.issue_request(
-                'GET', file_url, 200, 'upload_url')
+                'GET', file_url, 200, expected_keys=['upload_url'])
         except DisseminationError:
             raise
         return upload_url
@@ -435,7 +440,7 @@ class FigshareApi:
     def upload_data(self, upload_url, file_bytes):
         # Upload service API may require the data to be submitted in multiple parts.
         try:
-            parts = self.issue_request('GET', upload_url, 200, 'parts')
+            parts = self.issue_request('GET', upload_url, 200, expected_keys=['parts'])
         except DisseminationError:
             raise
         with BytesIO(file_bytes) as file_stream:
@@ -466,7 +471,7 @@ class FigshareApi:
         tries = 0
         while True:
             try:
-                status = self.issue_request('GET', file_url, 200, 'status')
+                status = self.issue_request('GET', file_url, 200, expected_keys=['status'])
             except DisseminationError:
                 raise
             match status:
