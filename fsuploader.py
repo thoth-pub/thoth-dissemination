@@ -125,10 +125,7 @@ class FigshareUploader(Uploader):
             'description': long_abstract,
             # Must submit a group ID for project to be created under "group" storage
             # rather than "individual" - allows use of group-specific custom fields
-            # Thoth Archiving Network has group ID 49106 on Loughborough TEST repository
-            # and group ID 48292 on Loughborough LIVE repository.
-            # (TODO this should be abstracted out e.g. in case we add other Figshare repositories)
-            'group_id': 49106,
+            'group_id': self.api.group_id,
             # Required by us for tracking uploads:
             'custom_fields': {
                 'Thoth Work ID': self.work_id,
@@ -265,6 +262,15 @@ class FigshareApi:
 
     def __init__(self):
         self.api_token = environ.get('figshare_token')
+        [self.user_id, self.group_id] = self.get_account_details()
+
+    def get_account_details(self):
+        url = '{}/account'.format(self.API_ROOT)
+        try:
+            return self.issue_request('GET', url, 200, expected_keys=['user_id', 'group_id'])
+        except DisseminationError as error:
+            logging.error('Getting account details failed: {}'.format(error))
+            sys.exit(1)
 
     def get_licence_list(self):
         url = '{}/account/licenses'.format(self.API_ROOT)
@@ -292,14 +298,12 @@ class FigshareApi:
         except DisseminationError as error:
             raise DisseminationError('Creating article failed: {}'.format(error))
         article_id = article_url.split('/')[-1]
-        # Workaround for a Figshare issue where the logged-in user is always added
-        # as an author (support ticket #438719). Thoth Archive Admin user on Loughborough
-        # TEST repository has ID 2935478 (on live repository, ID is 14831581).
-        # TODO if necessary to keep this in, abstract the user ID out.
-        # TODO if the user HASN'T been added, this will return 404 - need to treat as success.
-        thoth_author_id = 2935478
+        # Figshare default behaviour (confirmed under support ticket #438719)
+        # is to always add the logged-in user as an author. Work around this.
+        # If the user hasn't been added, this will return 404 - it would be fine
+        # to continue in this case, but it would be unexpected API behaviour.
         delete_url = url = '{}/account/articles/{}/authors/{}'.format(
-            self.API_ROOT, article_id, thoth_author_id)
+            self.API_ROOT, article_id, self.user_id)
         try:
             self.issue_request('DELETE', delete_url, 204)
         except DisseminationError as error:
