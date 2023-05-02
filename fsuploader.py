@@ -296,14 +296,20 @@ class FigshareApi:
         # is to always add the logged-in user as an author. Work around this.
         # If the user hasn't been added, this will return 404 - it would be fine
         # to continue in this case, but it would be unexpected API behaviour.
-        delete_url = url = '{}/account/articles/{}/authors/{}'.format(
-            self.API_ROOT, article_id, self.user_id)
         try:
-            self.issue_request('DELETE', delete_url, 204)
+            self.remove_article_author(article_id, self.user_id)
         except DisseminationError as error:
             raise DisseminationError(
                 'Failed to remove user account from author list: {}'.format(error))
         return article_id
+
+    def remove_article_author(self, article_id, author_id):
+        url = '{}/account/articles/{}/authors/{}'.format(
+            self.API_ROOT, article_id, author_id)
+        try:
+            self.issue_request('DELETE', url, 204)
+        except DisseminationError:
+            raise
 
     def publish_project(self, project_id):
         url = '{}/account/projects/{}/publish'.format(self.API_ROOT, project_id)
