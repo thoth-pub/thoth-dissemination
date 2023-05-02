@@ -37,7 +37,6 @@ class FigshareUploader(Uploader):
         # Must correctly replicate manual upload "embargo" logic if uploading paywalled EPUBs/MOBIs etc.
 
         # Test that no record associated with this work already exists in Figshare repository
-        # TODO first check that the custom field containing the Thoth Work ID exists
         search_results = self.api.search_articles(self.work_id)
         if len(search_results) > 0:
             logging.error(
@@ -321,6 +320,9 @@ class FigshareApi:
             raise DisseminationError('Publishing article failed: {}'.format(error))
 
     def search_articles(self, thoth_work_id):
+        # Repository needs to be set up with a custom field to hold
+        # the work ID in order for us to validly search on it.
+        self.check_for_custom_field('Thoth Work ID')
         # Ideally we would be searching for projects containing the work ID,
         # not articles - however, Figshare project search apparently fails to
         # find results in custom fields (while Figshare article search succeeds)
@@ -332,6 +334,17 @@ class FigshareApi:
             return self.issue_request('POST', url, 200, expected_keys=[], json_body=query)
         except DisseminationError as error:
             logging.error('Article search failed: {}'.format(error))
+            sys.exit(1)
+
+    def check_for_custom_field(self, field_name):
+        url = '{}/account/institution/custom_fields'.format(self.API_ROOT)
+        try:
+            custom_fields = self.issue_request('GET', url, 200, expected_keys=[])
+        except DisseminationError as error:
+            logging.error('Getting custom fields failed: {}'.format(error))
+            sys.exit(1)
+        if next((field for field in custom_fields if field.get('name') == field_name), None) is None:
+            logging.error('Cannot upload to Figshare: no {} field found in repository'.format(field_name))
             sys.exit(1)
 
     def clean_up(self, project_id=None):
