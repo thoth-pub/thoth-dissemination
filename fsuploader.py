@@ -46,7 +46,6 @@ class FigshareUploader(Uploader):
 
         (project_metadata, article_metadata) = self.parse_metadata()
 
-
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Figshare metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
@@ -65,7 +64,6 @@ class FigshareUploader(Uploader):
             logging.error('No uploadable publication files found')
             sys.exit(1)
 
-        # Filename TBD: use work ID for now
         filename = self.work_id
 
         # Create a project to represent the Work
@@ -168,7 +166,6 @@ class FigshareUploader(Uploader):
                 # Mandatory if resource_doi is supplied; use publisher name as not displayed elsewhere
                 'resource_title': work_metadata['imprint']['publisher']['publisherName'], # all mandatory in Thoth
             })
-
         return (project_metadata, article_metadata)
 
     @staticmethod
@@ -275,8 +272,7 @@ class FigshareApi:
     def get_licence_list(self):
         url = '{}/account/licenses'.format(self.API_ROOT)
         try:
-            licence_list = self.issue_request('GET', url, 200, expected_keys=[])
-            return licence_list
+            return self.issue_request('GET', url, 200, expected_keys=[])
         except DisseminationError as error:
             logging.error('Getting licence list failed: {}'.format(error))
             sys.exit(1)
@@ -284,11 +280,10 @@ class FigshareApi:
     def create_project(self, metadata):
         url = '{}/account/projects'.format(self.API_ROOT)
         try:
-            project_id = self.issue_request('POST', url, 201, expected_keys=['entity_id'], json_body=metadata)
+            return self.issue_request('POST', url, 201, expected_keys=['entity_id'], json_body=metadata)
         except DisseminationError as error:
             logging.error('Creating project failed: {}'.format(error))
             sys.exit(1)
-        return project_id
 
     def create_article(self, metadata, project_id):
         url = '{}/account/projects/{}/articles'.format(
@@ -334,8 +329,7 @@ class FigshareApi:
             'search_for': thoth_work_id,
         }
         try:
-            results = self.issue_request('POST', url, 200, expected_keys=[], json_body=query)
-            return results
+            return self.issue_request('POST', url, 200, expected_keys=[], json_body=query)
         except DisseminationError as error:
             logging.error('Article search failed: {}'.format(error))
             sys.exit(1)
@@ -349,7 +343,7 @@ class FigshareApi:
                 self.issue_request('DELETE', url, 204)
             except DisseminationError as error:
                 # Can't do anything about this. Calling function will exit.
-                logging.error('Failed to delete incomplete project: {}'.format(error))
+                logging.error('Failed to delete incomplete project {}: {}'.format(project_id, error))
 
     def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):
         headers = {'Authorization': 'token ' + self.api_token}
@@ -417,19 +411,17 @@ class FigshareApi:
             self.API_ROOT, article_id)
         file_info = self.construct_file_info(file_bytes, file_name)
         try:
-            file_url = self.issue_request(
+            return self.issue_request(
                 'POST', url, 201, expected_keys=['location'], json_body=file_info)
         except DisseminationError:
             raise
-        return file_url
 
     def get_upload_url(self, file_url):
         try:
-            upload_url = self.issue_request(
+            return self.issue_request(
                 'GET', file_url, 200, expected_keys=['upload_url'])
         except DisseminationError:
             raise
-        return upload_url
 
     def upload_part(self, upload_url, file_stream, part):
         url = '{}/{}'.format(upload_url, part['partNo'])
@@ -465,12 +457,11 @@ class FigshareApi:
         # - created: API is still awaiting more content, i.e. complete_upload has not succeeded.
         # - ic_failure: an error was found in the upload, e.g. MD5 hash mismatch.
         # - ic_checking: the upload is still being checked.
-        # - moving_to_final: this presumably means checking has been completed.
+        # - ic_success: this presumably means checking has been completed.
+        # - moving_to_final: ditto.
         # - available: upload has been successfully finalised.
         # Upload checking time appears to vary widely, and it may not be practical
         # to keep re-checking until 'available' is reached.
-        # We can assume that 'created' and 'ic_failure' at this stage indicate failure,
-        # and 'moving_to_final' and 'available' indicate success.
         # If status is still 'ic_checking' after three tries, assume (hope!) it will succeed.
         tries = 0
         while True:
@@ -479,13 +470,14 @@ class FigshareApi:
             except DisseminationError:
                 raise
             match status:
-                case 'available' | 'moving_to_final':
+                case 'available' | 'moving_to_final' | 'ic_success':
                     break
                 case 'ic_checking':
                     tries += 1
                     if tries <= 3:
                         sleep(5)
                     else:
+                        logging.debug('Uploaded file still being processed; could not confirm success')
                         break
                 case 'created' | 'ic_failure' | _ :
                     raise DisseminationError(
