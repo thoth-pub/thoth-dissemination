@@ -289,6 +289,68 @@ class FigshareApi:
         self.api_token = environ.get('figshare_token')
         [self.user_id, self.group_id] = self.get_account_details()
 
+    def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):
+        """
+        Issue a request to the API, with optional request body, and handle the response.
+        @param expected_status: HTTP status code expected for response.
+        @param expected_keys: Array of keys expected to be found within JSON response body (if any).
+                              If None, no value will be returned.
+                              If '[]', full JSON response body (usually an array) will be returned.
+                              If array contains only one key, its corresponding string value will be returned.
+                              If array contains more than one key, an array of the corresponding values will be returned.
+        @param data_body: Optional request body, as bytes.
+        @param json_body: Optional request body, as JSON.
+        """
+        headers = {'Authorization': 'token ' + self.api_token}
+        response = requests.request(
+            method, url, headers=headers, data=data_body, json=json_body)
+
+        try:
+            # Body is often JSON, whether detailing success or error
+            response_json = json.loads(response.content)
+        except ValueError:
+            if expected_keys is not None:
+                # We wanted JSON and didn't get it - something's failed, regardless of status code
+                raise DisseminationError(
+                    'Figshare API returned unexpected response "{}"'.format(response.text))
+            else:
+                # We don't need the response - doesn't matter that it isn't JSON
+                response_json = None
+                pass
+
+        if response.status_code != expected_status:
+            error_message = 'Figshare API error (HTTP status {})'.format(
+                response.status_code)
+            if response_json is not None:
+                # JSON may contain an error message - include it if so
+                figshare_message = response_json.get('message')
+                if figshare_message is not None:
+                    # Error message is occasionally very lengthy; only include first line
+                    # (this will always include full message if there are no line breaks)
+                    figshare_message_short = figshare_message.splitlines()[0]
+                    error_message += ' "{}"'.format(figshare_message_short)
+                logging.debug(figshare_message)
+            raise DisseminationError(error_message)
+
+        if expected_keys is not None:
+            # Some or all of the JSON response is required
+            if len(expected_keys) < 1:
+                # The full response is required
+                return response_json
+            else:
+                key_values = []
+                for key in expected_keys:
+                    try:
+                        key_value = response_json[key]
+                        key_values.append(key_value)
+                    except KeyError:
+                        raise DisseminationError(
+                            'No data found in Figshare API for requested item {}'.format(key))
+                if len(key_values) == 1:
+                    return key_values[0]
+                else:
+                    return key_values
+
     def get_account_details(self):
         """Retrieve logged-in user's ID (= author ID) and group (for project creation)."""
         url = '{}/account'.format(self.API_ROOT)
@@ -296,6 +358,41 @@ class FigshareApi:
             return self.issue_request('GET', url, 200, expected_keys=['user_id', 'group_id'])
         except DisseminationError as error:
             logging.error('Getting account details failed: {}'.format(error))
+            sys.exit(1)
+
+    def search_articles(self, thoth_work_id):
+        """Search the repository for Articles containing the supplied Thoth ID."""
+        # Repository needs to be set up with a custom field to hold
+        # the work ID in order for us to validly search on it.
+        self.check_custom_field_exists('Thoth Work ID')
+        # Ideally we would be searching for projects containing the work ID,
+        # not articles - however, Figshare project search apparently fails to
+        # find results in custom fields (while Figshare article search succeeds)
+        url = '{}/account/articles/search'.format(self.API_ROOT)
+        query = {
+            'search_for': thoth_work_id,
+        }
+        try:
+            return self.issue_request('POST', url, 200, expected_keys=[], json_body=query)
+        except DisseminationError as error:
+            logging.error('Article search failed: {}'.format(error))
+            sys.exit(1)
+
+    def check_custom_field_exists(self, field_name):
+        """
+        Check that the specified custom field is defined for
+        the repository group to which the logged-in user belongs.
+        """
+        url = '{}/account/institution/custom_fields'.format(self.API_ROOT)
+        try:
+            custom_fields = self.issue_request(
+                'GET', url, 200, expected_keys=[])
+        except DisseminationError as error:
+            logging.error('Getting custom fields failed: {}'.format(error))
+            sys.exit(1)
+        if next((field for field in custom_fields if field.get('name') == field_name), None) is None:
+            logging.error(
+                'Cannot upload to Figshare: no {} field found in repository'.format(field_name))
             sys.exit(1)
 
     def get_licence_list(self):
@@ -367,41 +464,6 @@ class FigshareApi:
             raise DisseminationError(
                 'Publishing article failed: {}'.format(error))
 
-    def search_articles(self, thoth_work_id):
-        """Search the repository for Articles containing the supplied Thoth ID."""
-        # Repository needs to be set up with a custom field to hold
-        # the work ID in order for us to validly search on it.
-        self.check_custom_field_exists('Thoth Work ID')
-        # Ideally we would be searching for projects containing the work ID,
-        # not articles - however, Figshare project search apparently fails to
-        # find results in custom fields (while Figshare article search succeeds)
-        url = '{}/account/articles/search'.format(self.API_ROOT)
-        query = {
-            'search_for': thoth_work_id,
-        }
-        try:
-            return self.issue_request('POST', url, 200, expected_keys=[], json_body=query)
-        except DisseminationError as error:
-            logging.error('Article search failed: {}'.format(error))
-            sys.exit(1)
-
-    def check_custom_field_exists(self, field_name):
-        """
-        Check that the specified custom field is defined for
-        the repository group to which the logged-in user belongs.
-        """
-        url = '{}/account/institution/custom_fields'.format(self.API_ROOT)
-        try:
-            custom_fields = self.issue_request(
-                'GET', url, 200, expected_keys=[])
-        except DisseminationError as error:
-            logging.error('Getting custom fields failed: {}'.format(error))
-            sys.exit(1)
-        if next((field for field in custom_fields if field.get('name') == field_name), None) is None:
-            logging.error(
-                'Cannot upload to Figshare: no {} field found in repository'.format(field_name))
-            sys.exit(1)
-
     def clean_up(self, project_id):
         """
         Remove any items created during the upload process if it fails partway through.
@@ -417,79 +479,26 @@ class FigshareApi:
             logging.error(
                 'Failed to delete incomplete project {}: {}'.format(project_id, error))
 
-    def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):
+    def upload_file(self, file_bytes, file_name, article_id):
         """
-        Issue a request to the API, with optional request body, and handle the response.
-        @param expected_status: HTTP status code expected for response.
-        @param expected_keys: Array of keys expected to be found within JSON response body (if any).
-                              If None, no value will be returned.
-                              If '[]', full JSON response body (usually an array) will be returned.
-                              If array contains only one key, its corresponding string value will be returned.
-                              If array contains more than one key, an array of the corresponding values will be returned.
-        @param data_body: Optional request body, as bytes.
-        @param json_body: Optional request body, as JSON.
-        """
-        headers = {'Authorization': 'token ' + self.api_token}
-        response = requests.request(
-            method, url, headers=headers, data=data_body, json=json_body)
+        Upload the supplied file under the specified Article.
 
+        This is a multi-stage process involving both the main
+        Figshare API, and the separate Figshare upload service API.
+        """
         try:
-            # Body is often JSON, whether detailing success or error
-            response_json = json.loads(response.content)
-        except ValueError:
-            if expected_keys is not None:
-                # We wanted JSON and didn't get it - something's failed, regardless of status code
-                raise DisseminationError(
-                    'Figshare API returned unexpected response "{}"'.format(response.text))
-            else:
-                # We don't need the response - doesn't matter that it isn't JSON
-                response_json = None
-                pass
-
-        if response.status_code != expected_status:
-            error_message = 'Figshare API error (HTTP status {})'.format(
-                response.status_code)
-            if response_json is not None:
-                # JSON may contain an error message - include it if so
-                figshare_message = response_json.get('message')
-                if figshare_message is not None:
-                    # Error message is occasionally very lengthy; only include first line
-                    # (this will always include full message if there are no line breaks)
-                    figshare_message_short = figshare_message.splitlines()[0]
-                    error_message += ' "{}"'.format(figshare_message_short)
-                logging.debug(figshare_message)
-            raise DisseminationError(error_message)
-
-        if expected_keys is not None:
-            # Some or all of the JSON response is required
-            if len(expected_keys) < 1:
-                # The full response is required
-                return response_json
-            else:
-                key_values = []
-                for key in expected_keys:
-                    try:
-                        key_value = response_json[key]
-                        key_values.append(key_value)
-                    except KeyError:
-                        raise DisseminationError(
-                            'No data found in Figshare API for requested item {}'.format(key))
-                if len(key_values) == 1:
-                    return key_values[0]
-                else:
-                    return key_values
-
-    @staticmethod
-    def construct_file_info(file_bytes, file_name):
-        """Extract file details and return them in the format required by Figshare."""
-        md5 = hashlib.md5()
-        md5.update(file_bytes)
-        file_info = {
-            'name': file_name,
-            'md5': md5.hexdigest(),
-            'size': len(file_bytes)
-        }
-        return file_info
+            # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
+            file_url = self.initiate_new_upload(
+                article_id, file_bytes, file_name)
+            # File data needs to be uploaded to a separate URL at the Figshare upload service API.
+            upload_url = self.get_upload_url(file_url)
+            self.upload_data(upload_url, file_bytes)
+            # Contact main Figshare API again to confirm we've finished uploading data.
+            self.complete_upload(file_url)
+            # Check that the data was processed successfully.
+            self.check_upload_status(file_url)
+        except DisseminationError as error:
+            raise DisseminationError('Uploading file failed: {}'.format(error))
 
     def initiate_new_upload(self, article_id, file_bytes, file_name):
         """
@@ -506,6 +515,18 @@ class FigshareApi:
         except DisseminationError:
             raise
 
+    @staticmethod
+    def construct_file_info(file_bytes, file_name):
+        """Extract file details and return them in the format required by Figshare."""
+        md5 = hashlib.md5()
+        md5.update(file_bytes)
+        file_info = {
+            'name': file_name,
+            'md5': md5.hexdigest(),
+            'size': len(file_bytes)
+        }
+        return file_info
+
     def get_upload_url(self, file_url):
         """
         Retrieve the file details object for the pending upload from the Figshare main API,
@@ -514,17 +535,6 @@ class FigshareApi:
         try:
             return self.issue_request(
                 'GET', file_url, 200, expected_keys=['upload_url'])
-        except DisseminationError:
-            raise
-
-    def upload_part(self, upload_url, file_stream, part):
-        """Upload the specified part of the file."""
-        url = '{}/{}'.format(upload_url, part['partNo'])
-        file_stream.seek(part['startOffset'])
-        data = file_stream.read(
-            part['endOffset'] - part['startOffset'] + 1)
-        try:
-            self.issue_request('PUT', url, 200, data_body=data)
         except DisseminationError:
             raise
 
@@ -544,6 +554,17 @@ class FigshareApi:
                     self.upload_part(upload_url, file_stream, part)
                 except DisseminationError:
                     raise
+
+    def upload_part(self, upload_url, file_stream, part):
+        """Upload the specified part of the file."""
+        url = '{}/{}'.format(upload_url, part['partNo'])
+        file_stream.seek(part['startOffset'])
+        data = file_stream.read(
+            part['endOffset'] - part['startOffset'] + 1)
+        try:
+            self.issue_request('PUT', url, 200, data_body=data)
+        except DisseminationError:
+            raise
 
     def complete_upload(self, file_url):
         """
@@ -596,24 +617,3 @@ class FigshareApi:
                 case 'created' | 'ic_failure' | _:
                     raise DisseminationError(
                         'Error checking uploaded file: status is {}'.format(status))
-
-    def upload_file(self, file_bytes, file_name, article_id):
-        """
-        Upload the supplied file under the specified Article.
-
-        This is a multi-stage process involving both the main
-        Figshare API, and the separate Figshare upload service API.
-        """
-        try:
-            # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
-            file_url = self.initiate_new_upload(
-                article_id, file_bytes, file_name)
-            # File data needs to be uploaded to a separate URL at the Figshare upload service API.
-            upload_url = self.get_upload_url(file_url)
-            self.upload_data(upload_url, file_bytes)
-            # Contact main Figshare API again to confirm we've finished uploading data.
-            self.complete_upload(file_url)
-            # Check that the data was processed successfully.
-            self.check_upload_status(file_url)
-        except DisseminationError as error:
-            raise DisseminationError('Uploading file failed: {}'.format(error))
