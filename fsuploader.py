@@ -281,12 +281,15 @@ class FigshareApi:
     See documentation at https://docs.figshare.com/.
     """
 
-    # Test instance. Production instance is 'https://api.figshare.com/v2'
-    API_ROOT = 'https://api.figsh.com/v2'
+    # Production instance. Test instance is 'https://api.figsh.com/v2'
+    API_ROOT = 'https://api.figshare.com/v2'
 
     def __init__(self):
         """Connect to API and retrieve account details which will be needed for upload."""
         self.api_token = environ.get('figshare_token')
+        if self.api_token is None or len(self.api_token) < 1:
+            logging.error('Error uploading to Figshare: missing API token')
+            sys.exit(1)
         [self.user_id, self.group_id] = self.get_account_details()
 
     def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):
@@ -418,11 +421,14 @@ class FigshareApi:
         url = '{}/account/projects/{}/articles'.format(
             self.API_ROOT, project_id)
         try:
+            # Documentation states that both 'location' and 'entity_id'
+            # should be returned, but only 'location' is (support ticket #437956)
             article_url = self.issue_request('POST', url, 201, expected_keys=[
                                              'location'], json_body=metadata)
         except DisseminationError as error:
             raise DisseminationError(
                 'Creating article failed: {}'.format(error))
+        # Derive 'entity_id' from 'location'
         article_id = article_url.split('/')[-1]
         # Figshare default behaviour (confirmed under support ticket #438719)
         # is to always add the logged-in user as an author. Work around this.
