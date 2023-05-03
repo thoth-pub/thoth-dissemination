@@ -54,6 +54,7 @@ PUB_FORMATS = {
     # },
 }
 
+
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
@@ -143,12 +144,13 @@ class Uploader():
             publication_locations = [n.get('locations') for n in publications if n.get(
                 'publicationType') == publication_type][0]
             publication_url = [n.get('fullTextUrl')
-                       for n in publication_locations if n.get('canonical')][0]
+                               for n in publication_locations if n.get('canonical')][0]
             if not publication_url:
                 raise ValueError
             return publication_url
         except (IndexError, ValueError):
-            raise DisseminationError('No {} Full Text URL found for Work'.format(publication_type))
+            raise DisseminationError(
+                'No {} Full Text URL found for Work'.format(publication_type))
 
     def get_cover_url(self):
         """Extract cover URL from work metadata"""

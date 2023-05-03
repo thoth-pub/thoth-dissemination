@@ -60,7 +60,8 @@ class FigshareUploader(Uploader):
             except DisseminationError as error:
                 pass
         if len(publications) < 1:
-            logging.error('Cannot upload to Figshare: no suitable publication files found')
+            logging.error(
+                'Cannot upload to Figshare: no suitable publication files found')
             sys.exit(1)
 
         # Include full work metadata file in JSON format,
