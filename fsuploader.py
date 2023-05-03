@@ -20,23 +20,27 @@ class FigshareUploader(Uploader):
     """Dissemination logic for Figshare"""
 
     def __init__(self, work_id, export_url, version):
+        """Instantiate class for accessing Figshare API."""
         super().__init__(work_id, export_url, version)
         self.api = FigshareApi()
 
     def upload_to_platform(self):
-        """Upload work in required format to Figshare"""
-        # Required steps:
-        # 1) create Project (not Collection) to represent Thoth Work
-        # 2) create one Article (within Project) to represent each (digital) Thoth Publication
-        # 3) Add relevant files to Articles
-        # 4) Publish the Project/Articles (i.e. copy from Private to Public version)
-        # Design questions:
-        # - Where to upload full formatted (JSON) metadata file? As a separate Article,
-        # or duplicated under each Publication-Article?
-        # - Which Publications to upload? Just PDF? Just OA versions? Or all?
-        # Must correctly replicate manual upload "embargo" logic if uploading paywalled EPUBs/MOBIs etc.
+        """
+        Upload work in required format to Figshare.
 
-        # Test that no record associated with this work already exists in Figshare repository
+        Required steps:
+        - Create Project (not Collection) to represent Thoth Work
+        - Create one Article (within Project) to represent each (digital, OA) Thoth Publication
+        - Add the relevant files (Publication and JSON metadata) to each Article
+        - Publish the Articles, then the Project (i.e. copy from Private to Public version)
+
+        Note: all current Thoth XML publications list a ZIP file for their
+        Full Text URL, rather than anything in application/xml format.
+        We'll upload the ZIP (if any) as-is, rather than extracting and uploading files
+        individually - the upload will lack previews, but display structure more readably.
+        """
+
+        # Test that no record associated with this Work already exists in Figshare repository.
         search_results = self.api.search_articles(self.work_id)
         if len(search_results) > 0:
             logging.error(
@@ -44,10 +48,6 @@ class FigshareUploader(Uploader):
             sys.exit(1)
 
         (project_metadata, article_metadata) = self.parse_metadata()
-
-        # Include full work metadata file in JSON format,
-        # as a supplement to filling out Figshare metadata fields
-        metadata_bytes = self.get_formatted_metadata('json::thoth')
 
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
@@ -60,35 +60,34 @@ class FigshareUploader(Uploader):
             except DisseminationError as error:
                 pass
         if len(publications) < 1:
-            logging.error('No uploadable publication files found')
+            logging.error('Cannot upload to Figshare: no suitable publication files found')
             sys.exit(1)
 
-        filename = self.work_id
+        # Include full work metadata file in JSON format,
+        # as a supplement to filling out Figshare metadata fields.
+        metadata_bytes = self.get_formatted_metadata('json::thoth')
 
-        # Create a project to represent the Work
+        # Create a project to represent the Work.
         project_id = self.api.create_project(project_metadata)
 
         # Any failure after this point will leave incomplete data in
         # Figshare storage which will need to be removed.
         try:
-            # Create an article to represent each publication,
-            # add the publication file and full JSON metadata file to it,
-            # then publish it
-            # All current Thoth XML publications list a ZIP file for their URL
-            # rather than anything in application/xml format
-            # Upload as-is rather than extracting and uploading individually -
-            # the upload will lack previews, but display structure more readably
+            filename = self.work_id
             for pub_format, pub_bytes in publications.items():
-                # Append publication type to article title, to tell them apart
+                # Create an article to represent the Publication.
+                # Append publication type to article title, to tell them apart.
                 article_id = self.api.create_article(dict(article_metadata,
                                                           title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
+                # Add the publication file and full JSON metadata file to it.
                 self.api.upload_file(pub_bytes, '{}{}'.format(
                     filename, PUB_FORMATS[pub_format]['file_extension']), article_id)
                 self.api.upload_file(
                     metadata_bytes, '{}.json'.format(filename), article_id)
+                # Publish the article.
                 self.api.publish_article(article_id)
         except DisseminationError as error:
-            # Report failure, and remove any partially-created items from Figshare storage
+            # Report failure, and remove any partially-created items from Figshare storage.
             logging.error(error)
             self.api.clean_up(project_id)
             sys.exit(1)
@@ -97,7 +96,7 @@ class FigshareUploader(Uploader):
             self.api.clean_up(project_id)
             raise
 
-        # Publish project
+        # Publish project.
         # Don't do this within the try block for Loughborough repository
         # as it's configured to require review before publishing -
         # articles will therefore be "pending" at this stage so
@@ -118,13 +117,13 @@ class FigshareUploader(Uploader):
             'Successfully uploaded to Figshare: project ID {}'.format(project_id))
 
     def parse_metadata(self):
-        """Convert work metadata into Figshare format"""
+        """Convert work metadata into Figshare format."""
         work_metadata = self.metadata.get('data').get('work')
         try:
             long_abstract = work_metadata.get('longAbstract')
         except KeyError:
             logging.error(
-                'Cannot upload to Figshare: work must have a Long Abstract')
+                'Cannot upload to Figshare: Work must have a Long Abstract')
             sys.exit(1)
         project_metadata = {
             # Only title is mandatory
@@ -140,8 +139,6 @@ class FigshareUploader(Uploader):
             # The only other supported field is funding
         }
         article_metadata = {
-            # Note manual upload testing was done with minimal metadata -
-            # can view json representation of manual uploads for pointers.
             # Mandatory fields for creation:
             'title': work_metadata['fullTitle'],  # mandatory in Thoth
             # Mandatory fields for publication:
@@ -180,15 +177,20 @@ class FigshareUploader(Uploader):
 
     @staticmethod
     def get_figshare_type(metadata):
-        # Options as listed in documentation are:
-        # figure | online resource | preprint | book | conference contribution
-        # media | dataset | poster | journal contribution | presentation | thesis | software
-        # However, options from ArticleSearch item_type full list also seem to be accepted:
-        # 1 - Figure, 2 - Media, 3 - Dataset, 5 - Poster, 6 - Journal contribution, 7 - Presentation,
-        # 8 - Thesis, 9 - Software, 11 - Online resource, 12 - Preprint, 13 - Book, 14 - Conference contribution,
-        # 15 - Chapter, 16 - Peer review, 17 - Educational resource, 18 - Report, 19 - Standard, 20 - Composition,
-        # 21 - Funding, 22 - Physical object, 23 - Data management plan, 24 - Workflow, 25 - Monograph,
-        # 26 - Performance, 27 - Event, 28 - Service, 29 - Model
+        """
+        Convert Thoth Work Type into appropriate Figshare equivalent.
+
+        Options as listed in documentation are:
+        figure | online resource | preprint | book | conference contribution
+        media | dataset | poster | journal contribution | presentation | thesis | software
+
+        However, options from ArticleSearch item_type full list also seem to be accepted:
+        1 - Figure, 2 - Media, 3 - Dataset, 5 - Poster, 6 - Journal contribution, 7 - Presentation,
+        8 - Thesis, 9 - Software, 11 - Online resource, 12 - Preprint, 13 - Book, 14 - Conference contribution,
+        15 - Chapter, 16 - Peer review, 17 - Educational resource, 18 - Report, 19 - Standard, 20 - Composition,
+        21 - Funding, 22 - Physical object, 23 - Data management plan, 24 - Workflow, 25 - Monograph,
+        26 - Performance, 27 - Event, 28 - Service, 29 - Model
+        """
         match metadata.get('workType'):
             case 'MONOGRAPH':
                 return 'monograph'
@@ -204,17 +206,19 @@ class FigshareUploader(Uploader):
                 sys.exit(1)
 
     def get_figshare_licence(self, metadata):
-        # Find the Figshare licence object corresponding to the Thoth licence URL.
-        # Note URLs must match exactly, barring http(s) and www prefixes and final '/' -
-        # e.g. "creativecommons.org/licenses/by/4.0/legalcode" will not match to "creativecommons.org/licenses/by/4.0/".
-        # If multiple Figshare licence objects have the same URL, the first in the list will be used.
-        # If Thoth licence URL field is empty or no Figshare licence exists for it, raise an error.
+        """
+        Find the Figshare licence object corresponding to the Thoth licence URL.
+
+        Note URLs must match exactly, barring http(s) and www prefixes and final '/' -
+        e.g. "creativecommons.org/licenses/by/4.0/legalcode" will not match to "creativecommons.org/licenses/by/4.0/".
+        If multiple Figshare licence objects have the same URL, the first in the list will be used.
+        """
         thoth_licence_raw = metadata.get('license')
         if thoth_licence_raw is None:
             logging.error(
-                'Cannot upload to Figshare: work must have a Licence')
+                'Cannot upload to Figshare: Work must have a Licence')
             sys.exit(1)
-        # Obtain the current set of available licences from the Figshare API
+        # Obtain the current set of defined licence objects from the Figshare API.
         licence_list = self.api.get_licence_list()
         # Thoth licence field is unchecked free text and Figshare licences format
         # is not strongly policed. When checking for matches, we therefore want to
@@ -228,57 +232,65 @@ class FigshareUploader(Uploader):
                 '(.*)'), thoth_licence_raw, re.IGNORECASE).group(1)
         except AttributeError:
             logging.error(
-                'Work licence {} not in expected URL format'.format(thoth_licence))
+                'Work Licence {} not in expected URL format'.format(thoth_licence))
             sys.exit(1)
         # Figshare requires licence information to be submitted as the integer representing the licence object.
         licence_int = next((fs_licence.get('value') for fs_licence in licence_list
                             if re.fullmatch(match_pattern.format(thoth_licence), fs_licence.get('url'), re.IGNORECASE) is not None), None)
         if licence_int == None:
             logging.error(
-                'Work licence {} not supported by Figshare'.format(thoth_licence))
+                'Work Licence {} not supported by Figshare'.format(thoth_licence))
             sys.exit(1)
         return licence_int
 
     @staticmethod
     def get_figshare_authors(metadata):
-        # TBD which contributors should be submitted - assume only
-        # main contributors, in line with Internet Archive requirements.
-        # Note they will be displayed as "Authored by:" irrespective of contribution type.
-        # Figshare also accepts other author details such as ORCIDs, however,
-        # this can lead to rejected submissions if a record already exists
-        # within Figshare for the author with that ORCID (Thoth doesn't track this).
+        """
+        Create a list of main contributors in the format required by Figshare.
+
+        Note they will be displayed as "Authored by:" irrespective of contribution type.
+        Figshare also accepts other author details such as ORCIDs, however,
+        this can lead to rejected submissions if a record already exists
+        within Figshare for the author with that ORCID (Thoth doesn't track this).
+        """
         # fullName is mandatory so we do not expect KeyErrors
         authors = [{'name': n['fullName']} for n in metadata.get('contributions')
                    if n.get('mainContribution') == True]
         if len(authors) < 1:
             logging.error(
-                'Cannot upload to Figshare: work must have at least one Main Contribution')
+                'Cannot upload to Figshare: Work must have at least one Main Contribution')
             sys.exit(1)
         return authors
 
     @staticmethod
     def get_figshare_tags(metadata):
+        """Create a list of subject keywords in the format required by Figshare."""
         # subjectCode is mandatory so we do not expect KeyErrors
         tags = [n['subjectCode'] for n in metadata.get
                 ('subjects') if n.get('subjectType') == 'KEYWORD']
         if len(tags) < 1:
             logging.error(
-                'Cannot upload to Figshare: work must have at least one Subject of type Keyword')
+                'Cannot upload to Figshare: Work must have at least one Subject of type Keyword')
             sys.exit(1)
         return tags
 
 
 class FigshareApi:
-    """Methods for interacting with Figshare API"""
+    """
+    Methods for interacting with Figshare API.
+    See documentation at https://docs.figshare.com/.
+    """
 
     # Test instance. Production instance is 'https://api.figshare.com/v2'
     API_ROOT = 'https://api.figsh.com/v2'
 
     def __init__(self):
+        """Connect to API and retrieve account details which will be needed for upload."""
         self.api_token = environ.get('figshare_token')
         [self.user_id, self.group_id] = self.get_account_details()
 
     def get_account_details(self):
+        """Retrieve logged-in user's ID (= author ID) and group (for project creation)."""
         url = '{}/account'.format(self.API_ROOT)
         try:
             return self.issue_request('GET', url, 200, expected_keys=['user_id', 'group_id'])
@@ -287,6 +299,7 @@ class FigshareApi:
             sys.exit(1)
 
     def get_licence_list(self):
+        """Retrieve the list of licences which are defined within this repository."""
         url = '{}/account/licenses'.format(self.API_ROOT)
         try:
             return self.issue_request('GET', url, 200, expected_keys=[])
@@ -295,6 +308,7 @@ class FigshareApi:
             sys.exit(1)
 
     def create_project(self, metadata):
+        """Create a Project with the specified metadata."""
         url = '{}/account/projects'.format(self.API_ROOT)
         try:
             return self.issue_request('POST', url, 201, expected_keys=['entity_id'], json_body=metadata)
@@ -303,6 +317,7 @@ class FigshareApi:
             sys.exit(1)
 
     def create_article(self, metadata, project_id):
+        """Create an Article with the specified metadata, under the specified Project."""
         url = '{}/account/projects/{}/articles'.format(
             self.API_ROOT, project_id)
         try:
@@ -324,6 +339,7 @@ class FigshareApi:
         return article_id
 
     def remove_article_author(self, article_id, author_id):
+        """Remove the specified Author from the specified Article."""
         url = '{}/account/articles/{}/authors/{}'.format(
             self.API_ROOT, article_id, author_id)
         try:
@@ -332,6 +348,7 @@ class FigshareApi:
             raise
 
     def publish_project(self, project_id):
+        """Publish the supplied Project."""
         url = '{}/account/projects/{}/publish'.format(
             self.API_ROOT, project_id)
         try:
@@ -341,6 +358,7 @@ class FigshareApi:
                 'Publishing project failed: {}'.format(error))
 
     def publish_article(self, article_id):
+        """Publish the supplied Article."""
         url = '{}/account/articles/{}/publish'.format(
             self.API_ROOT, article_id)
         try:
@@ -350,9 +368,10 @@ class FigshareApi:
                 'Publishing article failed: {}'.format(error))
 
     def search_articles(self, thoth_work_id):
+        """Search the repository for Articles containing the supplied Thoth ID."""
         # Repository needs to be set up with a custom field to hold
         # the work ID in order for us to validly search on it.
-        self.check_for_custom_field('Thoth Work ID')
+        self.check_custom_field_exists('Thoth Work ID')
         # Ideally we would be searching for projects containing the work ID,
         # not articles - however, Figshare project search apparently fails to
         # find results in custom fields (while Figshare article search succeeds)
@@ -366,7 +385,11 @@ class FigshareApi:
             logging.error('Article search failed: {}'.format(error))
             sys.exit(1)
 
-    def check_for_custom_field(self, field_name):
+    def check_custom_field_exists(self, field_name):
+        """
+        Check that the specified custom field is defined for
+        the repository group to which the logged-in user belongs.
+        """
         url = '{}/account/institution/custom_fields'.format(self.API_ROOT)
         try:
             custom_fields = self.issue_request(
@@ -379,19 +402,33 @@ class FigshareApi:
                 'Cannot upload to Figshare: no {} field found in repository'.format(field_name))
             sys.exit(1)
 
-    def clean_up(self, project_id=None):
-        # Deleting a project should delete any articles/files under it (if under "group" storage).
-        # This will fail if the project or any of its articles is already published.
-        if project_id is not None:
-            url = '{}/account/projects/{}'.format(self.API_ROOT, project_id)
-            try:
-                self.issue_request('DELETE', url, 204)
-            except DisseminationError as error:
-                # Can't do anything about this. Calling function will exit.
-                logging.error(
-                    'Failed to delete incomplete project {}: {}'.format(project_id, error))
+    def clean_up(self, project_id):
+        """
+        Remove any items created during the upload process if it fails partway through.
+
+        Deleting a project should delete any articles/files under it (if under "group" storage).
+        This will fail if the project or any of its articles is already published.
+        """
+        url = '{}/account/projects/{}'.format(self.API_ROOT, project_id)
+        try:
+            self.issue_request('DELETE', url, 204)
+        except DisseminationError as error:
+            # Can't do anything about this. Calling function will exit.
+            logging.error(
+                'Failed to delete incomplete project {}: {}'.format(project_id, error))
 
     def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):
+        """
+        Issue a request to the API, with optional request body, and handle the response.
+        @param expected_status: HTTP status code expected for response.
+        @param expected_keys: Array of keys expected to be found within JSON response body (if any).
+                              If None, no value will be returned.
+                              If '[]', full JSON response body (usually an array) will be returned.
+                              If array contains only one key, its corresponding string value will be returned.
+                              If array contains more than one key, an array of the corresponding values will be returned.
+        @param data_body: Optional request body, as bytes.
+        @param json_body: Optional request body, as JSON.
+        """
         headers = {'Authorization': 'token ' + self.api_token}
         response = requests.request(
             method, url, headers=headers, data=data_body, json=json_body)
@@ -413,6 +450,7 @@ class FigshareApi:
             error_message = 'Figshare API error (HTTP status {})'.format(
                 response.status_code)
             if response_json is not None:
+                # JSON may contain an error message - include it if so
                 figshare_message = response_json.get('message')
                 if figshare_message is not None:
                     # Error message is occasionally very lengthy; only include first line
@@ -443,6 +481,7 @@ class FigshareApi:
 
     @staticmethod
     def construct_file_info(file_bytes, file_name):
+        """Extract file details and return them in the format required by Figshare."""
         md5 = hashlib.md5()
         md5.update(file_bytes)
         file_info = {
@@ -453,6 +492,11 @@ class FigshareApi:
         return file_info
 
     def initiate_new_upload(self, article_id, file_bytes, file_name):
+        """
+        Create a new file details object under the specified Article.
+        This will include a link out to the Figshare upload service API
+        where the file bytes themselves can be uploaded.
+        """
         url = '{}/account/articles/{}/files'.format(
             self.API_ROOT, article_id)
         file_info = self.construct_file_info(file_bytes, file_name)
@@ -463,6 +507,10 @@ class FigshareApi:
             raise
 
     def get_upload_url(self, file_url):
+        """
+        Retrieve the file details object for the pending upload from the Figshare main API,
+        and return the Figshare upload service API URL where the bytes can be uploaded.
+        """
         try:
             return self.issue_request(
                 'GET', file_url, 200, expected_keys=['upload_url'])
@@ -470,6 +518,7 @@ class FigshareApi:
             raise
 
     def upload_part(self, upload_url, file_stream, part):
+        """Upload the specified part of the file."""
         url = '{}/{}'.format(upload_url, part['partNo'])
         file_stream.seek(part['startOffset'])
         data = file_stream.read(
@@ -480,7 +529,10 @@ class FigshareApi:
             raise
 
     def upload_data(self, upload_url, file_bytes):
-        # Upload service API may require the data to be submitted in multiple parts.
+        """
+        Upload the file to the Figshare upload service API.
+        The data may need to be submitted in multiple parts.
+        """
         try:
             parts = self.issue_request(
                 'GET', upload_url, 200, expected_keys=['parts'])
@@ -494,22 +546,35 @@ class FigshareApi:
                     raise
 
     def complete_upload(self, file_url):
+        """
+        Inform the Figshare main API that we have finished uploading
+        the specified file to the Figshare upload service API.
+
+        A success response just means the request was received -
+        this will trigger processing of the uploaded data
+        (which may itself fail).
+        """
         try:
             self.issue_request('POST', file_url, 202)
         except DisseminationError:
             raise
 
     def check_upload_status(self, file_url):
-        # Possible statuses are not documented, but include:
-        # - created: API is still awaiting more content, i.e. complete_upload has not succeeded.
-        # - ic_failure: an error was found in the upload, e.g. MD5 hash mismatch.
-        # - ic_checking: the upload is still being checked.
-        # - ic_success: this presumably means checking has been completed.
-        # - moving_to_final: ditto.
-        # - available: upload has been successfully finalised.
-        # Upload checking time appears to vary widely, and it may not be practical
-        # to keep re-checking until 'available' is reached.
-        # If status is still 'ic_checking' after three tries, assume (hope!) it will succeed.
+        """
+        Check the status of the uploaded file.
+
+        Possible statuses are not documented, but include:
+        - created: API is still awaiting more content, i.e. complete_upload has not succeeded.
+        - ic_failure: an error was found in the upload, e.g. MD5 hash mismatch.
+        - ic_checking: the upload is still being checked.
+        - ic_success: this presumably means checking has been completed.
+        - moving_to_final: ditto.
+        - available: upload has been successfully finalised.
+
+        Upload checking time appears to vary widely, and it may not be practical
+        to keep re-checking until 'available' is reached.
+        If status is still 'ic_checking' after three tries, assume (hope!) it will succeed.
+        """
         tries = 0
         while True:
             try:
@@ -533,6 +598,12 @@ class FigshareApi:
                         'Error checking uploaded file: status is {}'.format(status))
 
     def upload_file(self, file_bytes, file_name, article_id):
+        """
+        Upload the supplied file under the specified Article.
+
+        This is a multi-stage process involving both the main
+        Figshare API, and the separate Figshare upload service API.
+        """
         try:
             # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
             file_url = self.initiate_new_upload(
