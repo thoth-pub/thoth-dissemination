@@ -102,11 +102,19 @@ class FigshareUploader(Uploader):
         # articles will therefore be "pending" at this stage so
         # publishing project itself would always fail and trigger cleanup.
         # (TBD whether this will have any effect or if a manual publication step is required)
-        self.api.publish_project(project_id)
+        try:
+            self.api.publish_project(project_id)
+        except DisseminationError as error:
+            # Assume that publishing has failed due to review requirement.
+            # Don't clean up, but warn and continue. TBD how to handle long-term.
+            logging.warning(error)
 
-        # Placeholder message
+        # The public project URL would be more useful than the project ID, but
+        # the API doesn't return it as part of the workflow (and it won't be created
+        # until the review stage is completed). We could obtain it by calling
+        # the project details endpoint and extracting the "figshare_url" (if any).
         logging.info(
-            'Successfully uploaded to Figshare: project id {}'.format(project_id))
+            'Successfully uploaded to Figshare: project ID {}'.format(project_id))
 
     def parse_metadata(self):
         """Convert work metadata into Figshare format"""
