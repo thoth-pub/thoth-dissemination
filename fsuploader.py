@@ -81,10 +81,11 @@ class FigshareUploader(Uploader):
             for pub_format, pub_bytes in publications.items():
                 # Append publication type to article title, to tell them apart
                 article_id = self.api.create_article(dict(article_metadata,
-                    title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
+                                                          title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
                 self.api.upload_file(pub_bytes, '{}{}'.format(
                     filename, PUB_FORMATS[pub_format]['file_extension']), article_id)
-                self.api.upload_file(metadata_bytes, '{}.json'.format(filename), article_id)
+                self.api.upload_file(
+                    metadata_bytes, '{}.json'.format(filename), article_id)
                 self.api.publish_article(article_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage
@@ -122,11 +123,12 @@ class FigshareUploader(Uploader):
         try:
             long_abstract = work_metadata.get('longAbstract')
         except KeyError:
-            logging.error('Cannot upload to Figshare: work must have a Long Abstract')
+            logging.error(
+                'Cannot upload to Figshare: work must have a Long Abstract')
             sys.exit(1)
         project_metadata = {
             # Only title is mandatory
-            'title': work_metadata['fullTitle'], # mandatory in Thoth
+            'title': work_metadata['fullTitle'],  # mandatory in Thoth
             'description': long_abstract,
             # Must submit a group ID for project to be created under "group" storage
             # rather than "individual" - allows use of group-specific custom fields
@@ -141,7 +143,7 @@ class FigshareUploader(Uploader):
             # Note manual upload testing was done with minimal metadata -
             # can view json representation of manual uploads for pointers.
             # Mandatory fields for creation:
-            'title': work_metadata['fullTitle'], # mandatory in Thoth
+            'title': work_metadata['fullTitle'],  # mandatory in Thoth
             # Mandatory fields for publication:
             'description': long_abstract,
             'defined_type': self.get_figshare_type(work_metadata),
@@ -171,7 +173,8 @@ class FigshareUploader(Uploader):
                 'resource_doi': doi,
                 # resource_title = display text for hyperlink to resource_doi
                 # Mandatory if resource_doi is supplied; use publisher name as not displayed elsewhere
-                'resource_title': work_metadata['imprint']['publisher']['publisherName'], # all mandatory in Thoth
+                # (imprint, publisher, publisherName all mandatory in Thoth)
+                'resource_title': work_metadata['imprint']['publisher']['publisherName'],
             })
         return (project_metadata, article_metadata)
 
@@ -196,7 +199,8 @@ class FigshareUploader(Uploader):
             case 'EDITED_BOOK' | 'BOOK_SET' | 'JOURNAL_ISSUE':
                 return 'book'
             case other:
-                logging.error('Unsupported value for workType metadata field: {}'.format(other))
+                logging.error(
+                    'Unsupported value for workType metadata field: {}'.format(other))
                 sys.exit(1)
 
     def get_figshare_licence(self, metadata):
@@ -207,7 +211,8 @@ class FigshareUploader(Uploader):
         # If Thoth licence URL field is empty or no Figshare licence exists for it, raise an error.
         thoth_licence_raw = metadata.get('license')
         if thoth_licence_raw is None:
-            logging.error('Cannot upload to Figshare: work must have a Licence')
+            logging.error(
+                'Cannot upload to Figshare: work must have a Licence')
             sys.exit(1)
         # Obtain the current set of available licences from the Figshare API
         licence_list = self.api.get_licence_list()
@@ -219,15 +224,18 @@ class FigshareUploader(Uploader):
         # We'll re-insert this into the match pattern for comparison with the non-normalised Figshare licences.
         # (IGNORECASE may be redundant here if Thoth licences are lowercased on entry into database)
         try:
-            thoth_licence = re.fullmatch(match_pattern.format('(.*)'), thoth_licence_raw, re.IGNORECASE).group(1)
+            thoth_licence = re.fullmatch(match_pattern.format(
+                '(.*)'), thoth_licence_raw, re.IGNORECASE).group(1)
         except AttributeError:
-            logging.error('Work licence {} not in expected URL format'.format(thoth_licence))
+            logging.error(
+                'Work licence {} not in expected URL format'.format(thoth_licence))
             sys.exit(1)
         # Figshare requires licence information to be submitted as the integer representing the licence object.
         licence_int = next((fs_licence.get('value') for fs_licence in licence_list
-            if re.fullmatch(match_pattern.format(thoth_licence), fs_licence.get('url'), re.IGNORECASE) is not None), None)
+                            if re.fullmatch(match_pattern.format(thoth_licence), fs_licence.get('url'), re.IGNORECASE) is not None), None)
         if licence_int == None:
-            logging.error('Work licence {} not supported by Figshare'.format(thoth_licence))
+            logging.error(
+                'Work licence {} not supported by Figshare'.format(thoth_licence))
             sys.exit(1)
         return licence_int
 
@@ -241,9 +249,10 @@ class FigshareUploader(Uploader):
         # within Figshare for the author with that ORCID (Thoth doesn't track this).
         # fullName is mandatory so we do not expect KeyErrors
         authors = [{'name': n['fullName']} for n in metadata.get('contributions')
-            if n.get('mainContribution') == True]
+                   if n.get('mainContribution') == True]
         if len(authors) < 1:
-            logging.error('Cannot upload to Figshare: work must have at least one Main Contribution')
+            logging.error(
+                'Cannot upload to Figshare: work must have at least one Main Contribution')
             sys.exit(1)
         return authors
 
@@ -251,9 +260,10 @@ class FigshareUploader(Uploader):
     def get_figshare_tags(metadata):
         # subjectCode is mandatory so we do not expect KeyErrors
         tags = [n['subjectCode'] for n in metadata.get
-            ('subjects') if n.get('subjectType') == 'KEYWORD']
+                ('subjects') if n.get('subjectType') == 'KEYWORD']
         if len(tags) < 1:
-            logging.error('Cannot upload to Figshare: work must have at least one Subject of type Keyword')
+            logging.error(
+                'Cannot upload to Figshare: work must have at least one Subject of type Keyword')
             sys.exit(1)
         return tags
 
@@ -296,9 +306,11 @@ class FigshareApi:
         url = '{}/account/projects/{}/articles'.format(
             self.API_ROOT, project_id)
         try:
-            article_url = self.issue_request('POST', url, 201, expected_keys=['location'], json_body=metadata)
+            article_url = self.issue_request('POST', url, 201, expected_keys=[
+                                             'location'], json_body=metadata)
         except DisseminationError as error:
-            raise DisseminationError('Creating article failed: {}'.format(error))
+            raise DisseminationError(
+                'Creating article failed: {}'.format(error))
         article_id = article_url.split('/')[-1]
         # Figshare default behaviour (confirmed under support ticket #438719)
         # is to always add the logged-in user as an author. Work around this.
@@ -320,18 +332,22 @@ class FigshareApi:
             raise
 
     def publish_project(self, project_id):
-        url = '{}/account/projects/{}/publish'.format(self.API_ROOT, project_id)
+        url = '{}/account/projects/{}/publish'.format(
+            self.API_ROOT, project_id)
         try:
             self.issue_request('POST', url, 200)
         except DisseminationError as error:
-            raise DisseminationError('Publishing project failed: {}'.format(error))
+            raise DisseminationError(
+                'Publishing project failed: {}'.format(error))
 
     def publish_article(self, article_id):
-        url = '{}/account/articles/{}/publish'.format(self.API_ROOT, article_id)
+        url = '{}/account/articles/{}/publish'.format(
+            self.API_ROOT, article_id)
         try:
             self.issue_request('POST', url, 201)
         except DisseminationError as error:
-            raise DisseminationError('Publishing article failed: {}'.format(error))
+            raise DisseminationError(
+                'Publishing article failed: {}'.format(error))
 
     def search_articles(self, thoth_work_id):
         # Repository needs to be set up with a custom field to hold
@@ -353,12 +369,14 @@ class FigshareApi:
     def check_for_custom_field(self, field_name):
         url = '{}/account/institution/custom_fields'.format(self.API_ROOT)
         try:
-            custom_fields = self.issue_request('GET', url, 200, expected_keys=[])
+            custom_fields = self.issue_request(
+                'GET', url, 200, expected_keys=[])
         except DisseminationError as error:
             logging.error('Getting custom fields failed: {}'.format(error))
             sys.exit(1)
         if next((field for field in custom_fields if field.get('name') == field_name), None) is None:
-            logging.error('Cannot upload to Figshare: no {} field found in repository'.format(field_name))
+            logging.error(
+                'Cannot upload to Figshare: no {} field found in repository'.format(field_name))
             sys.exit(1)
 
     def clean_up(self, project_id=None):
@@ -370,7 +388,8 @@ class FigshareApi:
                 self.issue_request('DELETE', url, 204)
             except DisseminationError as error:
                 # Can't do anything about this. Calling function will exit.
-                logging.error('Failed to delete incomplete project {}: {}'.format(project_id, error))
+                logging.error(
+                    'Failed to delete incomplete project {}: {}'.format(project_id, error))
 
     def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):
         headers = {'Authorization': 'token ' + self.api_token}
@@ -463,7 +482,8 @@ class FigshareApi:
     def upload_data(self, upload_url, file_bytes):
         # Upload service API may require the data to be submitted in multiple parts.
         try:
-            parts = self.issue_request('GET', upload_url, 200, expected_keys=['parts'])
+            parts = self.issue_request(
+                'GET', upload_url, 200, expected_keys=['parts'])
         except DisseminationError:
             raise
         with BytesIO(file_bytes) as file_stream:
@@ -493,7 +513,8 @@ class FigshareApi:
         tries = 0
         while True:
             try:
-                status = self.issue_request('GET', file_url, 200, expected_keys=['status'])
+                status = self.issue_request(
+                    'GET', file_url, 200, expected_keys=['status'])
             except DisseminationError:
                 raise
             match status:
@@ -504,16 +525,18 @@ class FigshareApi:
                     if tries <= 3:
                         sleep(5)
                     else:
-                        logging.debug('Uploaded file still being processed; could not confirm success')
+                        logging.debug(
+                            'Uploaded file still being processed; could not confirm success')
                         break
-                case 'created' | 'ic_failure' | _ :
+                case 'created' | 'ic_failure' | _:
                     raise DisseminationError(
                         'Error checking uploaded file: status is {}'.format(status))
 
     def upload_file(self, file_bytes, file_name, article_id):
         try:
             # Request a URL (in the form articles/{id}/files/{id}) for a new file upload.
-            file_url = self.initiate_new_upload(article_id, file_bytes, file_name)
+            file_url = self.initiate_new_upload(
+                article_id, file_bytes, file_name)
             # File data needs to be uploaded to a separate URL at the Figshare upload service API.
             upload_url = self.get_upload_url(file_url)
             self.upload_data(upload_url, file_bytes)
