@@ -94,7 +94,7 @@ class IAUploader(Uploader):
                 sys.exit(1)
 
         logging.info(
-            'Successfully uploaded to Internet Archive at archive.org/details/{}'.format(filename))
+            'Successfully uploaded to Internet Archive at https://archive.org/details/{}'.format(filename))
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""
