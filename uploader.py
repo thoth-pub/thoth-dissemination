@@ -7,7 +7,53 @@ import logging
 import sys
 import json
 import requests
+from errors import DisseminationError
+from os import environ
 from thothlibrary import ThothClient, ThothError
+
+
+PUB_FORMATS = {
+    'PDF': {
+        'content_type': 'application/pdf',
+        'file_extension': '.pdf',
+    },
+    # All current Thoth XML publications list a ZIP file for their URL
+    # rather than anything in application/xml format
+    'XML': {
+        'content_type': 'application/zip',
+        'file_extension': '.zip',
+    },
+    # The following have not been fully tested as most current examples
+    # in Thoth are paywalled and cannot be accessed by the disseminator
+    'EPUB': {
+        'content_type': 'application/epub+zip',
+        'file_extension': '.epub',
+    },
+    'AZW3': {
+        'content_type': 'application/vnd.amazon.ebook',
+        'file_extension': '.azw3',
+    },
+    'MOBI': {
+        'content_type': 'application/x-mobipocket-ebook',
+        'file_extension': '.mobi',
+    },
+    # The following have not been tested as no examples exist in Thoth yet
+    'DOCX': {
+        'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'file_extension': '.docx',
+    },
+    'FICTION_BOOK': {
+        'content_type': 'text/xml',
+        'file_extension': '.fb2',
+    },
+    # Not clear how to handle HTML publications: fetching from the Full Text URL
+    # is likely to return just the main (TOC) page as the content is under separate
+    # links. May also be 'text/html' and '.html' rather than the below.
+    # 'HTML': {
+    #     'content_type': 'application/xhtml+xml',
+    #     'file_extension': '.xhtml',
+    # },
+}
 
 
 class Uploader():
@@ -45,18 +91,25 @@ class Uploader():
 
         return metadata_json
 
-    def get_pdf_bytes(self):
-        """Retrieve canonical work PDF from URL specified in work metadata"""
-        # Extract PDF URL from Thoth metadata
-        pdf_url = self.get_pdf_url()
-        # Download PDF bytes from PDF URL
-        return self.get_data_from_url(pdf_url, 'application/pdf')
+    def get_publication_bytes(self, publication_type):
+        """Retrieve canonical work publication from URL specified in work metadata"""
+        try:
+            # Extract publication URL from Thoth metadata
+            publication_url = self.get_publication_url(publication_type)
+            # Download publication bytes from publication URL
+            return self.get_data_from_url(publication_url, PUB_FORMATS[publication_type]['content_type'])
+        except DisseminationError:
+            raise
 
     def get_formatted_metadata(self, format):
         """Retrieve work metadata from Thoth Export API in specified format"""
         metadata_url = self.export_url + '/specifications/' + \
             format + '/work/' + self.work_id
-        return self.get_data_from_url(metadata_url)
+        try:
+            return self.get_data_from_url(metadata_url)
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
     def get_cover_image(self):
         """
@@ -76,25 +129,29 @@ class Uploader():
                     'Format for cover image at URL "{}" is not yet supported'.format(cover_url))
                 sys.exit(1)
 
-        return self.get_data_from_url(cover_url, expected_format)
+        try:
+            return self.get_data_from_url(cover_url, expected_format)
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
-    def get_pdf_url(self):
-        """Extract canonical work PDF URL from work metadata"""
+    def get_publication_url(self, publication_type):
+        """Extract canonical work publication URL from work metadata"""
         publications = self.metadata.get(
             'data').get('work').get('publications')
         try:
-            # There should be a maximum of one PDF publication with a maximum of
+            # There should be a maximum of one publication per type with a maximum of
             # one canonical location; more than one would be a Thoth database error
-            pdf_locations = [n.get('locations') for n in publications if n.get(
-                'publicationType') == 'PDF'][0]
-            pdf_url = [n.get('fullTextUrl')
-                       for n in pdf_locations if n.get('canonical')][0]
-            if not pdf_url:
+            publication_locations = [n.get('locations') for n in publications if n.get(
+                'publicationType') == publication_type][0]
+            publication_url = [n.get('fullTextUrl')
+                               for n in publication_locations if n.get('canonical')][0]
+            if not publication_url:
                 raise ValueError
-            return pdf_url
+            return publication_url
         except (IndexError, ValueError):
-            logging.error('No PDF Full Text URL found for Work')
-            sys.exit(1)
+            raise DisseminationError(
+                'No {} Full Text URL found for Work'.format(publication_type))
 
     def get_cover_url(self):
         """Extract cover URL from work metadata"""
@@ -135,6 +192,13 @@ class Uploader():
 
         return publisher
 
+    def get_publisher_id(self):
+        """Extract publisher id from work metadata"""
+        publisher = self.metadata.get('data').get('work').get(
+            'imprint').get('publisher').get('publisherId')
+
+        return publisher
+
     @staticmethod
     def get_data_from_url(url, expected_format=None):
         """Download data from specified URL"""
@@ -146,19 +210,28 @@ class Uploader():
             url_headers = requests.head(url, allow_redirects=True)
 
             if url_headers.status_code != 200:
-                logging.error('Error retrieving data from "{}": {}'.format(
+                raise DisseminationError('Error retrieving data from "{}": {}'.format(
                     url, url_headers.text))
-                sys.exit(1)
             elif url_headers.headers.get('Content-Type') != expected_format:
-                logging.error('Data at "{}" is not in format "{}"'.format(
+                raise DisseminationError('Data at "{}" is not in format "{}"'.format(
                     url, expected_format))
-                sys.exit(1)
 
         url_content = requests.get(url)
         if url_content.status_code == 200:
             # Return downloaded data as bytes
             return url_content.content
         else:
-            logging.error('Error retrieving data from "{}": {}'.format(
+            raise DisseminationError('Error retrieving data from "{}": {}'.format(
                 url, url_content.text))
-            sys.exit(1)
+
+    @staticmethod
+    def get_credential_from_env(credential_name, platform_name):
+        """Retrieve specified credential from the environment"""
+
+        credential = environ.get(credential_name)
+
+        if credential is None or len(credential) < 1:
+            raise DisseminationError(
+                'Error uploading to {}: missing credential {}'.format(platform_name, credential_name))
+        else:
+            return credential

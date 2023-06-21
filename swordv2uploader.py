@@ -6,8 +6,7 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 import logging
 import sys
 import sword2
-from io import BytesIO
-from os import environ
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -18,9 +17,23 @@ class SwordV2Uploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
 
+        # Fast-fail if credentials for upload are missing
+        try:
+            user_name = self.get_credential_from_env(
+                'cam_ds7_user', 'SWORD v2')
+            user_pass = self.get_credential_from_env('cam_ds7_pw', 'SWORD v2')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
+
         # Metadata file format TBD: use CSV for now
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
-        pdf_bytes = self.get_pdf_bytes()
+        # Can't continue if no PDF file is present
+        try:
+            pdf_bytes = self.get_publication_bytes('PDF')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Convert Thoth work metadata into SWORD v2 format
         sword_metadata = self.parse_metadata()
@@ -28,8 +41,8 @@ class SwordV2Uploader(Uploader):
         # Set up SWORD v2 endpoint connection
         conn = sword2.Connection(
             service_document_iri="https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712",
-            user_name=environ.get('cam_ds7_user'),
-            user_pass=environ.get('cam_ds7_pw'),
+            user_name=user_name,
+            user_pass=user_pass,
             # SWORD2 library doesn't handle timeout-related errors gracefully and large files
             # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
             # Allow lots of leeway. (This otherwise matches the default `http_impl`.)

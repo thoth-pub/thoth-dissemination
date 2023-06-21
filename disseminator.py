@@ -6,23 +6,30 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '0.1.4'
+__version__ = '0.1.5'
 
 import argparse
 import logging
+import sys
 from dotenv import load_dotenv
 from pathlib import Path
 from iauploader import IAUploader
 from oapenuploader import OAPENUploader
 from souploader import SOUploader
 from swordv2uploader import SwordV2Uploader
+from crossrefuploader import CrossrefUploader
+from fsuploader import FigshareUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
     "OAPEN": OAPENUploader,
     "ScienceOpen": SOUploader,
     "SWORD": SwordV2Uploader,
+    "Crossref": CrossrefUploader,
+    "Figshare": FigshareUploader,
 }
+
+UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())
 
 ARGS = [
     {
@@ -34,9 +41,7 @@ ARGS = [
         "val": "--platform",
         "dest": "platform",
         "action": "store",
-        "help": "Platform to which to disseminate work. One of: {}".format(
-            ', '.join("%s" % (key) for (key, val) in UPLOADERS.items())
-        )
+        "help": "Platform to which to disseminate work. One of: {}".format(UPLOADERS_STR)
     }, {
         "val": "--export-url",
         "dest": "export_url",
@@ -50,7 +55,12 @@ ARGS = [
 def run(work_id, platform, export_url):
     """Execute a dissemination uploader based on input parameters"""
     logging.info('Beginning upload of {} to {}'.format(work_id, platform))
-    uploader = UPLOADERS[platform](work_id, export_url, __version__)
+    try:
+        uploader = UPLOADERS[platform](work_id, export_url, __version__)
+    except KeyError:
+        logging.error('{} not supported: platform must be one of {}'.format(
+            platform, UPLOADERS_STR))
+        sys.exit(1)
     uploader.run()
 
 
@@ -72,6 +82,10 @@ def get_arguments():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO,
                         format='%(levelname)s:%(asctime)s: %(message)s')
+    # DEBUG level urllib3 logs may contain sensitive information
+    # such as passwords (where sent as URL query parameters)
+    # and should never be output publicly (e.g. in GitHub Actions)
+    logging.getLogger("urllib3").setLevel(logging.INFO)
     # dotenv only required for running locally - when running
     # with Docker, --env-file option could be used instead
     dotenv_path = Path('./config.env')

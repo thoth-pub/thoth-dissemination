@@ -7,8 +7,8 @@ import logging
 import sys
 from internetarchive import get_item, upload, exceptions as ia_except
 from io import BytesIO
-from os import environ
 from requests import exceptions as req_except
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -17,6 +17,16 @@ class IAUploader(Uploader):
 
     def upload_to_platform(self):
         """Upload work in required format to Internet Archive"""
+
+        # Fast-fail if credentials for upload are missing
+        try:
+            access_key = self.get_credential_from_env(
+                'ia_s3_access', 'Internet Archive')
+            secret_key = self.get_credential_from_env(
+                'ia_s3_secret', 'Internet Archive')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
         filename = self.work_id
@@ -32,7 +42,12 @@ class IAUploader(Uploader):
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Internet Archive metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
-        pdf_bytes = self.get_pdf_bytes()
+        # Can't continue if no PDF file is present
+        try:
+            pdf_bytes = self.get_publication_bytes('PDF')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Convert Thoth work metadata into Internet Archive format
         ia_metadata = self.parse_metadata()
@@ -45,8 +60,8 @@ class IAUploader(Uploader):
                     '{}.json'.format(filename): BytesIO(metadata_bytes),
                 },
                 metadata=ia_metadata,
-                access_key=environ.get('ia_s3_access'),
-                secret_key=environ.get('ia_s3_secret'),
+                access_key=access_key,
+                secret_key=secret_key,
                 retries=2,
                 retries_sleep=30,
                 verify=True,
@@ -54,6 +69,7 @@ class IAUploader(Uploader):
         # Empty access_key and/or secret_key triggers an AuthenticationError.
         # Incorrect access_key and/or secret_key triggers an HTTPError.
         except ia_except.AuthenticationError:
+            # The fast-fail above ought to prevent us from hitting this
             logging.error(
                 'Error uploading to Internet Archive: credentials missing')
             sys.exit(1)
@@ -66,7 +82,7 @@ class IAUploader(Uploader):
                 'Error uploading to Internet Archive: credentials may be incorrect')
             sys.exit(1)
 
-        if len(responses) == 0:
+        if len(responses) < 1:
             logging.error(
                 'Error uploading to Internet Archive: no response received from server')
             sys.exit(1)
@@ -78,7 +94,7 @@ class IAUploader(Uploader):
                 sys.exit(1)
 
         logging.info(
-            'Successfully uploaded to Internet Archive at archive.org/details/{}'.format(filename))
+            'Successfully uploaded to Internet Archive at https://archive.org/details/{}'.format(filename))
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""

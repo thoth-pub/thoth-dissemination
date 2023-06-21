@@ -1,0 +1,48 @@
+# Purpose: disseminate newly-published works from Thoth to the specified platform.
+# Relevant credentials must be present as repository secrets.
+name: bulk-disseminate
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      env_publishers:
+        required: true
+        type: string
+      env_exceptions:
+        required: true
+        type: string
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    outputs:
+      NEW_IDS: ${{ steps.get-ids.outputs.NEW_IDS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Get list of work IDs using Python script
+        id: get-ids
+        run: |
+          pip install -r requirements_obtain_new_ids.txt
+          output=$(python obtain_new_ids.py --platform ${{ inputs.platform }})
+          echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
+        env:
+          ENV_PUBLISHERS: ${{ inputs.env_publishers }}
+          ENV_EXCEPTIONS: ${{ inputs.env_exceptions }}
+
+  bulk-disseminate:
+    needs: run-script
+    uses: ./.github/workflows/disseminate.yml
+    with:
+      work-ids: ${{ needs.run-script.outputs.NEW_IDS }}
+      platform: ${{ inputs.platform }}
+    secrets: inherit
