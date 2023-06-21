@@ -18,6 +18,7 @@ from oapenuploader import OAPENUploader
 from souploader import SOUploader
 from swordv2uploader import SwordV2Uploader
 from crossrefuploader import CrossrefUploader
+from fsuploader import FigshareUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
@@ -25,6 +26,7 @@ UPLOADERS = {
     "ScienceOpen": SOUploader,
     "SWORD": SwordV2Uploader,
     "Crossref": CrossrefUploader,
+    "Figshare": FigshareUploader,
 }
 
 UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())

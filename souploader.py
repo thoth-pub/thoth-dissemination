@@ -9,6 +9,7 @@ import pysftp
 import zipfile
 from datetime import date
 from io import BytesIO
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -32,8 +33,13 @@ class SOUploader(Uploader):
         """
 
         # Fast-fail if credentials for upload are missing
-        username = self.get_credential_from_env('so_ftp_user', 'ScienceOpen')
-        password = self.get_credential_from_env('so_ftp_pw', 'ScienceOpen')
+        try:
+            username = self.get_credential_from_env(
+                'so_ftp_user', 'ScienceOpen')
+            password = self.get_credential_from_env('so_ftp_pw', 'ScienceOpen')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         publisher = self.get_publisher_name()
         filename = self.get_pb_isbn()
@@ -44,7 +50,12 @@ class SOUploader(Uploader):
         # Metadata file format TBD: use CSV for now
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
         cover_bytes = self.get_cover_image()
-        pdf_bytes = self.get_pdf_bytes()
+        # Can't continue if no PDF file is present
+        try:
+            pdf_bytes = self.get_publication_bytes('PDF')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Both .jpg and .png cover files are supported
         cover_file_ext = self.get_cover_url().split('.')[-1]
