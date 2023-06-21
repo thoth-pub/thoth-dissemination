@@ -5,8 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [[0.1.5]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.5) - 2023-06-21
 ### Added
   - Support for uploading files and metadata to Figshare
+  - Support for sending DOI deposit files to Crossref
+  - GitHub Actions for recurring automatic DOI deposit to Crossref
+### Changed
+  - Reworked existing GitHub Actions for greater extensibility
+  - Added support for content file types other than PDF
+  - Improved error handling
 
 ## [[0.1.4]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.4) - 2023-02-01
 ### Fixed
