@@ -9,7 +9,6 @@ import pysftp
 import zipfile
 from datetime import date
 from io import BytesIO
-from os import environ
 from uploader import Uploader
 
 
@@ -31,6 +30,10 @@ class SOUploader(Uploader):
         - Can continue existing pattern of using paperback ISBN for all filenames
         - Chapter files and metadata required (full details TBD; not yet implemented)
         """
+
+        # Fast-fail if credentials for upload are missing
+        username = self.get_credential_from_env('so_ftp_user', 'ScienceOpen')
+        password = self.get_credential_from_env('so_ftp_pw', 'ScienceOpen')
 
         publisher = self.get_publisher_name()
         filename = self.get_pb_isbn()
@@ -62,8 +65,8 @@ class SOUploader(Uploader):
         try:
             with pysftp.Connection(
                 host='ftp.scienceopen.com',
-                username=environ.get('so_ftp_user'),
-                password=environ.get('so_ftp_pw'),
+                username=username,
+                password=password,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)

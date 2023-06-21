@@ -7,6 +7,7 @@ import logging
 import sys
 import json
 import requests
+from os import environ
 from thothlibrary import ThothClient, ThothError
 
 
@@ -135,6 +136,13 @@ class Uploader():
 
         return publisher
 
+    def get_publisher_id(self):
+        """Extract publisher id from work metadata"""
+        publisher = self.metadata.get('data').get('work').get(
+            'imprint').get('publisher').get('publisherId')
+
+        return publisher
+
     @staticmethod
     def get_data_from_url(url, expected_format=None):
         """Download data from specified URL"""
@@ -162,3 +170,16 @@ class Uploader():
             logging.error('Error retrieving data from "{}": {}'.format(
                 url, url_content.text))
             sys.exit(1)
+
+    @staticmethod
+    def get_credential_from_env(credential_name, platform_name):
+        """Retrieve specified credential from the environment"""
+
+        credential = environ.get(credential_name)
+
+        if credential is None or len(credential) < 1:
+            logging.error(
+                'Error uploading to {}: missing credential {}'.format(platform_name, credential_name))
+            sys.exit(1)
+
+        return credential

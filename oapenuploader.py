@@ -7,7 +7,6 @@ import logging
 import sys
 from ftplib import FTP, error_perm
 from io import BytesIO
-from os import environ
 from uploader import Uploader
 
 
@@ -22,6 +21,10 @@ class OAPENUploader(Uploader):
         content files from the links contained within it.
         """
 
+        # Fast-fail if credentials for upload are missing
+        user = self.get_credential_from_env('oapen_ftp_user', 'OAPEN')
+        passwd = self.get_credential_from_env('oapen_ftp_pw', 'OAPEN')
+
         metadata_bytes = self.get_formatted_metadata('onix_3.0::oapen')
         # Filename TBD: use work ID for now
         filename = self.work_id
@@ -29,8 +32,8 @@ class OAPENUploader(Uploader):
         try:
             with FTP(
                 host='oapen-ftpserver.org',
-                user=environ.get('oapen_ftp_user'),
-                passwd=environ.get('oapen_ftp_pw'),
+                user=user,
+                passwd=passwd,
             ) as ftp:
                 try:
                     ftp.cwd('/OAPEN')
