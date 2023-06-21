@@ -1,0 +1,34 @@
+# Logic shared between multiple workflows for disseminating one or more works
+# (given as an array of work IDs) from Thoth to the specified platform.
+name: disseminate
+
+on:
+  workflow_call:
+    inputs:
+      work-ids:
+        required: true
+        type: string
+      platform:
+        required: true
+        type: string
+
+jobs:
+  disseminate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        work-id: ${{ fromJSON(inputs.work-ids) }}
+    steps:
+      - name: Make all platform credentials available to later steps (with names lowercased)
+        uses: oNaiPs/secrets-to-env-action@v1
+        with:
+          secrets: ${{ toJSON(secrets) }}
+          convert: lower
+      - name: Run disseminator using Dockerhub image
+        uses: docker://openbookpublishers/thoth-dissemination:latest
+        with:
+          entrypoint: /disseminator.py
+          args: >-
+            --work ${{ matrix.work-id }}
+            --platform ${{ inputs.platform }}
