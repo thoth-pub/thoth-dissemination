@@ -7,6 +7,7 @@ import logging
 import sys
 from ftplib import FTP, error_perm
 from io import BytesIO
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -22,8 +23,12 @@ class OAPENUploader(Uploader):
         """
 
         # Fast-fail if credentials for upload are missing
-        user = self.get_credential_from_env('oapen_ftp_user', 'OAPEN')
-        passwd = self.get_credential_from_env('oapen_ftp_pw', 'OAPEN')
+        try:
+            user = self.get_credential_from_env('oapen_ftp_user', 'OAPEN')
+            passwd = self.get_credential_from_env('oapen_ftp_pw', 'OAPEN')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         metadata_bytes = self.get_formatted_metadata('onix_3.0::oapen')
         # Filename TBD: use work ID for now

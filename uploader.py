@@ -231,8 +231,7 @@ class Uploader():
         credential = environ.get(credential_name)
 
         if credential is None or len(credential) < 1:
-            logging.error(
+            raise DisseminationError(
                 'Error uploading to {}: missing credential {}'.format(platform_name, credential_name))
-            sys.exit(1)
-
-        return credential
+        else:
+            return credential

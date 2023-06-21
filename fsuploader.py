@@ -10,7 +10,6 @@ import requests
 import hashlib
 import re
 from io import BytesIO
-from os import environ
 from time import sleep
 from errors import DisseminationError
 from uploader import Uploader, PUB_FORMATS
@@ -22,7 +21,13 @@ class FigshareUploader(Uploader):
     def __init__(self, work_id, export_url, version):
         """Instantiate class for accessing Figshare API."""
         super().__init__(work_id, export_url, version)
-        self.api = FigshareApi()
+        try:
+            api_token = self.get_credential_from_env(
+                'figshare_token', 'Figshare')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
+        self.api = FigshareApi(api_token)
 
     def upload_to_platform(self):
         """
@@ -285,12 +290,9 @@ class FigshareApi:
     # Production instance. Test instance is 'https://api.figsh.com/v2'
     API_ROOT = 'https://api.figshare.com/v2'
 
-    def __init__(self):
+    def __init__(self, api_token):
         """Connect to API and retrieve account details which will be needed for upload."""
-        self.api_token = environ.get('figshare_token')
-        if self.api_token is None or len(self.api_token) < 1:
-            logging.error('Error uploading to Figshare: missing API token')
-            sys.exit(1)
+        self.api_token = api_token
         [self.user_id, self.group_id] = self.get_account_details()
 
     def issue_request(self, method, url, expected_status, expected_keys=None, data_body=None, json_body=None):

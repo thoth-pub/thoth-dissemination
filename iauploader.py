@@ -19,10 +19,14 @@ class IAUploader(Uploader):
         """Upload work in required format to Internet Archive"""
 
         # Fast-fail if credentials for upload are missing
-        access_key = self.get_credential_from_env(
-            'ia_s3_access', 'Internet Archive')
-        secret_key = self.get_credential_from_env(
-            'ia_s3_secret', 'Internet Archive')
+        try:
+            access_key = self.get_credential_from_env(
+                'ia_s3_access', 'Internet Archive')
+            secret_key = self.get_credential_from_env(
+                'ia_s3_secret', 'Internet Archive')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
         filename = self.work_id
