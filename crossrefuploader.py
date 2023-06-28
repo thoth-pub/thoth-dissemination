@@ -23,9 +23,9 @@ class CrossrefUploader(Uploader):
         # Check that Crossref credentials have been provided for this publisher
         publisher_id = self.get_publisher_id()
         login_id = self.get_credential_from_env(
-            'crossref_user_' + publisher_id.replace('-', '_'), 'Crossref')
+            'crossref_user_' + publisher_id, 'Crossref')
         login_passwd = self.get_credential_from_env(
-            'crossref_pw_' + publisher_id.replace('-', '_'), 'Crossref')
+            'crossref_pw_' + publisher_id, 'Crossref')
 
         CROSSREF_ENDPOINT = 'https://doi.crossref.org/servlet/deposit'
         # The Crossref API is minimal and will not necessarily return errors if

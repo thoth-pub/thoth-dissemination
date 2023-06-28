@@ -121,14 +121,14 @@ class CrossrefIDFinder(IDFinder):
         DELAY_BUFFER_HRS = 3
 
         # Target: all works listed in Thoth (from the selected publishers) which are
-        # Active, and which have been updated since the last deposit.
+        # either Active or Forthcoming, and which have been updated since the last deposit.
         current_time = datetime.now(timezone.utc)
         last_deposit_time = current_time - \
             timedelta(hours=(DEPOSIT_INTERVAL_HRS + DELAY_BUFFER_HRS))
         last_deposit_time_str = datetime.strftime(
             last_deposit_time, "%Y-%m-%dT%H:%M:%SZ")
 
-        self.work_statuses = '[ACTIVE]'
+        self.work_statuses = '[ACTIVE, FORTHCOMING]'
         # Start with the most recently updated
         self.order = '{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}'
         self.updated_at_with_relations = '{{timestamp: "{}", expression: GREATER_THAN}}'.format(
