@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[0.1.6]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.6) - 2023-06-28
+### Fixed
+  - Amended Crossref credential environment variables naming to allow running in GitHub Actions
+
 ## [[0.1.5]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.5) - 2023-06-21
 ### Added
   - Support for uploading files and metadata to Figshare
