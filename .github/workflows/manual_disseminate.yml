@@ -1,11 +1,14 @@
-# Purpose: manual upload of one or more works from Thoth to Internet Archive.
+# Purpose: manual dissemination of one or more works from Thoth to specified platform.
+#
+# Platform-specific notes:
+# 1) Internet Archive:
 # Work must have a valid URL supplied as the PDF Publication Canonical Location.
 # Work must not have previously been uploaded to Internet Archive.
 # IA credentials for a user with write permissions to the Thoth Archiving Network
 # collection (e.g. thoth_pub) must be present as repository secrets
 # named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
 # It is advised not to upload until the work is published and all metadata finalised.
-name: manual-ia-upload
+name: manual-disseminate
 
 on:
   workflow_dispatch:
@@ -13,11 +16,15 @@ on:
       workIds:
         description: 'Thoth work IDs in array format, e.g. ["id1", "id2"]'
         required: true
+      platform:
+        description: 'Name of platform, e.g. InternetArchive, Crossref'
+        required: true
+        type: string
 
 jobs:
-  manual_ia_upload:
+  manual_disseminate:
     uses: ./.github/workflows/disseminate.yml
     with:
       work-ids: ${{ github.event.inputs.workIds }}
-      platform: 'InternetArchive'
+      platform: ${{ github.event.inputs.platform }}
     secrets: inherit
