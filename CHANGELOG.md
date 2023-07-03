@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[0.1.7]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.7) - 2023-07-03
+### Changed
+  - Made existing GitHub Actions more general/reliable
+
 ## [[0.1.6]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.6) - 2023-06-28
 ### Fixed
   - Amended Crossref credential environment variables naming to allow running in GitHub Actions
