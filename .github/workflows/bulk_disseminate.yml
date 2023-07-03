@@ -41,7 +41,7 @@ jobs:
 
   bulk-disseminate:
     needs: run-script
-    if: needs.run-script.outputs.NEW_IDS != ''
+    if: needs.run-script.outputs.NEW_IDS != '[]'
     uses: ./.github/workflows/disseminate.yml
     with:
       work-ids: ${{ needs.run-script.outputs.NEW_IDS }}
