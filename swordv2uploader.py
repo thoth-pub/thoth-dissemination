@@ -15,6 +15,7 @@ class RequestType(Enum):
     CREATE_ITEM = 1
     UPLOAD_PDF = 2
     UPLOAD_METADATA = 3
+    COMPLETE_DEPOSIT = 4
 
 
 class SwordV2Uploader(Uploader):
@@ -58,6 +59,7 @@ class SwordV2Uploader(Uploader):
 
         receipt = self.handle_request(
             RequestType.CREATE_ITEM,
+            expected_status=201,
             # Hacky workaround for an issue with mishandling of encodings within sword2 library,
             # which meant metadata containing special characters could not be submitted.
             # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
@@ -70,20 +72,28 @@ class SwordV2Uploader(Uploader):
 
         pdf_receipt = self.handle_request(
             RequestType.UPLOAD_PDF,
+            expected_status=201,
             edit_media_iri=receipt.edit_media,
             payload=pdf_bytes,
         )
 
         metadata_receipt = self.handle_request(
             RequestType.UPLOAD_METADATA,
+            expected_status=201,
             edit_media_iri=receipt.edit_media,
             payload=metadata_bytes,
+        )
+
+        deposit_receipt = self.handle_request(
+            RequestType.COMPLETE_DEPOSIT,
+            expected_status=200,
+            se_iri=receipt.edit,
         )
 
         logging.info(
             'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
 
-    def handle_request(self, request_type, **kwargs):
+    def handle_request(self, request_type, expected_status, **kwargs):
         try:
             request_receipt = self.send_request(
                 request_type=request_type, **kwargs)
@@ -92,7 +102,7 @@ class SwordV2Uploader(Uploader):
                 'Could not connect to SWORD v2 server: authorisation failed')
             sys.exit(1)
 
-        if request_receipt.code != 201:
+        if request_receipt.code != expected_status:
             # Placeholder for error message
             request_contents = 'item'
             if request_type == RequestType.CREATE_ITEM:
@@ -131,6 +141,11 @@ class SwordV2Uploader(Uploader):
                 mimetype='application/json',
                 in_progress=True,
                 # Required kwargs: edit_media_iri, payload
+                **kwargs,
+            )
+        elif request_type == RequestType.COMPLETE_DEPOSIT:
+            request_receipt = self.conn.complete_deposit(
+                # Required kwargs: se_iri (OR dr)
                 **kwargs,
             )
         else:
