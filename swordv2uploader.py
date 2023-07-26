@@ -37,8 +37,8 @@ class SwordV2Uploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
 
-        # Metadata file format TBD: use CSV for now
-        metadata_bytes = self.get_formatted_metadata('csv::thoth')
+        # Metadata file format TBD: use JSON for now
+        metadata_bytes = self.get_formatted_metadata('json::thoth')
         # Can't continue if no PDF file is present
         try:
             pdf_bytes = self.get_publication_bytes('PDF')
@@ -97,8 +97,8 @@ class SwordV2Uploader(Uploader):
                 edit_media_iri=receipt.edit_media,
                 payload=metadata_bytes,
                 # Filename TBD: use work ID for now
-                filename='{}.csv'.format(self.work_id),
-                mimetype='text/csv',
+                filename='{}.json'.format(self.work_id),
+                mimetype='application/json',
                 in_progress=True,
             )
         except sword2.exceptions.Forbidden:
