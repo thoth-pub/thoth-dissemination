@@ -14,10 +14,9 @@ class SwordV2Uploader(Uploader):
     """Dissemination logic for SWORD v2"""
     # using UCamApollo DSpace 7 as hard-coded logic for now.
 
-    def upload_to_platform(self):
-        """Upload work in required format to SWORD v2"""
-
-        # Fast-fail if credentials for upload are missing
+    def __init__(self, work_id, export_url, version):
+        """Create connection to SWORD v2 endpoint"""
+        super().__init__(work_id, export_url, version)
         try:
             user_name = self.get_credential_from_env(
                 'cam_ds7_user', 'SWORD v2')
@@ -25,6 +24,18 @@ class SwordV2Uploader(Uploader):
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
+        self.conn = sword2.Connection(
+            service_document_iri='https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712',
+            user_name=user_name,
+            user_pass=user_pass,
+            # SWORD2 library doesn't handle timeout-related errors gracefully and large files
+            # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
+            # Allow lots of leeway. (This otherwise matches the default `http_impl`.)
+            http_impl=sword2.http_layer.HttpLib2Layer(timeout=120.0)
+        )
+
+    def upload_to_platform(self):
+        """Upload work in required format to SWORD v2"""
 
         # Metadata file format TBD: use CSV for now
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
@@ -38,19 +49,9 @@ class SwordV2Uploader(Uploader):
         # Convert Thoth work metadata into SWORD v2 format
         sword_metadata = self.parse_metadata()
 
-        # Set up SWORD v2 endpoint connection
-        conn = sword2.Connection(
-            service_document_iri="https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712",
-            user_name=user_name,
-            user_pass=user_pass,
-            # SWORD2 library doesn't handle timeout-related errors gracefully and large files
-            # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
-            # Allow lots of leeway. (This otherwise matches the default `http_impl`.)
-            http_impl=sword2.http_layer.HttpLib2Layer(timeout=120.0)
-        )
 
         try:
-            receipt = conn.create(
+            receipt = self.conn.create(
                 col_iri="https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712",
                 # Hacky workaround for an issue with mishandling of encodings within sword2 library,
                 # which meant metadata containing special characters could not be submitted.
@@ -73,7 +74,7 @@ class SwordV2Uploader(Uploader):
             sys.exit(1)
 
         try:
-            pdf_receipt = conn.add_file_to_resource(
+            pdf_receipt = self.conn.add_file_to_resource(
                 edit_media_iri=receipt.edit_media,
                 payload=pdf_bytes,
                 # Filename TBD: use work ID for now
@@ -92,7 +93,7 @@ class SwordV2Uploader(Uploader):
             sys.exit(1)
 
         try:
-            metadata_receipt = conn.add_file_to_resource(
+            metadata_receipt = self.conn.add_file_to_resource(
                 edit_media_iri=receipt.edit_media,
                 payload=metadata_bytes,
                 # Filename TBD: use work ID for now
