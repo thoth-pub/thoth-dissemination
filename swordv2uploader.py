@@ -6,8 +6,15 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 import logging
 import sys
 import sword2
+from enum import Enum
 from errors import DisseminationError
 from uploader import Uploader
+
+
+class RequestType(Enum):
+    CREATE_ITEM = 1
+    UPLOAD_PDF = 2
+    UPLOAD_METADATA = 3
 
 
 class SwordV2Uploader(Uploader):
@@ -49,70 +56,87 @@ class SwordV2Uploader(Uploader):
         # Convert Thoth work metadata into SWORD v2 format
         sword_metadata = self.parse_metadata()
 
+        receipt = self.handle_request(
+            RequestType.CREATE_ITEM,
+            # Hacky workaround for an issue with mishandling of encodings within sword2 library,
+            # which meant metadata containing special characters could not be submitted.
+            # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
+            # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
+            # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
+            # seems to mean that the string sent to the server is in correct utf-8 format.
+            metadata_entry=str(sword_metadata).encode(
+                'utf-8').decode('latin-1'),
+        )
 
+        pdf_receipt = self.handle_request(
+            RequestType.UPLOAD_PDF,
+            edit_media_iri=receipt.edit_media,
+            payload=pdf_bytes,
+        )
+
+        metadata_receipt = self.handle_request(
+            RequestType.UPLOAD_METADATA,
+            edit_media_iri=receipt.edit_media,
+            payload=metadata_bytes,
+        )
+
+        logging.info(
+            'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
+
+    def handle_request(self, request_type, **kwargs):
         try:
-            receipt = self.conn.create(
-                col_iri="https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712",
-                # Hacky workaround for an issue with mishandling of encodings within sword2 library,
-                # which meant metadata containing special characters could not be submitted.
-                # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
-                # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
-                # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
-                # seems to mean that the string sent to the server is in correct utf-8 format.
-                metadata_entry=str(sword_metadata).encode(
-                    'utf-8').decode('latin-1'),
-                in_progress=True,
-            )
+            request_receipt = self.send_request(
+                request_type=request_type, **kwargs)
         except sword2.exceptions.Forbidden:
             logging.error(
                 'Could not connect to SWORD v2 server: authorisation failed')
             sys.exit(1)
 
-        if receipt.code != 201:
+        if request_receipt.code != 201:
+            # Placeholder for error message
+            request_contents = 'item'
+            if request_type == RequestType.CREATE_ITEM:
+                request_contents = 'item data'
+            elif request_type == RequestType.UPLOAD_PDF:
+                request_contents = 'PDF file'
+            elif request_type == RequestType.UPLOAD_METADATA:
+                request_contents = 'metadata file'
             logging.error(
-                'Error uploading item data to SWORD v2')
+                'Error uploading {} to SWORD v2'.format(request_contents))
             sys.exit(1)
 
-        try:
-            pdf_receipt = self.conn.add_file_to_resource(
-                edit_media_iri=receipt.edit_media,
-                payload=pdf_bytes,
+        return request_receipt
+
+    def send_request(self, request_type, **kwargs):
+        if request_type == RequestType.CREATE_ITEM:
+            request_receipt = self.conn.create(
+                col_iri='https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712',
+                in_progress=True,
+                # Required kwargs: metadata_entry
+                **kwargs,
+            )
+        elif request_type == RequestType.UPLOAD_PDF:
+            request_receipt = self.conn.add_file_to_resource(
                 # Filename TBD: use work ID for now
                 filename='{}.pdf'.format(self.work_id),
                 mimetype='application/pdf',
                 in_progress=True,
+                # Required kwargs: edit_media_iri, payload
+                **kwargs,
             )
-        except sword2.exceptions.Forbidden:
-            logging.error(
-                'Could not connect to SWORD v2 server: authorisation failed')
-            sys.exit(1)
-
-        if pdf_receipt.code != 201:
-            logging.error(
-                'Error uploading PDF file to SWORD v2')
-            sys.exit(1)
-
-        try:
-            metadata_receipt = self.conn.add_file_to_resource(
-                edit_media_iri=receipt.edit_media,
-                payload=metadata_bytes,
+        elif request_type == RequestType.UPLOAD_METADATA:
+            request_receipt = self.conn.add_file_to_resource(
                 # Filename TBD: use work ID for now
                 filename='{}.json'.format(self.work_id),
                 mimetype='application/json',
                 in_progress=True,
+                # Required kwargs: edit_media_iri, payload
+                **kwargs,
             )
-        except sword2.exceptions.Forbidden:
-            logging.error(
-                'Could not connect to SWORD v2 server: authorisation failed')
-            sys.exit(1)
+        else:
+            raise NotImplementedError
 
-        if metadata_receipt.code != 201:
-            logging.error(
-                'Error uploading metadata file to SWORD v2')
-            sys.exit(1)
-
-        logging.info(
-            'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
+        return request_receipt
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
