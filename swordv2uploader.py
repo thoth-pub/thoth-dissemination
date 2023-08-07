@@ -16,6 +16,7 @@ class RequestType(Enum):
     UPLOAD_PDF = 2
     UPLOAD_METADATA = 3
     COMPLETE_DEPOSIT = 4
+    DELETE_ITEM = 5
 
 
 class SwordV2Uploader(Uploader):
@@ -57,38 +58,68 @@ class SwordV2Uploader(Uploader):
         # Convert Thoth work metadata into SWORD v2 format
         sword_metadata = self.parse_metadata()
 
-        receipt = self.handle_request(
-            RequestType.CREATE_ITEM,
-            expected_status=201,
-            # Hacky workaround for an issue with mishandling of encodings within sword2 library,
-            # which meant metadata containing special characters could not be submitted.
-            # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
-            # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
-            # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
-            # seems to mean that the string sent to the server is in correct utf-8 format.
-            metadata_entry=str(sword_metadata).encode(
-                'utf-8').decode('latin-1'),
-        )
+        try:
+            receipt = self.handle_request(
+                request_type=RequestType.CREATE_ITEM,
+                expected_status=201,
+                # Hacky workaround for an issue with mishandling of encodings within sword2 library,
+                # which meant metadata containing special characters could not be submitted.
+                # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
+                # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
+                # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
+                # seems to mean that the string sent to the server is in correct utf-8 format.
+                metadata_entry=str(sword_metadata).encode(
+                    'utf-8').decode('latin-1'),
+            )
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
-        pdf_receipt = self.handle_request(
-            RequestType.UPLOAD_PDF,
-            expected_status=201,
-            edit_media_iri=receipt.edit_media,
-            payload=pdf_bytes,
-        )
+        # Any failure after this point will leave incomplete data in
+        # SWORD v2 server which will need to be removed.
+        try:
+            pdf_receipt = self.handle_request(
+                request_type=RequestType.UPLOAD_PDF,
+                expected_status=201,
+                edit_media_iri=receipt.edit_media,
+                payload=pdf_bytes,
+            )
 
-        metadata_receipt = self.handle_request(
-            RequestType.UPLOAD_METADATA,
-            expected_status=201,
-            edit_media_iri=receipt.edit_media,
-            payload=metadata_bytes,
-        )
+            metadata_receipt = self.handle_request(
+                request_type=RequestType.UPLOAD_METADATA,
+                expected_status=201,
+                edit_media_iri=receipt.edit_media,
+                payload=metadata_bytes,
+            )
 
-        deposit_receipt = self.handle_request(
-            RequestType.COMPLETE_DEPOSIT,
-            expected_status=200,
-            se_iri=receipt.edit,
-        )
+            deposit_receipt = self.handle_request(
+                request_type=RequestType.COMPLETE_DEPOSIT,
+                expected_status=200,
+                se_iri=receipt.edit,
+            )
+        except DisseminationError as error:
+            # Report failure, and delete the partially-created item
+            logging.error(error)
+            try:
+                deletion_receipt = self.handle_request(
+                    request_type=RequestType.DELETE_ITEM,
+                    expected_status=200,
+                    resource_iri=receipt.edit,
+                )
+            except DisseminationError as deletion_error:
+                logging.error('Failed to delete incomplete item: {}'.format(deletion_error))
+            sys.exit(1)
+        except:
+            # Unexpected failure. Let program crash, but still need to delete item
+            try:
+                deletion_receipt = self.handle_request(
+                    request_type=RequestType.DELETE_ITEM,
+                    expected_status=200,
+                    resource_iri=receipt.edit,
+                )
+            except DisseminationError as deletion_error:
+                logging.error('Failed to delete incomplete item: {}'.format(deletion_error))
+            raise
 
         logging.info(
             'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
@@ -98,13 +129,11 @@ class SwordV2Uploader(Uploader):
             request_receipt = self.send_request(
                 request_type=request_type, **kwargs)
         except sword2.exceptions.Forbidden:
-            logging.error(
+            raise DisseminationError(
                 'Could not connect to SWORD v2 server: authorisation failed')
-            sys.exit(1)
         except sword2.HTTPResponseError as error:
-            logging.error(
+            raise DisseminationError(
                 'Could not connect to SWORD v2 server (status code {})'.format(error.response['status']))
-            sys.exit(1)
 
         if request_receipt.code != expected_status:
             # Placeholder for error message
@@ -115,9 +144,8 @@ class SwordV2Uploader(Uploader):
                 request_contents = 'PDF file'
             elif request_type == RequestType.UPLOAD_METADATA:
                 request_contents = 'metadata file'
-            logging.error(
+            raise DisseminationError(
                 'Error uploading {} to SWORD v2'.format(request_contents))
-            sys.exit(1)
 
         return request_receipt
 
@@ -150,6 +178,11 @@ class SwordV2Uploader(Uploader):
         elif request_type == RequestType.COMPLETE_DEPOSIT:
             request_receipt = self.conn.complete_deposit(
                 # Required kwargs: se_iri (OR dr)
+                **kwargs,
+            )
+        elif request_type == RequestType.DELETE_ITEM:
+            request_receipt = self.conn.delete(
+                # Required kwargs: resource_iri
                 **kwargs,
             )
         else:
