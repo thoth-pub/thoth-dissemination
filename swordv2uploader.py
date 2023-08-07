@@ -101,6 +101,10 @@ class SwordV2Uploader(Uploader):
             logging.error(
                 'Could not connect to SWORD v2 server: authorisation failed')
             sys.exit(1)
+        except sword2.HTTPResponseError as error:
+            logging.error(
+                'Could not connect to SWORD v2 server (status code {})'.format(error.response['status']))
+            sys.exit(1)
 
         if request_receipt.code != expected_status:
             # Placeholder for error message
