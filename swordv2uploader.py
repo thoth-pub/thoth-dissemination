@@ -97,9 +97,12 @@ class SwordV2Uploader(Uploader):
                 expected_status=200,
                 se_iri=receipt.edit,
             )
-        except DisseminationError as error:
-            # Report failure, and delete the partially-created item
-            logging.error(error)
+        except Exception as error:
+            # In all cases, we need to delete the partially-created item
+            # For expected failures, log before attempting deletion, then just exit
+            # For unexpected failures, attempt deletion then let program crash
+            if isinstance(error, DisseminationError):
+                logging.error(error)
             try:
                 deletion_receipt = self.handle_request(
                     request_type=RequestType.DELETE_ITEM,
@@ -108,18 +111,10 @@ class SwordV2Uploader(Uploader):
                 )
             except DisseminationError as deletion_error:
                 logging.error('Failed to delete incomplete item: {}'.format(deletion_error))
-            sys.exit(1)
-        except:
-            # Unexpected failure. Let program crash, but still need to delete item
-            try:
-                deletion_receipt = self.handle_request(
-                    request_type=RequestType.DELETE_ITEM,
-                    expected_status=200,
-                    resource_iri=receipt.edit,
-                )
-            except DisseminationError as deletion_error:
-                logging.error('Failed to delete incomplete item: {}'.format(deletion_error))
-            raise
+            if isinstance(error, DisseminationError):
+                sys.exit(1)
+            else:
+                raise
 
         logging.info(
             'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
