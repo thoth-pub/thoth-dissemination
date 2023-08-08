@@ -115,7 +115,7 @@ class SwordV2Api:
     def __init__(self, work_id, user_name, user_pass):
         self.work_id = work_id
         self.conn = sword2.Connection(
-            service_document_iri='https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712',
+            service_document_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/7",
             user_name=user_name,
             user_pass=user_pass,
             # SWORD2 library doesn't handle timeout-related errors gracefully and large files
@@ -196,7 +196,7 @@ class SwordV2Api:
     def send_request(self, request_type, **kwargs):
         if request_type == RequestType.CREATE_ITEM:
             request_receipt = self.conn.create(
-                col_iri='https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712',
+                col_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/7",
                 in_progress=True,
                 # Required kwargs: metadata_entry
                 **kwargs,
