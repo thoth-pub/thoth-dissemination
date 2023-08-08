@@ -33,15 +33,7 @@ class SwordV2Uploader(Uploader):
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
-        self.conn = sword2.Connection(
-            service_document_iri='https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712',
-            user_name=user_name,
-            user_pass=user_pass,
-            # SWORD2 library doesn't handle timeout-related errors gracefully and large files
-            # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
-            # Allow lots of leeway. (This otherwise matches the default `http_impl`.)
-            http_impl=sword2.http_layer.HttpLib2Layer(timeout=120.0)
-        )
+        self.api = SwordV2Api(work_id, user_name, user_pass)
 
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
@@ -59,7 +51,7 @@ class SwordV2Uploader(Uploader):
         sword_metadata = self.parse_metadata()
 
         try:
-            receipt = self.create_item(sword_metadata)
+            receipt = self.api.create_item(sword_metadata)
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
@@ -67,9 +59,9 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
-            self.upload_pdf(receipt.edit_media, pdf_bytes)
-            self.upload_metadata(receipt.edit_media, metadata_bytes)
-            self.complete_deposit(receipt.edit)
+            self.api.upload_pdf(receipt.edit_media, pdf_bytes)
+            self.api.upload_metadata(receipt.edit_media, metadata_bytes)
+            self.api.complete_deposit(receipt.edit)
         except Exception as error:
             # In all cases, we need to delete the partially-created item
             # For expected failures, log before attempting deletion, then just exit
@@ -77,7 +69,7 @@ class SwordV2Uploader(Uploader):
             if isinstance(error, DisseminationError):
                 logging.error(error)
             try:
-                self.delete_item(receipt.edit)
+                self.api.delete_item(receipt.edit)
             except DisseminationError as deletion_error:
                 logging.error('Failed to delete incomplete item: {}'.format(deletion_error))
             if isinstance(error, DisseminationError):
@@ -87,6 +79,50 @@ class SwordV2Uploader(Uploader):
 
         logging.info(
             'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
+
+    def parse_metadata(self):
+        """Convert work metadata into SWORD v2 format"""
+        work_metadata = self.metadata.get('data').get('work')
+        sword_metadata = sword2.Entry(
+            # All fields are non-mandatory and any None values are ignored on ingest
+            # (within Apollo DSpace 7 - yet to test other SWORD2-based platforms)
+            # Some of the below fields do not appear to be stored/
+            # correctly displayed by Apollo, although they are valid within SWORD2
+            title=work_metadata.get('fullTitle'),
+            dcterms_publisher=self.get_publisher_name(),
+            dcterms_issued=work_metadata.get('publicationDate'),
+            dcterms_description=work_metadata.get('longAbstract'),
+            dcterms_identifier=work_metadata.get('doi'),
+            dcterms_license=work_metadata.get('license'),
+            dcterms_tableOfContents=work_metadata.get('toc'),
+        )
+        # Workaround for adding repeatable fields
+        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+            sword_metadata.add_field("dcterms_contributor", contributor)
+        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
+            sword_metadata.add_field("dcterms_subject", subject)
+        for isbn in [n.get('isbn').replace(
+                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+            sword_metadata.add_field("dcterms_identifier", isbn)
+        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
+            sword_metadata.add_field("dcterms_language", language)
+
+        return sword_metadata
+
+
+class SwordV2Api:
+
+    def __init__(self, work_id, user_name, user_pass):
+        self.work_id = work_id
+        self.conn = sword2.Connection(
+            service_document_iri='https://dspace7-back.lib.cam.ac.uk/server/swordv2/collection/1810/339712',
+            user_name=user_name,
+            user_pass=user_pass,
+            # SWORD2 library doesn't handle timeout-related errors gracefully and large files
+            # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
+            # Allow lots of leeway. (This otherwise matches the default `http_impl`.)
+            http_impl=sword2.http_layer.HttpLib2Layer(timeout=120.0)
+        )
 
     def create_item(self, metadata_entry):
         return self.handle_request(
@@ -197,32 +233,3 @@ class SwordV2Uploader(Uploader):
             raise NotImplementedError
 
         return request_receipt
-
-    def parse_metadata(self):
-        """Convert work metadata into SWORD v2 format"""
-        work_metadata = self.metadata.get('data').get('work')
-        sword_metadata = sword2.Entry(
-            # All fields are non-mandatory and any None values are ignored on ingest
-            # (within Apollo DSpace 7 - yet to test other SWORD2-based platforms)
-            # Some of the below fields do not appear to be stored/
-            # correctly displayed by Apollo, although they are valid within SWORD2
-            title=work_metadata.get('fullTitle'),
-            dcterms_publisher=self.get_publisher_name(),
-            dcterms_issued=work_metadata.get('publicationDate'),
-            dcterms_description=work_metadata.get('longAbstract'),
-            dcterms_identifier=work_metadata.get('doi'),
-            dcterms_license=work_metadata.get('license'),
-            dcterms_tableOfContents=work_metadata.get('toc'),
-        )
-        # Workaround for adding repeatable fields
-        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
-            sword_metadata.add_field("dcterms_contributor", contributor)
-        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
-            sword_metadata.add_field("dcterms_subject", subject)
-        for isbn in [n.get('isbn').replace(
-                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
-            sword_metadata.add_field("dcterms_identifier", isbn)
-        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
-            sword_metadata.add_field("dcterms_language", language)
-
-        return sword_metadata
