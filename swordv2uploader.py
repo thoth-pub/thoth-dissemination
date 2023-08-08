@@ -59,18 +59,7 @@ class SwordV2Uploader(Uploader):
         sword_metadata = self.parse_metadata()
 
         try:
-            receipt = self.handle_request(
-                request_type=RequestType.CREATE_ITEM,
-                expected_status=201,
-                # Hacky workaround for an issue with mishandling of encodings within sword2 library,
-                # which meant metadata containing special characters could not be submitted.
-                # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
-                # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
-                # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
-                # seems to mean that the string sent to the server is in correct utf-8 format.
-                metadata_entry=str(sword_metadata).encode(
-                    'utf-8').decode('latin-1'),
-            )
+            receipt = self.create_item(sword_metadata)
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
@@ -78,25 +67,9 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
-            pdf_receipt = self.handle_request(
-                request_type=RequestType.UPLOAD_PDF,
-                expected_status=201,
-                edit_media_iri=receipt.edit_media,
-                payload=pdf_bytes,
-            )
-
-            metadata_receipt = self.handle_request(
-                request_type=RequestType.UPLOAD_METADATA,
-                expected_status=201,
-                edit_media_iri=receipt.edit_media,
-                payload=metadata_bytes,
-            )
-
-            deposit_receipt = self.handle_request(
-                request_type=RequestType.COMPLETE_DEPOSIT,
-                expected_status=200,
-                se_iri=receipt.edit,
-            )
+            self.upload_pdf(receipt.edit_media, pdf_bytes)
+            self.upload_metadata(receipt.edit_media, metadata_bytes)
+            self.complete_deposit(receipt.edit)
         except Exception as error:
             # In all cases, we need to delete the partially-created item
             # For expected failures, log before attempting deletion, then just exit
@@ -104,11 +77,7 @@ class SwordV2Uploader(Uploader):
             if isinstance(error, DisseminationError):
                 logging.error(error)
             try:
-                deletion_receipt = self.handle_request(
-                    request_type=RequestType.DELETE_ITEM,
-                    expected_status=200,
-                    resource_iri=receipt.edit,
-                )
+                self.delete_item(receipt.edit)
             except DisseminationError as deletion_error:
                 logging.error('Failed to delete incomplete item: {}'.format(deletion_error))
             if isinstance(error, DisseminationError):
@@ -118,6 +87,50 @@ class SwordV2Uploader(Uploader):
 
         logging.info(
             'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
+
+    def create_item(self, metadata_entry):
+        return self.handle_request(
+            request_type=RequestType.CREATE_ITEM,
+            expected_status=201,
+            # Hacky workaround for an issue with mishandling of encodings within sword2 library,
+            # which meant metadata containing special characters could not be submitted.
+            # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
+            # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
+            # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
+            # seems to mean that the string sent to the server is in correct utf-8 format.
+            metadata_entry=str(metadata_entry).encode(
+                'utf-8').decode('latin-1'),
+        )
+
+    def delete_item(self, resource_iri):
+        return self.handle_request(
+            request_type=RequestType.DELETE_ITEM,
+            expected_status=200,
+            resource_iri=resource_iri,
+        )
+
+    def upload_pdf(self, edit_media_iri, payload):
+        return self.handle_request(
+            request_type=RequestType.UPLOAD_PDF,
+            expected_status=201,
+            edit_media_iri=edit_media_iri,
+            payload=payload,
+        )
+
+    def upload_metadata(self, edit_media_iri, payload):
+        return self.handle_request(
+            request_type=RequestType.UPLOAD_METADATA,
+            expected_status=201,
+            edit_media_iri=edit_media_iri,
+            payload=payload,
+        )
+
+    def complete_deposit(self, se_iri):
+        return self.handle_request(
+            request_type=RequestType.COMPLETE_DEPOSIT,
+            expected_status=200,
+            se_iri=se_iri,
+        )
 
     def handle_request(self, request_type, expected_status, **kwargs):
         try:
