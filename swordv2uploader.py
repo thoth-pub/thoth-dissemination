@@ -115,7 +115,7 @@ class SwordV2Api:
     def __init__(self, work_id, user_name, user_pass):
         self.work_id = work_id
         self.conn = sword2.Connection(
-            service_document_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/7",
+            service_document_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/servicedocument",
             user_name=user_name,
             user_pass=user_pass,
             # SWORD2 library doesn't handle timeout-related errors gracefully and large files
