@@ -6,10 +6,10 @@ name: cr-bulk-disseminate
 
 on:
   schedule:
-    # 'at 00:15 every day'
+    # 'at 45 minutes past every hour'
     # (scheduling is not guaranteed; runs at the start of the hour
     # are more likely to be delayed)
-    - cron: '15 0 * * *'
+    - cron: '45 * * * *'
   workflow_dispatch:
 
 jobs:
