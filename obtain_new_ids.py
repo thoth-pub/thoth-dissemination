@@ -111,17 +111,19 @@ class CrossrefIDFinder(IDFinder):
         """Construct Thoth work ID query parameters depending on Crossref-specific requirements"""
         from datetime import datetime, timedelta, timezone
 
-        # The schedule for finding and depositing updated metadata is once daily.
+        # The schedule for finding and depositing updated metadata is once hourly.
         # TODO ideally we could pass this value from the GitHub Action to ensure synchronisation.
-        DEPOSIT_INTERVAL_HRS = 24
+        DEPOSIT_INTERVAL_HRS = 1
 
-        # Scheduled GitHub Actions we have run so far have not started until ~2h after specified time.
-        # Ensure we don't miss any works which were been updated in the gap between
+        # Scheduled GitHub Actions may not start exactly at the specified time.
+        # A couple of months of daily runs showed average delay of 10-15 mins.
+        # Try to avoid missing any works which were updated in the gap between
         # when the Action should have run and when it actually ran.
-        DELAY_BUFFER_HRS = 3
+        DELAY_BUFFER_HRS = 0.25
 
         # Target: all works listed in Thoth (from the selected publishers) which are
         # Active, and which have been updated since the last deposit.
+        # Use UTC, as GitHub Actions scheduling runs in UTC.
         current_time = datetime.now(timezone.utc)
         last_deposit_time = current_time - \
             timedelta(hours=(DEPOSIT_INTERVAL_HRS + DELAY_BUFFER_HRS))
