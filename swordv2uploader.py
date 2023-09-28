@@ -82,6 +82,19 @@ class SwordV2Uploader(Uploader):
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
+        # Select the desired metadata profile
+        # TODO make this a switch passed in from higher-level specific platform class
+        sword_metadata = self.profile_basic()
+        # sword_metadata = self.profile_rioxx()
+        # sword_metadata = self.profile_cul_pilot()
+
+        return sword_metadata
+
+    def profile_cul_pilot(self):
+        """
+        Richer, customised, non-standard metadata profile developed in
+        discussion with CUL (requiring configuration work on their side)
+        """
         work_metadata = self.metadata.get('data').get('work')
         sword_metadata = sword2.Entry(
             # All fields are non-mandatory and any None values are ignored on ingest
@@ -108,6 +121,116 @@ class SwordV2Uploader(Uploader):
             sword_metadata.add_field("dcterms_language", language)
 
         return sword_metadata
+
+    def profile_basic(self):
+        """
+        Metadata profile based on DSpace configuration defaults i.e. SWORD profile
+        See https://github.com/DSpace/DSpace/blob/main/dspace/config/modules/swordv2-server.cfg
+        """
+        work_metadata = self.metadata.get('data').get('work')
+        basic_metadata = sword2.Entry(
+            # swordv2-server.simpledc.abstract
+            # swordv2-server.atom.summary
+            dc_description_abstract=work_metadata.get('longAbstract'),
+            # swordv2-server.simpledc.description
+            dc_description=work_metadata.get('longAbstract'),
+            # swordv2-server.simpledc.accessRights
+            # swordv2-server.simpledc.rights
+            # swordv2-server.simpledc.rightsHolder
+            # swordv2-server.atom.rights
+            dc_rights=work_metadata.get('license'),
+            # swordv2-server.simpledc.available
+            dc_date_available=work_metadata.get('publicationDate'),
+            # swordv2-server.simpledc.created
+            # swordv2-server.atom.published
+            # swordv2-server.atom.updated
+            dc_date_created=work_metadata.get('publicationDate'),
+            # swordv2-server.simpledc.date
+            dc_date=work_metadata.get('publicationDate'),
+            # swordv2-server.simpledc.issued
+            dc_date_issued=work_metadata.get('publicationDate'),
+            # swordv2-server.simpledc.publisher
+            dc_publisher=self.get_publisher_name(),
+            # swordv2-server.simpledc.coverage
+            dc_coverage='open access',
+            # swordv2-server.simpledc.spatial
+            dc_coverage_spatial='global',
+            # swordv2-server.simpledc.temporal
+            dc_coverage_temporal='all time',
+            # swordv2-server.simpledc.title
+            # swordv2-server.atom.title
+            dc_title=work_metadata.get('fullTitle'),
+            # swordv2-server.simpledc.type
+            # "Recommended practice is to use a controlled vocabulary such as the DCMI Type Vocabulary"
+            # (see https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7)
+            dc_type='text',
+
+            # TODO Thoth stores relations/references but not currently retrieved by Thoth Client:
+            # # swordv2-server.simpledc.isPartOf
+            # dc_relation_ispartof=
+            # # swordv2-server.simpledc.isReplacedBy
+            # dc_relation_isreplacedby=
+            # # swordv2-server.simpledc.references
+            # dc_relation_references=
+            # # swordv2-server.simpledc.relation
+            # dc_relation=
+            # # swordv2-server.simpledc.replaces
+            # dc_relation_replaces=
+
+            # Not appropriate as we may be submitting multiple formats (PDF, XML etc):
+            # # swordv2-server.simpledc.extent
+            # dc_format_extent=
+            # # swordv2-server.simpledc.format
+            # dc_format=
+            # # swordv2-server.simpledc.medium
+            # dc_format_medium=
+
+            # Not supported by Thoth:
+            # # swordv2-server.simpledc.alternative
+            # dc_title_alternative=
+            # # swordv2-server.simpledc.bibliographicCitation
+            # dc_identifier_citation=
+            # # swordv2-server.simpledc.dateAccepted
+            # dc_date_accepted=
+            # # swordv2-server.simpledc.dateSubmitted
+            # dc_date_submitted=
+            # # swordv2-server.simpledc.isReferencedBy
+            # dc_relation_isreferencedby=
+            # "A related resource that requires the described resource to support its function, delivery, or coherence"
+            # # swordv2-server.simpledc.isRequiredBy
+            # dc_relation_isrequiredby=
+            # # swordv2-server.simpledc.modified
+            # dc_date_modified=
+            # # swordv2-server.simpledc.provenance
+            # dc_description_provenance=
+            # "A related resource that is required by the described resource to support its function, delivery, or coherence"
+            # # swordv2-server.simpledc.requires
+            # dc_relation_requires=
+            # "A related resource from which the described resource is derived"
+            # (e.g. print version of scan); most cases would be covered by dc_relation fields
+            # # swordv2-server.simpledc.source
+            # dc_source=
+        )
+
+        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+            # swordv2-server.simpledc.contributor
+            basic_metadata.add_field("dc_contributor", contributor)
+            # swordv2-server.simpledc.creator
+            # swordv2-server.atom.author
+            basic_metadata.add_field("dc_contributor_author", contributor)
+        # swordv2-server.simpledc.identifier
+        basic_metadata.add_field("dc_identifier", work_metadata.get('doi'))
+        for isbn in [n.get('isbn').replace(
+                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+            basic_metadata.add_field("dc_identifier", isbn)
+        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
+            # swordv2-server.simpledc.language
+            basic_metadata.add_field("dc_language", language)
+        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
+            # swordv2-server.simpledc.subject
+            basic_metadata.add_field("dc_subject", subject)
+
+        return basic_metadata
 
 
 class SwordV2Api:
