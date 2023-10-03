@@ -131,105 +131,104 @@ class SwordV2Uploader(Uploader):
         basic_metadata = sword2.Entry(
             # swordv2-server.simpledc.abstract
             # swordv2-server.atom.summary
-            dcterms_description_abstract=work_metadata.get('longAbstract'),
+            dc_description_abstract=work_metadata.get('longAbstract'),
             # swordv2-server.simpledc.description
-            dcterms_description=work_metadata.get('longAbstract'),
+            dc_description=work_metadata.get('longAbstract'),
             # swordv2-server.simpledc.accessRights
             # swordv2-server.simpledc.rights
             # swordv2-server.simpledc.rightsHolder
             # swordv2-server.atom.rights
-            dcterms_rights=work_metadata.get('license'),
+            dc_rights=work_metadata.get('license'),
             # swordv2-server.simpledc.available
-            dcterms_date_available=work_metadata.get('publicationDate'),
+            dc_date_available=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.created
             # swordv2-server.atom.published
             # swordv2-server.atom.updated
-            dcterms_date_created=work_metadata.get('publicationDate'),
+            dc_date_created=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.date
-            dcterms_date=work_metadata.get('publicationDate'),
+            dc_date=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.issued
-            dcterms_date_issued=work_metadata.get('publicationDate'),
+            dc_date_issued=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.publisher
-            dcterms_publisher=self.get_publisher_name(),
+            dc_publisher=self.get_publisher_name(),
             # swordv2-server.simpledc.coverage
-            dcterms_coverage='open access',
+            dc_coverage='open access',
             # swordv2-server.simpledc.spatial
-            dcterms_coverage_spatial='global',
+            dc_coverage_spatial='global',
             # swordv2-server.simpledc.temporal
-            dcterms_coverage_temporal='all time',
+            dc_coverage_temporal='all time',
             # swordv2-server.simpledc.title
             # swordv2-server.atom.title
-            dcterms_title=work_metadata.get('fullTitle'),
+            dc_title=work_metadata.get('fullTitle'),
             # swordv2-server.simpledc.type
             # "Recommended practice is to use a controlled vocabulary such as the DCMI Type Vocabulary"
             # (see https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7)
-            dcterms_type='text',
-            #^should we Include the dcmitype namespace for this?
+            dc_type='text',
 
             # TODO Thoth stores relations/references but not currently retrieved by Thoth Client:
             # # swordv2-server.simpledc.isPartOf
-            # dcterms_relation_ispartof=
+            # dc_relation_ispartof=
             # # swordv2-server.simpledc.isReplacedBy
-            # dcterms_relation_isreplacedby=
+            # dc_relation_isreplacedby=
             # # swordv2-server.simpledc.references
-            # dcterms_relation_references=
+            # dc_relation_references=
             # # swordv2-server.simpledc.relation
-            # dcterms_relation=
+            # dc_relation=
             # # swordv2-server.simpledc.replaces
-            # dcterms_relation_replaces=
+            # dc_relation_replaces=
 
             # Not appropriate as we may be submitting multiple formats (PDF, XML etc):
             # # swordv2-server.simpledc.extent
-            # dcterms_format_extent=
+            # dc_format_extent=
             # # swordv2-server.simpledc.format
-            # dcterms_format=
+            # dc_format=
             # # swordv2-server.simpledc.medium
-            # dcterms_format_medium=
+            # dc_format_medium=
 
             # Not supported by Thoth:
             # # swordv2-server.simpledc.alternative
-            # dcterms_title_alternative=
+            # dc_title_alternative=
             # # swordv2-server.simpledc.bibliographicCitation
-            # dcterms_identifier_citation=
+            # dc_identifier_citation=
             # # swordv2-server.simpledc.dateAccepted
-            # dcterms_date_accepted=
+            # dc_date_accepted=
             # # swordv2-server.simpledc.dateSubmitted
-            # dcterms_date_submitted=
+            # dc_date_submitted=
             # # swordv2-server.simpledc.isReferencedBy
-            # dcterms_relation_isreferencedby=
+            # dc_relation_isreferencedby=
             # "A related resource that requires the described resource to support its function, delivery, or coherence"
             # # swordv2-server.simpledc.isRequiredBy
-            # dcterms_relation_isrequiredby=
+            # dc_relation_isrequiredby=
             # # swordv2-server.simpledc.modified
-            # dcterms_date_modified=
+            # dc_date_modified=
             # # swordv2-server.simpledc.provenance
-            # dcterms_description_provenance=
+            # dc_description_provenance=
             # "A related resource that is required by the described resource to support its function, delivery, or coherence"
             # # swordv2-server.simpledc.requires
-            # dcterms_relation_requires=
+            # dc_relation_requires=
             # "A related resource from which the described resource is derived"
             # (e.g. print version of scan); most cases would be covered by dc_relation fields
             # # swordv2-server.simpledc.source
-            # dcterms_source=
+            # dc_source=
         )
 
         for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
             # swordv2-server.simpledc.contributor
-            basic_metadata.add_field("dcterms_contributor", contributor)
+            basic_metadata.add_field("dc_contributor", contributor)
             # swordv2-server.simpledc.creator
             # swordv2-server.atom.author
-            basic_metadata.add_field("dcterms_contributor_author", contributor)
+            basic_metadata.add_field("dc_contributor_author", contributor)
         # swordv2-server.simpledc.identifier
-        basic_metadata.add_field("dcterms_identifier", work_metadata.get('doi'))
+        basic_metadata.add_field("dc_identifier", work_metadata.get('doi'))
         for isbn in [n.get('isbn').replace(
                 '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
-            basic_metadata.add_field("dcterms_identifier", isbn)
+            basic_metadata.add_field("dc_identifier", isbn)
         for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
             # swordv2-server.simpledc.language
-            basic_metadata.add_field("dcterms_language", language)
+            basic_metadata.add_field("dc_language", language)
         for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
             # swordv2-server.simpledc.subject
-            basic_metadata.add_field("dcterms_subject", subject)
+            basic_metadata.add_field("dc_subject", subject)
 
         return basic_metadata
 
