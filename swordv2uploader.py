@@ -128,7 +128,9 @@ class SwordV2Uploader(Uploader):
         See https://github.com/DSpace/DSpace/blob/main/dspace/config/modules/swordv2-server.cfg
         """
         work_metadata = self.metadata.get('data').get('work')
-        basic_metadata = sword2.Entry(
+        basic_metadata = sword2.Entry()
+        basic_metadata.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
+        basic_metadata.add_fields(
             # swordv2-server.simpledc.abstract
             # swordv2-server.atom.summary
             dc_description_abstract=work_metadata.get('longAbstract'),
