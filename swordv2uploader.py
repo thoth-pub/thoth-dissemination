@@ -131,7 +131,7 @@ class SwordV2Uploader(Uploader):
         basic_metadata = sword2.Entry(
             # swordv2-server.simpledc.abstract
             # swordv2-server.atom.summary
-            dcterms_description_abstract=work_metadata.get('longAbstract'),
+            dcterms_abstract=work_metadata.get('longAbstract'),
             # swordv2-server.simpledc.description
             dcterms_description=work_metadata.get('longAbstract'),
             # swordv2-server.simpledc.accessRights
@@ -140,24 +140,24 @@ class SwordV2Uploader(Uploader):
             # swordv2-server.atom.rights
             dcterms_rights=work_metadata.get('license'),
             # swordv2-server.simpledc.available
-            dcterms_date_available=work_metadata.get('publicationDate'),
+            dcterms_available=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.created
             # swordv2-server.atom.published
             # swordv2-server.atom.updated
-            dcterms_date_created=work_metadata.get('publicationDate'),
+            dcterms_created=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.date
             dcterms_date=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.issued
-            dcterms_date_issued=work_metadata.get('publicationDate'),
+            dcterms_issued=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.publisher
             dcterms_publisher=self.get_publisher_name(),
             # Caused error 500 when submitted to DSpace server
             # # swordv2-server.simpledc.coverage
             # dcterms_coverage='open access',
             # swordv2-server.simpledc.spatial
-            dcterms_coverage_spatial='global',
+            dcterms_spatial='global',
             # swordv2-server.simpledc.temporal
-            dcterms_coverage_temporal='all time',
+            dcterms_temporal='all time',
             # swordv2-server.simpledc.title
             # swordv2-server.atom.title
             dcterms_title=work_metadata.get('fullTitle'),
@@ -219,7 +219,8 @@ class SwordV2Uploader(Uploader):
             basic_metadata.add_field("dcterms_contributor", contributor)
             # swordv2-server.simpledc.creator
             # swordv2-server.atom.author
-            basic_metadata.add_field("dcterms_contributor_author", contributor)
+            # Doesn't seem to work; not clear how to represent "dc.contributor.author" in dcterms
+            basic_metadata.add_field("dcterms_author", contributor)
         # swordv2-server.simpledc.identifier
         basic_metadata.add_field("dcterms_identifier", work_metadata.get('doi'))
         for isbn in [n.get('isbn').replace(
