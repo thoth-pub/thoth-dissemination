@@ -151,8 +151,9 @@ class SwordV2Uploader(Uploader):
             dcterms_date_issued=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.publisher
             dcterms_publisher=self.get_publisher_name(),
-            # swordv2-server.simpledc.coverage
-            dcterms_coverage='open access',
+            # Caused error 500 when submitted to DSpace server
+            # # swordv2-server.simpledc.coverage
+            # dcterms_coverage='open access',
             # swordv2-server.simpledc.spatial
             dcterms_coverage_spatial='global',
             # swordv2-server.simpledc.temporal
