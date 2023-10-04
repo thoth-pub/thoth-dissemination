@@ -141,10 +141,11 @@ class SwordV2Uploader(Uploader):
             dcterms_rights=work_metadata.get('license'),
             # swordv2-server.simpledc.available
             dcterms_available=work_metadata.get('publicationDate'),
-            # swordv2-server.simpledc.created
-            # swordv2-server.atom.published
-            # swordv2-server.atom.updated
-            dcterms_created=work_metadata.get('publicationDate'),
+            # Caused error 500 when submitted to DSpace server
+            # # swordv2-server.simpledc.created
+            # # swordv2-server.atom.published
+            # # swordv2-server.atom.updated
+            # dcterms_created=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.date
             dcterms_date=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.issued
