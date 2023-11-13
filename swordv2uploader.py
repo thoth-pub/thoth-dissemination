@@ -169,16 +169,8 @@ class SwordV2Uploader(Uploader):
             #^should we Include the dcmitype namespace for this?
 
             # TODO Thoth stores relations/references but not currently retrieved by Thoth Client:
-            # # swordv2-server.simpledc.isPartOf
-            # dcterms_relation_ispartof=
-            # # swordv2-server.simpledc.isReplacedBy
-            # dcterms_relation_isreplacedby=
             # # swordv2-server.simpledc.references
             # dcterms_relation_references=
-            # # swordv2-server.simpledc.relation
-            # dcterms_relation=
-            # # swordv2-server.simpledc.replaces
-            # dcterms_relation_replaces=
 
             # Not appropriate as we may be submitting multiple formats (PDF, XML etc):
             # # swordv2-server.simpledc.extent
@@ -233,6 +225,20 @@ class SwordV2Uploader(Uploader):
         for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
             # swordv2-server.simpledc.subject
             basic_metadata.add_field("dcterms_subject", subject)
+        for (relation_type, relation_doi) in [(n.get('relationType'), n.get('relatedWork').get('doi'))
+                for n in work_metadata.get('relations')]:
+            if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
+                # swordv2-server.simpledc.isPartOf
+                basic_metadata.add_field("dcterms_isPartOf", relation_doi)
+            elif relation_type == 'IS_REPLACED_BY':
+                # swordv2-server.simpledc.isReplacedBy
+                basic_metadata.add_field("dcterms_isReplacedBy", relation_doi)
+            elif relation_type == 'REPLACES':
+                # swordv2-server.simpledc.replaces
+                basic_metadata.add_field("dcterms_replaces", relation_doi)
+            else:
+                # swordv2-server.simpledc.relation
+                basic_metadata.add_field("dcterms_relation", relation_doi)
 
         return basic_metadata
 
