@@ -168,10 +168,6 @@ class SwordV2Uploader(Uploader):
             dcterms_type='text',
             #^should we Include the dcmitype namespace for this?
 
-            # TODO Thoth stores relations/references but not currently retrieved by Thoth Client:
-            # # swordv2-server.simpledc.references
-            # dcterms_relation_references=
-
             # Not appropriate as we may be submitting multiple formats (PDF, XML etc):
             # # swordv2-server.simpledc.extent
             # dcterms_format_extent=
@@ -239,6 +235,13 @@ class SwordV2Uploader(Uploader):
             else:
                 # swordv2-server.simpledc.relation
                 basic_metadata.add_field("dcterms_relation", relation_doi)
+        # Caused error 500 when submitted to DSpace server
+        # for (reference_citation, reference_doi) in [(n.get('unstructuredCitation'), n.get('doi'))
+        #         for n in work_metadata.get('references')]:
+        #     # will always have one or the other (if not both)
+        #     reference = reference_citation if reference_citation else reference_doi
+        #     # swordv2-server.simpledc.references
+        #     basic_metadata.add_field("dcterms_references", reference)
 
         return basic_metadata
 
