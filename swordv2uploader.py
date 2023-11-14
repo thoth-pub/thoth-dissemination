@@ -85,6 +85,7 @@ class SwordV2Uploader(Uploader):
         # Select the desired metadata profile
         # TODO make this a switch passed in from higher-level specific platform class
         sword_metadata = self.profile_basic()
+        # sword_metadata = self.profile_jisc_router()
         # sword_metadata = self.profile_rioxx()
         # sword_metadata = self.profile_cul_pilot()
 
@@ -244,6 +245,69 @@ class SwordV2Uploader(Uploader):
         #     basic_metadata.add_field("dcterms_references", reference)
 
         return basic_metadata
+
+    def profile_jisc_router(self):
+        """
+        Metadata profile based on Jisc Publications Router schema (currently articles-only)
+        See https://github.com/jisc-services/Public-Documentation/blob/master/PublicationsRouter/sword-out/DSpace-XML.md
+        """
+        work_metadata = self.metadata.get('data').get('work')
+        jisc_router_metadata = sword2.Entry(
+            dcterms_publisher=self.get_publisher_name(),
+            dcterms_title=work_metadata.get('fullTitle'),
+            dcterms_abstract=work_metadata.get('longAbstract'),
+            dcterms_identifier="doi: {}".format(work_metadata.get('doi')),
+            dcterms_issued=work_metadata.get('publicationDate'),
+            dcterms_rights="License for VoR version of this work: {}".format(work_metadata.get('license')),
+            dcterms_description="Publication status: {}".format(work_metadata.get('workStatus')),
+
+            # Not supported by Thoth:
+            # dcterms_bibliographicCitation=
+            # dcterms_dateAccepted=
+            # "A related resource from which the described resource is derived"
+            # Jisc Router uses this to indicate the article's parent journal; not relevant for books
+            # dcterms_source=
+        )
+
+        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
+            jisc_router_metadata.add_field("dcterms_language", language)
+        for isbn in [n.get('isbn').replace(
+                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+            jisc_router_metadata.add_field("dcterms_identifier", "isbn: {}".format(isbn))
+        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
+            jisc_router_metadata.add_field("dcterms_subject", subject)
+        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+            first_name = contribution.get('firstName')
+            orcid = contribution.get('contributor').get('orcid')
+            affiliations = contribution.get('affiliations')
+            first_institution = next((a.get('institution').get('institutionName') for a in affiliations if affiliations), None)
+            contributor_string = contribution.get('fullName') if first_name is None else "{}, {}".format(contribution.get('lastName'), first_name)
+            if orcid is not None:
+                contributor_string += '; orcid: {}'.format(orcid)
+            if first_institution is not None:
+                contributor_string += '; {}'.format(first_institution)
+            contribution_type = contribution.get('contributionType')
+            if contribution_type == 'AUTHOR':
+                jisc_router_metadata.add_field("dcterms_creator", contributor_string)
+            else:
+                jisc_router_metadata.add_field("dcterms_contributor", "{}: {}".format(contribution_type, contributor_string))
+        jisc_router_metadata.add_field("dcterms_rights", "Embargo: none")
+        jisc_router_metadata.add_field("dcterms_description", "Work version: VoR")
+        jisc_router_metadata.add_field("dcterms_description", "From {} via Thoth".format(self.get_publisher_name()))
+        for funding in work_metadata.get('fundings'):
+            funding_string = "Funder: {}".format(funding.get('institution').get('institutionName'))
+            ror = funding.get('institution').get('ror')
+            doi = funding.get('institution').get('institutionDoi')
+            grant_number = funding.get('grantNumber')
+            if ror is not None:
+                funding_string += ", ror: {}".format(ror)
+            elif doi is not None:
+                funding_string += ", doi: {}".format(doi)
+            if grant_number is not None:
+                funding_string += ", Grant(s): {}".format(grant_number)
+            jisc_router_metadata.add_field("dcterms_description", funding_string)
+
+        return jisc_router_metadata
 
 
 class SwordV2Api:
