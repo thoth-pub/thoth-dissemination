@@ -3,4 +3,4 @@ pysftp==0.2.9
 python-dotenv==0.19.2
 requests==2.31.0
 sword2==0.3.0
-thothlibrary==0.20.1
+thothlibrary==0.22.0
