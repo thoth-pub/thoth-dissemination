@@ -179,7 +179,7 @@ class FigshareIDFinder(IDFinder):
         # Target: all active (published) works listed in Thoth (from the selected publishers).
         self.work_statuses = '[ACTIVE]'
         # Start with the most recent, so that we can disregard everything else
-        # as soon as we hit the first work published earlier than the last upload date
+        # as soon as we hit the first work published earlier than the desired date range.
         self.order = '{field: PUBLICATION_DATE, direction: DESC}'
         self.updated_at_with_relations = None
 
@@ -188,18 +188,16 @@ class FigshareIDFinder(IDFinder):
         # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
         # we can remove this overriding method and simply construct a standard query
         # filtering by publication date
-        from datetime import date, datetime, timedelta
+        from datetime import datetime, timedelta
 
-        # The schedule for finding and depositing newly published works is once monthly.
-        # TODO obviously "one month ago" doesn't equal "31 days ago", but it's a start.
-        # TODO ideally we could pass this value from the GitHub Action to ensure synchronisation.
-        DEPOSIT_INTERVAL_DAYS = 31
-
-        # Target: all works listed in Thoth (from the selected publishers) which are
-        # Active, and which have been published since the last deposit.
-        current_date = date.today()
-        last_deposit_date = current_date - \
-            timedelta(days=DEPOSIT_INTERVAL_DAYS)
+        # In addition to the conditions of the query parameters, we need to filter the results
+        # to obtain only works with a publication date within the previous calendar month.
+        # The schedule for finding and depositing newly published works is once monthly
+        # (a few days after the start of the month, to allow for delays in updating records).
+        current_date = datetime.utcnow().date()
+        current_month_start = current_date.replace(day=1)
+        previous_month_end = current_month_start - timedelta(days=1)
+        previous_month_start = previous_month_end.replace(day=1)
 
         offset = 0
         while True:
@@ -212,12 +210,20 @@ class FigshareIDFinder(IDFinder):
                 updated_at_with_relations=self.updated_at_with_relations,
             )
             if len(next_batch) < 1:
+                # No more works to be found
                 break
+            offset += 1
             next_work = next_batch[0]
-            if datetime.strptime(next_work.publicationDate, "%Y-%m-%d").date() > last_deposit_date:
+            next_work_pub_date = datetime.strptime(next_work.publicationDate, "%Y-%m-%d").date()
+            if next_work_pub_date > previous_month_end:
+                # This work will be handled in next month's run - don't cause duplication
+                continue
+            elif next_work_pub_date >= previous_month_start:
+                # This work was published in the last month - include it
                 self.thoth_ids.append(next_work.workId)
-                offset += 1
             else:
+                # We've reached the first work in the list which was published
+                # earlier than last month - stop
                 break
 
     def post_process(self):

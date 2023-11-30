@@ -1,5 +1,5 @@
 # Purpose: upload newly-published works from Thoth to (Loughborough) Figshare.
-# Uploads all active Thoth works with a publication date in the previous month.
+# Uploads all active Thoth works with a publication date within the previous calendar month.
 # Work must have a valid URL supplied for at least one Publication Canonical Location.
 # Must also have a Long Abstract, a Licence, at least one Main Contribution
 # and at least one Subject with type Keyword.
@@ -10,10 +10,13 @@ name: fs-bulk-disseminate
 
 on:
   schedule:
-    # 'at 00:15 on day-of-month 1'
-    # (scheduling is not guaranteed; runs at the start of the hour
-    # are more likely to be delayed)
-    - cron: '15 0 1 * *'
+    # 'at 05:55 on day-of-month 5'
+    # There might be a delay between a book being published and the publisher
+    # correctly setting its publication date and Active status in Thoth.
+    # Therefore, this action is run a few days after the start of the month,
+    # to minimise situations where e.g. a book which was published on the 31st, but
+    # whose record was not updated until the 1st, is missed out of both months' runs.
+    - cron: '55 5 5 * *'
   workflow_dispatch:
 
 jobs:
