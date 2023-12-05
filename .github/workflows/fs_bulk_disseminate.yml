@@ -1,0 +1,29 @@
+# Purpose: upload newly-published works from Thoth to (Loughborough) Figshare.
+# Uploads all active Thoth works with a publication date within the previous calendar month.
+# Work must have a valid URL supplied for at least one Publication Canonical Location.
+# Must also have a Long Abstract, a Licence, at least one Main Contribution
+# and at least one Subject with type Keyword.
+# Figshare credentials for a user with write permissions to the Thoth
+# Archiving Network group (e.g. Thoth Archive Admin) must be present as a
+# repository secret named FIGSHARE_TOKEN.
+name: fs-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 04:40 on day-of-month 7'
+    # There might be a delay between a book being published and the publisher
+    # correctly setting its publication date and Active status in Thoth.
+    # Therefore, this action is run a few days after the start of the month,
+    # to minimise situations where e.g. a book which was published on the 31st, but
+    # whose record was not updated until the 1st, is missed out of both months' runs.
+    - cron: '40 4 7 * *'
+  workflow_dispatch:
+
+jobs:
+  fs-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'Figshare'
+      env_publishers: ${{ vars.FS_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.FS_ENV_EXCEPTIONS }}
+    secrets: inherit
