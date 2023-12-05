@@ -10,13 +10,13 @@ name: fs-bulk-disseminate
 
 on:
   schedule:
-    # 'at 05:55 on day-of-month 5'
+    # 'at 04:40 on day-of-month 7'
     # There might be a delay between a book being published and the publisher
     # correctly setting its publication date and Active status in Thoth.
     # Therefore, this action is run a few days after the start of the month,
     # to minimise situations where e.g. a book which was published on the 31st, but
     # whose record was not updated until the 1st, is missed out of both months' runs.
-    - cron: '55 5 5 * *'
+    - cron: '40 4 7 * *'
   workflow_dispatch:
 
 jobs:
