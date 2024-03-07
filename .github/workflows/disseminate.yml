@@ -21,7 +21,7 @@ jobs:
         work-id: ${{ fromJSON(inputs.work-ids) }}
     steps:
       - name: Make all platform credentials available to later steps (with names lowercased)
-        uses: oNaiPs/secrets-to-env-action@v1.5
+        uses: oNaiPs/secrets-to-env-action@v1
         with:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
