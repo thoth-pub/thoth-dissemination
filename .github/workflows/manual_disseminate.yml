@@ -9,6 +9,7 @@
 # named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
 # It is advised not to upload until the work is published and all metadata finalised.
 name: manual-disseminate
+run-name: 'manual-disseminate to ${{ github.event.inputs.platform }}: ${{ github.event.inputs.workIds }}'
 
 on:
   workflow_dispatch:
