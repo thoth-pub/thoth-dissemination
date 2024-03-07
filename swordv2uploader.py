@@ -6,6 +6,7 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 import logging
 import sys
 import sword2
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -17,12 +18,22 @@ class SwordV2Uploader(Uploader):
         """Upload work in required format to SWORD v2"""
 
         # Fast-fail if credentials for upload are missing
-        user_name = self.get_credential_from_env('cam_ds7_user', 'SWORD v2')
-        user_pass = self.get_credential_from_env('cam_ds7_pw', 'SWORD v2')
+        try:
+            user_name = self.get_credential_from_env(
+                'cam_ds7_user', 'SWORD v2')
+            user_pass = self.get_credential_from_env('cam_ds7_pw', 'SWORD v2')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Metadata file format TBD: use CSV for now
         metadata_bytes = self.get_formatted_metadata('csv::thoth')
-        pdf_bytes = self.get_pdf_bytes()
+        # Can't continue if no PDF file is present
+        try:
+            pdf_bytes = self.get_publication_bytes('PDF')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Convert Thoth work metadata into SWORD v2 format
         sword_metadata = self.parse_metadata()

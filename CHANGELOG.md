@@ -6,6 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[0.1.9]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.9) - 2023-12-05
+### Added
+  - GitHub Actions for recurring automatic uploads of newly published works to Figshare
+
+## [[0.1.8]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.8) - 2023-08-23
+### Changed
+  - Changed recurring Crossref DOI deposit from daily to hourly
+
+## [[0.1.7]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.7) - 2023-07-03
+### Changed
+  - Made existing GitHub Actions more general/reliable
+
+## [[0.1.6]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.6) - 2023-06-28
+### Fixed
+  - Amended Crossref credential environment variables naming to allow running in GitHub Actions
+
+## [[0.1.5]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.5) - 2023-06-21
+### Added
+  - Support for uploading files and metadata to Figshare
+  - Support for sending DOI deposit files to Crossref
+  - GitHub Actions for recurring automatic DOI deposit to Crossref
+### Changed
+  - Reworked existing GitHub Actions for greater extensibility
+  - Added support for content file types other than PDF
+  - Improved error handling
+
 ## [[0.1.4]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.4) - 2023-02-01
 ### Fixed
   - Corrected GitHub Actions syntax to pick up environment variables stored as repository secrets

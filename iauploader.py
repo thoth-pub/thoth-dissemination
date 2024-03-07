@@ -8,6 +8,7 @@ import sys
 from internetarchive import get_item, upload, exceptions as ia_except
 from io import BytesIO
 from requests import exceptions as req_except
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -18,10 +19,14 @@ class IAUploader(Uploader):
         """Upload work in required format to Internet Archive"""
 
         # Fast-fail if credentials for upload are missing
-        access_key = self.get_credential_from_env(
-            'ia_s3_access', 'Internet Archive')
-        secret_key = self.get_credential_from_env(
-            'ia_s3_secret', 'Internet Archive')
+        try:
+            access_key = self.get_credential_from_env(
+                'ia_s3_access', 'Internet Archive')
+            secret_key = self.get_credential_from_env(
+                'ia_s3_secret', 'Internet Archive')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Use Thoth ID as unique identifier (URL will be in format `archive.org/details/[identifier]`)
         filename = self.work_id
@@ -37,7 +42,12 @@ class IAUploader(Uploader):
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Internet Archive metadata fields
         metadata_bytes = self.get_formatted_metadata('json::thoth')
-        pdf_bytes = self.get_pdf_bytes()
+        # Can't continue if no PDF file is present
+        try:
+            pdf_bytes = self.get_publication_bytes('PDF')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         # Convert Thoth work metadata into Internet Archive format
         ia_metadata = self.parse_metadata()
@@ -84,7 +94,7 @@ class IAUploader(Uploader):
                 sys.exit(1)
 
         logging.info(
-            'Successfully uploaded to Internet Archive at archive.org/details/{}'.format(filename))
+            'Successfully uploaded to Internet Archive at https://archive.org/details/{}'.format(filename))
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""
