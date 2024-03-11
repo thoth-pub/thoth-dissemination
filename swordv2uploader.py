@@ -142,20 +142,20 @@ class SwordV2Uploader(Uploader):
             dcterms_rights=work_metadata.get('license'),
             # swordv2-server.simpledc.available
             dcterms_available=work_metadata.get('publicationDate'),
-            # Caused error 500 when submitted to DSpace server
-            # # swordv2-server.simpledc.created
-            # # swordv2-server.atom.published
-            # # swordv2-server.atom.updated
-            # dcterms_created=work_metadata.get('publicationDate'),
+            # Needs to be sent in datetime format (otherwise causes error 500),
+            # but is retrieved as `str` so can just append required elements
+            # swordv2-server.simpledc.created
+            # swordv2-server.atom.published
+            # swordv2-server.atom.updated
+            dcterms_created="{}T00:00:00Z".format(work_metadata.get('publicationDate')),
             # swordv2-server.simpledc.date
             dcterms_date=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.issued
             dcterms_issued=work_metadata.get('publicationDate'),
             # swordv2-server.simpledc.publisher
             dcterms_publisher=self.get_publisher_name(),
-            # Caused error 500 when submitted to DSpace server
-            # # swordv2-server.simpledc.coverage
-            # dcterms_coverage='open access',
+            # swordv2-server.simpledc.coverage
+            dcterms_coverage='open access',
             # swordv2-server.simpledc.spatial
             dcterms_spatial='global',
             # swordv2-server.simpledc.temporal
@@ -236,13 +236,12 @@ class SwordV2Uploader(Uploader):
             else:
                 # swordv2-server.simpledc.relation
                 basic_metadata.add_field("dcterms_relation", relation_doi)
-        # Caused error 500 when submitted to DSpace server
-        # for (reference_citation, reference_doi) in [(n.get('unstructuredCitation'), n.get('doi'))
-        #         for n in work_metadata.get('references')]:
-        #     # will always have one or the other (if not both)
-        #     reference = reference_citation if reference_citation else reference_doi
-        #     # swordv2-server.simpledc.references
-        #     basic_metadata.add_field("dcterms_references", reference)
+        for (reference_citation, reference_doi) in [(n.get('unstructuredCitation'), n.get('doi'))
+                for n in work_metadata.get('references')]:
+            # will always have one or the other (if not both)
+            reference = reference_citation if reference_citation else reference_doi
+            # swordv2-server.simpledc.references
+            basic_metadata.add_field("dcterms_references", reference)
 
         return basic_metadata
 
