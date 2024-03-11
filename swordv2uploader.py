@@ -313,6 +313,7 @@ class SwordV2Uploader(Uploader):
 class SwordV2Api:
 
     def __init__(self, work_id, user_name, user_pass):
+        """Set up connection to API."""
         self.work_id = work_id
         self.conn = sword2.Connection(
             service_document_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/servicedocument",
@@ -325,6 +326,7 @@ class SwordV2Api:
         )
 
     def create_item(self, metadata_entry):
+        """Create an item with the specified metadata."""
         return self.handle_request(
             request_type=RequestType.CREATE_ITEM,
             expected_status=201,
@@ -339,13 +341,15 @@ class SwordV2Api:
         )
 
     def delete_item(self, resource_iri):
+        """Delete the specified item."""
         return self.handle_request(
             request_type=RequestType.DELETE_ITEM,
-            expected_status=200,
+            expected_status=204,
             resource_iri=resource_iri,
         )
 
     def upload_pdf(self, edit_media_iri, payload):
+        """Upload the supplied PDF file (as bytes) under the specified item."""
         return self.handle_request(
             request_type=RequestType.UPLOAD_PDF,
             expected_status=201,
@@ -354,6 +358,7 @@ class SwordV2Api:
         )
 
     def upload_metadata(self, edit_media_iri, payload):
+        """Upload the supplied JSON metadata file (as bytes) under the specified item."""
         return self.handle_request(
             request_type=RequestType.UPLOAD_METADATA,
             expected_status=201,
@@ -362,6 +367,7 @@ class SwordV2Api:
         )
 
     def complete_deposit(self, se_iri):
+        """Publish the specified item."""
         return self.handle_request(
             request_type=RequestType.COMPLETE_DEPOSIT,
             expected_status=200,
@@ -369,31 +375,37 @@ class SwordV2Api:
         )
 
     def handle_request(self, request_type, expected_status, **kwargs):
+        """Call through to API and handle any errors."""
         try:
             request_receipt = self.send_request(
                 request_type=request_type, **kwargs)
         except sword2.exceptions.Forbidden:
+            # Error object doesn't contain anything useful to the user
             raise DisseminationError(
                 'Could not connect to SWORD v2 server: authorisation failed')
         except sword2.HTTPResponseError as error:
             raise DisseminationError(
                 'Could not connect to SWORD v2 server (status code {})'.format(error.response['status']))
 
+        # Receipt may not contain useful information
         if request_receipt.code != expected_status:
-            # Placeholder for error message
-            request_contents = 'item'
             if request_type == RequestType.CREATE_ITEM:
-                request_contents = 'item data'
+                raise DisseminationError('Error uploading item data to SWORD v2')
             elif request_type == RequestType.UPLOAD_PDF:
-                request_contents = 'PDF file'
+                raise DisseminationError('Error uploading PDF file to SWORD v2')
             elif request_type == RequestType.UPLOAD_METADATA:
-                request_contents = 'metadata file'
-            raise DisseminationError(
-                'Error uploading {} to SWORD v2'.format(request_contents))
+                raise DisseminationError('Error uploading metadata file to SWORD v2')
+            elif request_type == RequestType.COMPLETE_DEPOSIT:
+                raise DisseminationError('Error publishing item to SWORD v2')
+            elif request_type == RequestType.DELETE_ITEM:
+                raise DisseminationError('Error deleting item from SWORD v2')
+            else:
+                raise DisseminationError('Error uploading item to SWORD v2')
 
         return request_receipt
 
     def send_request(self, request_type, **kwargs):
+        """Build appropriate request and send to API."""
         if request_type == RequestType.CREATE_ITEM:
             request_receipt = self.conn.create(
                 col_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/7",
