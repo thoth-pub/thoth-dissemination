@@ -103,21 +103,27 @@ class SwordV2Uploader(Uploader):
             # Some of the below fields do not appear to be stored/
             # correctly displayed by Apollo, although they are valid within SWORD2
             title=work_metadata.get('fullTitle'),
+            dcterms_type=work_metadata.get('workType'),
             dcterms_publisher=self.get_publisher_name(),
             dcterms_issued=work_metadata.get('publicationDate'),
             dcterms_description=work_metadata.get('longAbstract'),
-            dcterms_identifier=work_metadata.get('doi'),
+            dcterms_identifier="doi:{}".format(work_metadata.get('doi')),
             dcterms_license=work_metadata.get('license'),
             dcterms_tableOfContents=work_metadata.get('toc'),
         )
         # Workaround for adding repeatable fields
-        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
-            sword_metadata.add_field("dcterms_contributor", contributor)
+        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+            first_name = contribution.get('firstName')
+            orcid = contribution.get('contributor').get('orcid')
+            contributor_string = contribution.get('fullName') if first_name is None else "{}, {}".format(contribution.get('lastName'), first_name)
+            if orcid is not None:
+                contributor_string += ' [orcid: {}]'.format(orcid)
+            sword_metadata.add_field("dcterms_contributor", contributor_string)
         for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
             sword_metadata.add_field("dcterms_subject", subject)
         for isbn in [n.get('isbn').replace(
                 '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
-            sword_metadata.add_field("dcterms_identifier", isbn)
+            sword_metadata.add_field("dcterms_identifier", "isbn:{}".format(isbn))
         for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
             sword_metadata.add_field("dcterms_language", language)
 
