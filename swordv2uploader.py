@@ -298,12 +298,13 @@ class SwordV2Uploader(Uploader):
             ror = funding.get('institution').get('ror')
             doi = funding.get('institution').get('institutionDoi')
             grant_number = funding.get('grantNumber')
+            # Schema states comma-separated but actual Publications Router data is semicolon-separated
             if ror is not None:
-                funding_string += ", ror: {}".format(ror)
+                funding_string += "; ror: {}".format(ror)
             elif doi is not None:
-                funding_string += ", doi: {}".format(doi)
+                funding_string += "; doi: {}".format(doi)
             if grant_number is not None:
-                funding_string += ", Grant(s): {}".format(grant_number)
+                funding_string += "; Grant(s): {}".format(grant_number)
             jisc_router_metadata.add_field("dcterms_description", funding_string)
 
         return jisc_router_metadata
