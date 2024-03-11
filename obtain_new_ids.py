@@ -2,7 +2,7 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to Internet Archive: find newly-published works for upload.
+For dissemination to Internet Archive and (Loughborough) Figshare: find newly-published works for upload.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
 Based on `iabulkupload/obtain_work_ids.py`.
 """
@@ -111,17 +111,19 @@ class CrossrefIDFinder(IDFinder):
         """Construct Thoth work ID query parameters depending on Crossref-specific requirements"""
         from datetime import datetime, timedelta, timezone
 
-        # The schedule for finding and depositing updated metadata is once daily.
+        # The schedule for finding and depositing updated metadata is once hourly.
         # TODO ideally we could pass this value from the GitHub Action to ensure synchronisation.
-        DEPOSIT_INTERVAL_HRS = 24
+        DEPOSIT_INTERVAL_HRS = 1
 
-        # Scheduled GitHub Actions we have run so far have not started until ~2h after specified time.
-        # Ensure we don't miss any works which were been updated in the gap between
+        # Scheduled GitHub Actions may not start exactly at the specified time.
+        # A couple of months of daily runs showed average delay of 10-15 mins.
+        # Try to avoid missing any works which were updated in the gap between
         # when the Action should have run and when it actually ran.
-        DELAY_BUFFER_HRS = 3
+        DELAY_BUFFER_HRS = 0.25
 
         # Target: all works listed in Thoth (from the selected publishers) which are
         # Active, and which have been updated since the last deposit.
+        # Use UTC, as GitHub Actions scheduling runs in UTC.
         current_time = datetime.now(timezone.utc)
         last_deposit_time = current_time - \
             timedelta(hours=(DEPOSIT_INTERVAL_HRS + DELAY_BUFFER_HRS))
@@ -171,6 +173,67 @@ class InternetArchiveIDFinder(IDFinder):
         self.thoth_ids = list(set(self.thoth_ids).difference(ia_ids))
 
 
+class FigshareIDFinder(IDFinder):
+    """Logic for retrieving work IDs which is specific to (Loughborough) Figshare dissemination"""
+
+    def get_query_parameters(self):
+        """Construct Thoth work ID query parameters depending on Figshare-specific requirements"""
+        # Target: all active (published) works listed in Thoth (from the selected publishers).
+        self.work_statuses = '[ACTIVE]'
+        # Start with the most recent, so that we can disregard everything else
+        # as soon as we hit the first work published earlier than the desired date range.
+        self.order = '{field: PUBLICATION_DATE, direction: DESC}'
+        self.updated_at_with_relations = None
+
+    def get_thoth_ids(self):
+        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can remove this overriding method and simply construct a standard query
+        # filtering by publication date
+        from datetime import datetime, timedelta
+
+        # In addition to the conditions of the query parameters, we need to filter the results
+        # to obtain only works with a publication date within the previous calendar month.
+        # The schedule for finding and depositing newly published works is once monthly
+        # (a few days after the start of the month, to allow for delays in updating records).
+        current_date = datetime.utcnow().date()
+        current_month_start = current_date.replace(day=1)
+        previous_month_end = current_month_start - timedelta(days=1)
+        previous_month_start = previous_month_end.replace(day=1)
+
+        offset = 0
+        while True:
+            next_batch = self.thoth.books(
+                limit=1,
+                offset=offset,
+                work_statuses=self.work_statuses,
+                order=self.order,
+                publishers=self.publishers,
+                updated_at_with_relations=self.updated_at_with_relations,
+            )
+            if len(next_batch) < 1:
+                # No more works to be found
+                break
+            offset += 1
+            next_work = next_batch[0]
+            next_work_pub_date = datetime.strptime(next_work.publicationDate, "%Y-%m-%d").date()
+            if next_work_pub_date > previous_month_end:
+                # This work will be handled in next month's run - don't cause duplication
+                continue
+            elif next_work_pub_date >= previous_month_start:
+                # This work was published in the last month - include it
+                self.thoth_ids.append(next_work.workId)
+            else:
+                # We've reached the first work in the list which was published
+                # earlier than last month - stop
+                break
+
+    def post_process(self):
+        """Amend list of retrieved work IDs depending on Figshare-specific requirements"""
+        # Not required for Figshare dissemination - keep full list
+        pass
+
+
 def get_arguments():
     """Simple argument parsing"""
     parser = argparse.ArgumentParser()
@@ -191,9 +254,11 @@ if __name__ == '__main__':
             id_finder = InternetArchiveIDFinder()
         case 'Crossref':
             id_finder = CrossrefIDFinder()
+        case 'Figshare':
+            id_finder = FigshareIDFinder()
         case _:
             logging.error(
-                'Platform must be one of InternetArchive or Crossref')
+                'Platform must be one of InternetArchive, Crossref, or Figshare')
             sys.exit(1)
 
     id_finder.run()
