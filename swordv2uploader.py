@@ -19,21 +19,29 @@ class RequestType(Enum):
     DELETE_ITEM = 5
 
 
+class MetadataProfile(Enum):
+    BASIC = 1
+    JISC_ROUTER = 2
+    # RIOXX = 3
+    CUL_PILOT = 4
+
+
 class SwordV2Uploader(Uploader):
     """Dissemination logic for SWORD v2"""
-    # using UCamApollo DSpace 7 as hard-coded logic for now.
 
-    def __init__(self, work_id, export_url, version):
+    def __init__(self, work_id, export_url, version, user_name_string, user_pass_string,
+                 service_document_iri, collection_iri, metadata_profile):
         """Create connection to SWORD v2 endpoint"""
         super().__init__(work_id, export_url, version)
         try:
             user_name = self.get_credential_from_env(
-                'cam_ds7_user', 'SWORD v2')
-            user_pass = self.get_credential_from_env('cam_ds7_pw', 'SWORD v2')
+                user_name_string, 'SWORD v2')
+            user_pass = self.get_credential_from_env(user_pass_string, 'SWORD v2')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
-        self.api = SwordV2Api(work_id, user_name, user_pass)
+        self.api = SwordV2Api(work_id, user_name, user_pass, service_document_iri, collection_iri)
+        self.metadata_profile = metadata_profile
 
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
@@ -83,11 +91,16 @@ class SwordV2Uploader(Uploader):
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
         # Select the desired metadata profile
-        # TODO make this a switch passed in from higher-level specific platform class
-        sword_metadata = self.profile_basic()
-        # sword_metadata = self.profile_jisc_router()
-        # sword_metadata = self.profile_rioxx()
-        # sword_metadata = self.profile_cul_pilot()
+        if self.metadata_profile == MetadataProfile.BASIC:
+            sword_metadata = self.profile_basic()
+        elif self.metadata_profile == MetadataProfile.JISC_ROUTER:
+            sword_metadata = self.profile_jisc_router()
+        # elif self.metadata_profile == MetadataProfile.RIOXX:
+            # sword_metadata = self.profile_rioxx()
+        elif self.metadata_profile == MetadataProfile.CUL_PILOT:
+            sword_metadata = self.profile_cul_pilot()
+        else:
+            raise NotImplementedError
 
         return sword_metadata
 
@@ -318,11 +331,12 @@ class SwordV2Uploader(Uploader):
 
 class SwordV2Api:
 
-    def __init__(self, work_id, user_name, user_pass):
+    def __init__(self, work_id, user_name, user_pass, service_document_iri, collection_iri):
         """Set up connection to API."""
         self.work_id = work_id
+        self.collection_iri = collection_iri
         self.conn = sword2.Connection(
-            service_document_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/servicedocument",
+            service_document_iri=service_document_iri,
             user_name=user_name,
             user_pass=user_pass,
             # SWORD2 library doesn't handle timeout-related errors gracefully and large files
@@ -414,7 +428,7 @@ class SwordV2Api:
         """Build appropriate request and send to API."""
         if request_type == RequestType.CREATE_ITEM:
             request_receipt = self.conn.create(
-                col_iri="https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/7",
+                col_iri=self.collection_iri,
                 in_progress=True,
                 # Required kwargs: metadata_entry
                 **kwargs,

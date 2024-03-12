@@ -16,7 +16,7 @@ from pathlib import Path
 from iauploader import IAUploader
 from oapenuploader import OAPENUploader
 from souploader import SOUploader
-from swordv2uploader import SwordV2Uploader
+from culuploader import CULUploader
 from crossrefuploader import CrossrefUploader
 from fsuploader import FigshareUploader
 
@@ -24,7 +24,7 @@ UPLOADERS = {
     "InternetArchive": IAUploader,
     "OAPEN": OAPENUploader,
     "ScienceOpen": SOUploader,
-    "SWORD": SwordV2Uploader,
+    "CUL": CULUploader,
     "Crossref": CrossrefUploader,
     "Figshare": FigshareUploader,
 }
