@@ -46,7 +46,16 @@ class SwordV2Uploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
 
-        # Metadata file format TBD: use JSON for now
+        # TODO SWORD2 is designed for deposit rather than retrieval, hence
+        # there's no easy way to search existing items i.e. check for duplicates.
+        # One option would be to 1) call get_resource() on the collection URL,
+        # 2) extract all of the item URLs from the atom-xml response,
+        # 3) call get_resource() on each URL in turn, and 4) check that none
+        # of the atom-xml responses contained the relevant `thoth-work-id`,
+        # but this would be cumbersome.
+
+        # Include full work metadata file in JSON format,
+        # as a supplement to filling out SWORD2 metadata fields.
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         # Can't continue if no PDF file is present
         try:
@@ -432,12 +441,14 @@ class SwordV2Api:
             request_receipt = self.conn.create(
                 col_iri=self.collection_iri,
                 in_progress=True,
+                # This sets `dc.identifier.slug` i.e. suggested URI -
+                # but not supported in DSpace by default.
+                # suggested_identifier=self.work_id,
                 # Required kwargs: metadata_entry
                 **kwargs,
             )
         elif request_type == RequestType.UPLOAD_PDF:
             request_receipt = self.conn.add_file_to_resource(
-                # Filename TBD: use work ID for now
                 filename='{}.pdf'.format(self.work_id),
                 mimetype='application/pdf',
                 in_progress=True,
@@ -446,7 +457,6 @@ class SwordV2Api:
             )
         elif request_type == RequestType.UPLOAD_METADATA:
             request_receipt = self.conn.add_file_to_resource(
-                # Filename TBD: use work ID for now
                 filename='{}.json'.format(self.work_id),
                 mimetype='application/json',
                 in_progress=True,
