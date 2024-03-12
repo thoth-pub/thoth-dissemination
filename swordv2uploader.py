@@ -139,6 +139,7 @@ class SwordV2Uploader(Uploader):
             sword_metadata.add_field("dcterms_identifier", "isbn:{}".format(isbn))
         for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
             sword_metadata.add_field("dcterms_language", language)
+        sword_metadata.add_field("dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
         return sword_metadata
 
@@ -261,6 +262,7 @@ class SwordV2Uploader(Uploader):
             reference = reference_citation if reference_citation else reference_doi
             # swordv2-server.simpledc.references
             basic_metadata.add_field("dcterms_references", reference)
+        basic_metadata.add_field("dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
         return basic_metadata
 
@@ -325,6 +327,7 @@ class SwordV2Uploader(Uploader):
             if grant_number is not None:
                 funding_string += "; Grant(s): {}".format(grant_number)
             jisc_router_metadata.add_field("dcterms_description", funding_string)
+        jisc_router_metadata.add_field("dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
         return jisc_router_metadata
 
