@@ -110,7 +110,7 @@ class SwordV2Uploader(Uploader):
         discussion with CUL (requiring configuration work on their side)
         """
         work_metadata = self.metadata.get('data').get('work')
-        sword_metadata = sword2.Entry(
+        cul_pilot_metadata = sword2.Entry(
             # All fields are non-mandatory and any None values are ignored on ingest
             # (within Apollo DSpace 7 - yet to test other SWORD2-based platforms)
             # Some of the below fields do not appear to be stored/
@@ -131,17 +131,17 @@ class SwordV2Uploader(Uploader):
             contributor_string = contribution.get('fullName') if first_name is None else "{}, {}".format(contribution.get('lastName'), first_name)
             if orcid is not None:
                 contributor_string += ' [orcid: {}]'.format(orcid)
-            sword_metadata.add_field("dcterms_contributor", contributor_string)
+            cul_pilot_metadata.add_field("dcterms_contributor", contributor_string)
         for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
-            sword_metadata.add_field("dcterms_subject", subject)
+            cul_pilot_metadata.add_field("dcterms_subject", subject)
         for isbn in [n.get('isbn').replace(
                 '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
-            sword_metadata.add_field("dcterms_identifier", "isbn:{}".format(isbn))
+            cul_pilot_metadata.add_field("dcterms_identifier", "isbn:{}".format(isbn))
         for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
-            sword_metadata.add_field("dcterms_language", language)
-        sword_metadata.add_field("dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
+            cul_pilot_metadata.add_field("dcterms_language", language)
+        cul_pilot_metadata.add_field("dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
-        return sword_metadata
+        return cul_pilot_metadata
 
     def profile_basic(self):
         """
@@ -187,7 +187,6 @@ class SwordV2Uploader(Uploader):
             # "Recommended practice is to use a controlled vocabulary such as the DCMI Type Vocabulary"
             # (see https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7)
             dcterms_type='text',
-            #^should we Include the dcmitype namespace for this?
 
             # Not appropriate as we may be submitting multiple formats (PDF, XML etc):
             # # swordv2-server.simpledc.extent
