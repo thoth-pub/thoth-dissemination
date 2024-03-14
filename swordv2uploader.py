@@ -29,10 +29,10 @@ class MetadataProfile(Enum):
 class SwordV2Uploader(Uploader):
     """Dissemination logic for SWORD v2"""
 
-    def __init__(self, work_id, export_url, version, user_name_string, user_pass_string,
+    def __init__(self, work_id, export_url, client_url, version, user_name_string, user_pass_string,
                  service_document_iri, collection_iri, metadata_profile):
         """Create connection to SWORD v2 endpoint"""
-        super().__init__(work_id, export_url, version)
+        super().__init__(work_id, export_url, client_url, version)
         try:
             user_name = self.get_credential_from_env(
                 user_name_string, 'SWORD v2')

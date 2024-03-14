@@ -18,9 +18,9 @@ from uploader import Uploader, PUB_FORMATS
 class FigshareUploader(Uploader):
     """Dissemination logic for Figshare"""
 
-    def __init__(self, work_id, export_url, version):
+    def __init__(self, work_id, export_url, client_url, version):
         """Instantiate class for accessing Figshare API."""
-        super().__init__(work_id, export_url, version)
+        super().__init__(work_id, export_url, client_url, version)
         try:
             api_token = self.get_credential_from_env(
                 'figshare_token', 'Figshare')
