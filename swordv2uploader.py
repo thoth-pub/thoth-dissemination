@@ -68,7 +68,7 @@ class SwordV2Uploader(Uploader):
         sword_metadata = self.parse_metadata()
 
         try:
-            receipt = self.api.create_item(sword_metadata)
+            create_receipt = self.api.create_item(sword_metadata)
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
@@ -76,9 +76,9 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
-            self.api.upload_pdf(receipt.edit_media, pdf_bytes)
-            self.api.upload_metadata(receipt.edit_media, metadata_bytes)
-            self.api.complete_deposit(receipt.edit)
+            self.api.upload_pdf(create_receipt.edit_media, pdf_bytes)
+            self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
+            deposit_receipt = self.api.complete_deposit(create_receipt.edit)
         except Exception as error:
             # In all cases, we need to delete the partially-created item
             # For expected failures, log before attempting deletion, then just exit
@@ -86,7 +86,7 @@ class SwordV2Uploader(Uploader):
             if isinstance(error, DisseminationError):
                 logging.error(error)
             try:
-                self.api.delete_item(receipt.edit)
+                self.api.delete_item(create_receipt.edit)
             except DisseminationError as deletion_error:
                 logging.error('Failed to delete incomplete item: {}'.format(deletion_error))
             if isinstance(error, DisseminationError):
@@ -95,7 +95,9 @@ class SwordV2Uploader(Uploader):
                 raise
 
         logging.info(
-            'Successfully uploaded to SWORD v2 at {}'.format(receipt.location))
+            # If automatic deposit (no curation) is enabled, `alternate` should show
+            # the front-end URL of the upload (alternatively, use `location` for back-end URL)
+            'Successfully uploaded to SWORD v2 at {}'.format(deposit_receipt.alternate))
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
