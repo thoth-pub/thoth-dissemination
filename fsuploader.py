@@ -125,9 +125,8 @@ class FigshareUploader(Uploader):
     def parse_metadata(self):
         """Convert work metadata into Figshare format."""
         work_metadata = self.metadata.get('data').get('work')
-        try:
-            long_abstract = work_metadata.get('longAbstract')
-        except KeyError:
+        long_abstract = work_metadata.get('longAbstract')
+        if long_abstract is None:
             logging.error(
                 'Cannot upload to Figshare: Work must have a Long Abstract')
             sys.exit(1)
