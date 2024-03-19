@@ -173,7 +173,7 @@ class Uploader():
             'data').get('work').get('publications')
         for publication in publications:
             # Required ISBN is under paperback publication
-            if publication.get('publicationType') == 'PDF':
+            if publication.get('publicationType') == 'PAPERBACK':
                 if pb_isbn is None:
                     pb_isbn = publication.get('isbn')
                 else:
