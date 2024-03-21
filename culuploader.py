@@ -16,7 +16,8 @@ class CULUploader(DSpaceUploader):
             'https://copim-b-dev.lib.cam.ac.uk/server/swordv2/servicedocument'
         )
         collection_iri = (
-            'https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/7'
+            'https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/'
+            '7'
         )
         metadata_profile = MetadataProfile.JISC_ROUTER
         super().__init__(

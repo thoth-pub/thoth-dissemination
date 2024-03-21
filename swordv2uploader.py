@@ -100,16 +100,19 @@ class SwordV2Uploader(Uploader):
                 self.api.delete_item(create_receipt.edit)
             except DisseminationError as deletion_error:
                 logging.error(
-                    'Failed to delete incomplete item: {}'.format(deletion_error))
+                    'Failed to delete incomplete item: {}'.format(
+                        deletion_error))
             if isinstance(error, DisseminationError):
                 sys.exit(1)
             else:
                 raise
 
         logging.info(
-            # If automatic deposit (no curation) is enabled, `alternate` should show
-            # the front-end URL of the upload (alternatively, use `location` for back-end URL)
-            'Successfully uploaded to SWORD v2 at {}'.format(deposit_receipt.alternate))
+            # If automatic deposit (no curation) is enabled, `alternate`
+            # should show the front-end URL of the upload (alternatively,
+            # use `location` for back-end URL)
+            'Successfully uploaded to SWORD v2 at {}'.format(
+                deposit_receipt.alternate))
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
@@ -324,7 +327,8 @@ class SwordV2Uploader(Uploader):
         """
         Metadata profile based on Jisc Publications Router schema
         (currently articles-only)
-        See https://github.com/jisc-services/Public-Documentation/blob/master/PublicationsRouter/sword-out/DSpace-XML.md
+        See https://github.com/jisc-services/Public-Documentation/blob/master/
+        PublicationsRouter/sword-out/DSpace-XML.md
         """
         work_metadata = self.metadata.get('data').get('work')
         jisc_router_metadata = sword2.Entry(
@@ -353,7 +357,8 @@ class SwordV2Uploader(Uploader):
         for isbn in [
             n.get('isbn').replace(
                 '-',
-                '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+                '') for n in work_metadata.get('publications') if n.get('isbn')
+                is not None]:
             jisc_router_metadata.add_field(
                 "dcterms_identifier", "isbn: {}".format(isbn))
         for subject in [n.get('subjectCode')
@@ -365,7 +370,8 @@ class SwordV2Uploader(Uploader):
             orcid = contribution.get('contributor').get('orcid')
             affiliations = contribution.get('affiliations')
             first_institution = next((a.get('institution').get(
-                'institutionName') for a in affiliations if affiliations), None)
+                'institutionName') for a in affiliations if affiliations),
+                None)
             contributor_string = contribution.get(
                 'fullName')if first_name is None else "{}, {}".format(
                 contribution.get('lastName'), first_name)
