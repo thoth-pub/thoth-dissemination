@@ -57,8 +57,8 @@ class SwordV2Uploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
 
-        # TODO SWORD2 is designed for deposit rather than retrieval, hence
-        # there's no easy way to search existing items i.e. check for duplicates.
+        # TODO SWORD2 is designed for deposit rather than retrieval, so there's
+        # no easy way to search existing items i.e. check for duplicates.
         # One option would be to 1) call get_resource() on the collection URL,
         # 2) extract all of the item URLs from the atom-xml response,
         # 3) call get_resource() on each URL in turn, and 4) check that none
@@ -92,7 +92,7 @@ class SwordV2Uploader(Uploader):
             deposit_receipt = self.api.complete_deposit(create_receipt.edit)
         except Exception as error:
             # In all cases, we need to delete the partially-created item
-            # For expected failures, log before attempting deletion, then just exit
+            # For expected failures, log before attempting deletion, then exit
             # For unexpected failures, attempt deletion then let program crash
             if isinstance(error, DisseminationError):
                 logging.error(error)
@@ -152,7 +152,8 @@ class SwordV2Uploader(Uploader):
                 'contributions') if n.get('mainContribution') is True]:
             first_name = contribution.get('firstName')
             orcid = contribution.get('contributor').get('orcid')
-            contributor_string = contribution.get('fullName') if first_name is None else "{}, {}".format(
+            contributor_string = contribution.get(
+                'fullName') if first_name is None else "{}, {}".format(
                 contribution.get('lastName'), first_name)
             if orcid is not None:
                 contributor_string += ' [orcid: {}]'.format(orcid)
@@ -164,7 +165,8 @@ class SwordV2Uploader(Uploader):
         for isbn in [
             n.get('isbn').replace(
                 '-',
-                '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+                '') for n in work_metadata.get('publications') if n.get('isbn')
+                is not None]:
             cul_pilot_metadata.add_field(
                 "dcterms_identifier", "isbn:{}".format(isbn))
         for language in [n.get('languageCode')
@@ -177,8 +179,9 @@ class SwordV2Uploader(Uploader):
 
     def profile_basic(self):
         """
-        Metadata profile based on DSpace configuration defaults i.e. SWORD profile
-        See https://github.com/DSpace/DSpace/blob/main/dspace/config/modules/swordv2-server.cfg
+        Metadata profile based on DSpace configuration defaults i.e.
+        SWORD profile. See
+        https://github.com/DSpace/DSpace/blob/main/dspace/config/modules/swordv2-server.cfg
         """
         work_metadata = self.metadata.get('data').get('work')
         basic_metadata = sword2.Entry(
@@ -217,11 +220,13 @@ class SwordV2Uploader(Uploader):
             # swordv2-server.atom.title
             dcterms_title=work_metadata.get('fullTitle'),
             # swordv2-server.simpledc.type
-            # "Recommended practice is to use a controlled vocabulary such as the DCMI Type Vocabulary"
-            # (see https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7)
+            # "Recommended practice is to use a controlled vocabulary such as
+            # the DCMI Type Vocabulary" (see
+            # https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7)
             dcterms_type='text',
 
-            # Not appropriate as we may be submitting multiple formats (PDF, XML etc):
+            # Not appropriate as we may be submitting multiple formats
+            # (PDF, XML etc):
             # # swordv2-server.simpledc.extent
             # dcterms_format_extent=
             # # swordv2-server.simpledc.format
@@ -240,18 +245,21 @@ class SwordV2Uploader(Uploader):
             # dcterms_date_submitted=
             # # swordv2-server.simpledc.isReferencedBy
             # dcterms_relation_isreferencedby=
-            # "A related resource that requires the described resource to support its function, delivery, or coherence"
+            # "A related resource that requires the described resource to
+            # support its function, delivery, or coherence"
             # # swordv2-server.simpledc.isRequiredBy
             # dcterms_relation_isrequiredby=
             # # swordv2-server.simpledc.modified
             # dcterms_date_modified=
             # # swordv2-server.simpledc.provenance
             # dcterms_description_provenance=
-            # "A related resource that is required by the described resource to support its function, delivery, or coherence"
+            # "A related resource that is required by the described resource to
+            # support its function, delivery, or coherence"
             # # swordv2-server.simpledc.requires
             # dcterms_relation_requires=
             # "A related resource from which the described resource is derived"
-            # (e.g. print version of scan); most cases would be covered by dc_relation fields
+            # (e.g. print version of scan); most cases would be covered by
+            # dc_relation fields
             # # swordv2-server.simpledc.source
             # dcterms_source=
         )
@@ -271,7 +279,8 @@ class SwordV2Uploader(Uploader):
         for isbn in [
             n.get('isbn').replace(
                 '-',
-                '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+                '') for n in work_metadata.get('publications') if n.get('isbn')
+                is not None]:
             basic_metadata.add_field("dcterms_identifier", isbn)
         for language in [n.get('languageCode')
                          for n in work_metadata.get('languages')]:
@@ -282,7 +291,8 @@ class SwordV2Uploader(Uploader):
             # swordv2-server.simpledc.subject
             basic_metadata.add_field("dcterms_subject", subject)
         for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
-                'relatedWork').get('doi')) for n in work_metadata.get('relations')]:
+                'relatedWork').get('doi'))
+                for n in work_metadata.get('relations')]:
             if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
                 # swordv2-server.simpledc.isPartOf
                 basic_metadata.add_field("dcterms_isPartOf", relation_doi)
@@ -301,7 +311,8 @@ class SwordV2Uploader(Uploader):
             (n.get('unstructuredCitation'),
              n.get('doi')) for n in work_metadata.get('references')]:
             # will always have one or the other (if not both)
-            reference = reference_citation if reference_citation else reference_doi
+            reference = (
+                reference_citation if reference_citation else reference_doi)
             # swordv2-server.simpledc.references
             basic_metadata.add_field("dcterms_references", reference)
         basic_metadata.add_field("dcterms_identifier",
@@ -311,7 +322,8 @@ class SwordV2Uploader(Uploader):
 
     def profile_jisc_router(self):
         """
-        Metadata profile based on Jisc Publications Router schema (currently articles-only)
+        Metadata profile based on Jisc Publications Router schema
+        (currently articles-only)
         See https://github.com/jisc-services/Public-Documentation/blob/master/PublicationsRouter/sword-out/DSpace-XML.md
         """
         work_metadata = self.metadata.get('data').get('work')
@@ -330,7 +342,8 @@ class SwordV2Uploader(Uploader):
             # dcterms_bibliographicCitation=
             # dcterms_dateAccepted=
             # "A related resource from which the described resource is derived"
-            # Jisc Router uses this to indicate the article's parent journal; not relevant for books
+            # Jisc Router uses this to indicate the article's parent journal;
+            # not relevant for books
             # dcterms_source=
         )
 
@@ -353,7 +366,8 @@ class SwordV2Uploader(Uploader):
             affiliations = contribution.get('affiliations')
             first_institution = next((a.get('institution').get(
                 'institutionName') for a in affiliations if affiliations), None)
-            contributor_string = contribution.get('fullName') if first_name is None else "{}, {}".format(
+            contributor_string = contribution.get(
+                'fullName')if first_name is None else "{}, {}".format(
                 contribution.get('lastName'), first_name)
             if orcid is not None:
                 contributor_string += '; orcid: {}'.format(orcid)
@@ -407,9 +421,10 @@ class SwordV2Api:
             service_document_iri=service_document_iri,
             user_name=user_name,
             user_pass=user_pass,
-            # SWORD2 library doesn't handle timeout-related errors gracefully and large files
-            # (e.g. 50MB) can't be fully uploaded within the 30-second default timeout.
-            # Allow lots of leeway. (This otherwise matches the default `http_impl`.)
+            # SWORD2 library doesn't handle timeout-related errors gracefully
+            # and large files (e.g. 50MB) can't be fully uploaded within the
+            # 30-second default timeout. Allow lots of leeway. (This otherwise
+            # matches the default `http_impl`.)
             http_impl=sword2.http_layer.HttpLib2Layer(timeout=120.0)
         )
 
@@ -418,12 +433,14 @@ class SwordV2Api:
         return self.handle_request(
             request_type=RequestType.CREATE_ITEM,
             expected_status=201,
-            # Hacky workaround for an issue with mishandling of encodings within sword2 library,
-            # which meant metadata containing special characters could not be submitted.
-            # Although the `metadata_entry` parameter ought to be of type `Entry`, sending a
-            # `str` as below triggers no errors. Ultimately it's passed to `http/client.py/_encode()`,
-            # which defaults to encoding it as 'latin-1'. Pre-emptively encoding/decoding it here
-            # seems to mean that the string sent to the server is in correct utf-8 format.
+            # Hacky workaround for an issue with mishandling of encodings
+            # within sword2 library, which meant metadata containing special
+            # characters could not be submitted. Although the `metadata_entry`
+            # parameter ought to be of type `Entry`, sending a `str` as below
+            # triggers no errors. Ultimately it's passed to
+            # `http/client.py/_encode()`, which defaults to encoding it as
+            # 'latin-1'. Pre-emptively encoding/decoding it here seems to mean
+            # that the string sent to the server is in correct utf-8 format.
             metadata_entry=str(metadata_entry).encode(
                 'utf-8').decode('latin-1'),
         )
@@ -446,7 +463,10 @@ class SwordV2Api:
         )
 
     def upload_metadata(self, edit_media_iri, payload):
-        """Upload the supplied JSON metadata file (as bytes) under the specified item."""
+        """
+        Upload the supplied JSON metadata file (as bytes)
+        under the specified item.
+        """
         return self.handle_request(
             request_type=RequestType.UPLOAD_METADATA,
             expected_status=201,
