@@ -29,8 +29,17 @@ class MetadataProfile(Enum):
 class SwordV2Uploader(Uploader):
     """Dissemination logic for SWORD v2"""
 
-    def __init__(self, work_id, export_url, client_url, version, user_name_string, user_pass_string,
-                 service_document_iri, collection_iri, metadata_profile):
+    def __init__(
+            self,
+            work_id,
+            export_url,
+            client_url,
+            version,
+            user_name_string,
+            user_pass_string,
+            service_document_iri,
+            collection_iri,
+            metadata_profile):
         """Create connection to SWORD v2 endpoint"""
         super().__init__(work_id, export_url, client_url, version)
         try:
@@ -139,7 +148,8 @@ class SwordV2Uploader(Uploader):
             dcterms_tableOfContents=work_metadata.get('toc'),
         )
         # Workaround for adding repeatable fields
-        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') is True]:
+        for contribution in [n for n in work_metadata.get(
+                'contributions') if n.get('mainContribution') is True]:
             first_name = contribution.get('firstName')
             orcid = contribution.get('contributor').get('orcid')
             contributor_string = contribution.get('fullName') if first_name is None else "{}, {}".format(
@@ -148,13 +158,17 @@ class SwordV2Uploader(Uploader):
                 contributor_string += ' [orcid: {}]'.format(orcid)
             cul_pilot_metadata.add_field(
                 "dcterms_contributor", contributor_string)
-        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
+        for subject in [n.get('subjectCode')
+                        for n in work_metadata.get('subjects')]:
             cul_pilot_metadata.add_field("dcterms_subject", subject)
-        for isbn in [n.get('isbn').replace(
-                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+        for isbn in [
+            n.get('isbn').replace(
+                '-',
+                '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
             cul_pilot_metadata.add_field(
                 "dcterms_identifier", "isbn:{}".format(isbn))
-        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
+        for language in [n.get('languageCode')
+                         for n in work_metadata.get('languages')]:
             cul_pilot_metadata.add_field("dcterms_language", language)
         cul_pilot_metadata.add_field(
             "dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
@@ -242,27 +256,33 @@ class SwordV2Uploader(Uploader):
             # dcterms_source=
         )
 
-        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') is True]:
+        for contributor in [n.get('fullName') for n in work_metadata.get(
+                'contributions') if n.get('mainContribution') is True]:
             # swordv2-server.simpledc.contributor
             basic_metadata.add_field("dcterms_contributor", contributor)
             # swordv2-server.simpledc.creator
             # swordv2-server.atom.author
-            # Doesn't seem to work; not clear how to represent "dc.contributor.author" in dcterms
+            # Doesn't seem to work; not clear how to represent
+            # "dc.contributor.author" in dcterms
             basic_metadata.add_field("dcterms_author", contributor)
         # swordv2-server.simpledc.identifier
         basic_metadata.add_field("dcterms_identifier",
                                  work_metadata.get('doi'))
-        for isbn in [n.get('isbn').replace(
-                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+        for isbn in [
+            n.get('isbn').replace(
+                '-',
+                '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
             basic_metadata.add_field("dcterms_identifier", isbn)
-        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
+        for language in [n.get('languageCode')
+                         for n in work_metadata.get('languages')]:
             # swordv2-server.simpledc.language
             basic_metadata.add_field("dcterms_language", language)
-        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
+        for subject in [n.get('subjectCode')
+                        for n in work_metadata.get('subjects')]:
             # swordv2-server.simpledc.subject
             basic_metadata.add_field("dcterms_subject", subject)
-        for (relation_type, relation_doi) in [(n.get('relationType'), n.get('relatedWork').get('doi'))
-                                              for n in work_metadata.get('relations')]:
+        for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
+                'relatedWork').get('doi')) for n in work_metadata.get('relations')]:
             if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
                 # swordv2-server.simpledc.isPartOf
                 basic_metadata.add_field("dcterms_isPartOf", relation_doi)
@@ -275,8 +295,11 @@ class SwordV2Uploader(Uploader):
             else:
                 # swordv2-server.simpledc.relation
                 basic_metadata.add_field("dcterms_relation", relation_doi)
-        for (reference_citation, reference_doi) in [(n.get('unstructuredCitation'), n.get('doi'))
-                                                    for n in work_metadata.get('references')]:
+        for (
+            reference_citation,
+            reference_doi) in [
+            (n.get('unstructuredCitation'),
+             n.get('doi')) for n in work_metadata.get('references')]:
             # will always have one or the other (if not both)
             reference = reference_citation if reference_citation else reference_doi
             # swordv2-server.simpledc.references
@@ -311,15 +334,20 @@ class SwordV2Uploader(Uploader):
             # dcterms_source=
         )
 
-        for language in [n.get('languageCode') for n in work_metadata.get('languages')]:
+        for language in [n.get('languageCode')
+                         for n in work_metadata.get('languages')]:
             jisc_router_metadata.add_field("dcterms_language", language)
-        for isbn in [n.get('isbn').replace(
-                '-', '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
+        for isbn in [
+            n.get('isbn').replace(
+                '-',
+                '') for n in work_metadata.get('publications') if n.get('isbn') is not None]:
             jisc_router_metadata.add_field(
                 "dcterms_identifier", "isbn: {}".format(isbn))
-        for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
+        for subject in [n.get('subjectCode')
+                        for n in work_metadata.get('subjects')]:
             jisc_router_metadata.add_field("dcterms_subject", subject)
-        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') is True]:
+        for contribution in [n for n in work_metadata.get(
+                'contributions') if n.get('mainContribution') is True]:
             first_name = contribution.get('firstName')
             orcid = contribution.get('contributor').get('orcid')
             affiliations = contribution.get('affiliations')
@@ -336,20 +364,24 @@ class SwordV2Uploader(Uploader):
                 jisc_router_metadata.add_field(
                     "dcterms_creator", contributor_string)
             else:
-                jisc_router_metadata.add_field("dcterms_contributor", "{}: {}".format(
-                    contribution_type, contributor_string))
+                jisc_router_metadata.add_field(
+                    "dcterms_contributor", "{}: {}".format(
+                        contribution_type, contributor_string))
         jisc_router_metadata.add_field("dcterms_rights", "Embargo: none")
         jisc_router_metadata.add_field(
             "dcterms_description", "Work version: VoR")
         jisc_router_metadata.add_field(
-            "dcterms_description", "From {} via Thoth".format(self.get_publisher_name()))
+            "dcterms_description",
+            "From {} via Thoth".format(
+                self.get_publisher_name()))
         for funding in work_metadata.get('fundings'):
             funding_string = "Funder: {}".format(
                 funding.get('institution').get('institutionName'))
             ror = funding.get('institution').get('ror')
             doi = funding.get('institution').get('institutionDoi')
             grant_number = funding.get('grantNumber')
-            # Schema states comma-separated but actual Publications Router data is semicolon-separated
+            # Schema states comma-separated but actual Publications Router
+            # data is semicolon-separated
             if ror is not None:
                 funding_string += "; ror: {}".format(ror)
             elif doi is not None:
@@ -366,7 +398,8 @@ class SwordV2Uploader(Uploader):
 
 class SwordV2Api:
 
-    def __init__(self, work_id, user_name, user_pass, service_document_iri, collection_iri):
+    def __init__(self, work_id, user_name, user_pass,
+                 service_document_iri, collection_iri):
         """Set up connection to API."""
         self.work_id = work_id
         self.collection_iri = collection_iri
@@ -440,7 +473,8 @@ class SwordV2Api:
                 'Could not connect to SWORD v2 server: authorisation failed')
         except sword2.HTTPResponseError as error:
             raise DisseminationError(
-                'Could not connect to SWORD v2 server (status code {})'.format(error.response['status']))
+                'Could not connect to SWORD v2 server (status code {})'.format(
+                    error.response['status']))
 
         # Receipt may not contain useful information
         if request_receipt.code != expected_status:

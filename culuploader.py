@@ -14,5 +14,13 @@ class CULUploader(DSpaceUploader):
         service_document_iri = 'https://copim-b-dev.lib.cam.ac.uk/server/swordv2/servicedocument'
         collection_iri = 'https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/7'
         metadata_profile = MetadataProfile.JISC_ROUTER
-        super().__init__(work_id, export_url, client_url, version, user_name_string, user_pass_string,
-                         service_document_iri, collection_iri, metadata_profile)
+        super().__init__(
+            work_id,
+            export_url,
+            client_url,
+            version,
+            user_name_string,
+            user_pass_string,
+            service_document_iri,
+            collection_iri,
+            metadata_profile)
