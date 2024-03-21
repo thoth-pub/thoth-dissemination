@@ -260,7 +260,7 @@ class FigshareUploader(Uploader):
         """
         # fullName is mandatory so we do not expect KeyErrors
         authors = [{'name': n['fullName']} for n in metadata.get('contributions')
-                   if n.get('mainContribution') == True]
+                   if n.get('mainContribution') is True]
         if len(authors) < 1:
             logging.error(
                 'Cannot upload to Figshare: Work must have at least one Main Contribution')

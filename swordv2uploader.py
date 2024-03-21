@@ -139,7 +139,7 @@ class SwordV2Uploader(Uploader):
             dcterms_tableOfContents=work_metadata.get('toc'),
         )
         # Workaround for adding repeatable fields
-        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') is True]:
             first_name = contribution.get('firstName')
             orcid = contribution.get('contributor').get('orcid')
             contributor_string = contribution.get('fullName') if first_name is None else "{}, {}".format(
@@ -242,7 +242,7 @@ class SwordV2Uploader(Uploader):
             # dcterms_source=
         )
 
-        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+        for contributor in [n.get('fullName') for n in work_metadata.get('contributions') if n.get('mainContribution') is True]:
             # swordv2-server.simpledc.contributor
             basic_metadata.add_field("dcterms_contributor", contributor)
             # swordv2-server.simpledc.creator
@@ -319,7 +319,7 @@ class SwordV2Uploader(Uploader):
                 "dcterms_identifier", "isbn: {}".format(isbn))
         for subject in [n.get('subjectCode') for n in work_metadata.get('subjects')]:
             jisc_router_metadata.add_field("dcterms_subject", subject)
-        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') == True]:
+        for contribution in [n for n in work_metadata.get('contributions') if n.get('mainContribution') is True]:
             first_name = contribution.get('firstName')
             orcid = contribution.get('contributor').get('orcid')
             affiliations = contribution.get('affiliations')
