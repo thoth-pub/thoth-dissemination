@@ -5,6 +5,7 @@ Retrieve and disseminate files and metadata to Zenodo
 
 import logging
 import sys
+import re
 import requests
 from io import BytesIO
 from errors import DisseminationError
@@ -73,15 +74,48 @@ class ZenodoUploader(Uploader):
             sys.exit(1)
         zenodo_metadata = {
             'metadata': {
-                # Mandatory fields for publication:
+                # Mandatory fields which will prevent publication if not set explicitly:
                 'title': work_metadata['fullTitle'],  # mandatory in Thoth
                 'upload_type': 'publication',
                 'publication_type': 'book',  # mandatory when upload_type is publication
                 'description': long_abstract,
                 'creators': self.get_zenodo_creators(work_metadata),
+                # Mandatory fields which will be defaulted if not set explicitly:
+                # Zenodo requires date in YYYY-MM-DD format, as output by Thoth
+                'date': work_metadata.get('publicationDate'),
+                'access_right': 'open',
+                'license': self.get_zenodo_licence(work_metadata),  # mandatory when access_right is open
             }
         }
         return zenodo_metadata
+
+    def get_zenodo_licence(self, metadata):
+        """
+        Find the Zenodo licence string corresponding to the Thoth licence URL.
+        """
+        thoth_licence_raw = metadata.get('license')
+        if thoth_licence_raw is None:
+            logging.error(
+                'Cannot upload to Zenodo: Work must have a Licence')
+            sys.exit(1)
+        # Thoth licence field is unchecked free text. Retrieve a normalised version
+        # of the Thoth licence, without http(s) or www prefixes, optional final '/',
+        # or the `deed`/`legalcode` suffixes sometimes given with CC licences.
+        # (IGNORECASE may be redundant here if Thoth licences are lowercased on entry into database)
+        try:
+            thoth_licence = re.fullmatch(
+                '^(?:https?://)?(?:www\.)?(.*?)/?(?:(?:deed|legalcode)(?:\.[a-zA-Z]{2})?)?$',
+                thoth_licence_raw, re.IGNORECASE).group(1)
+        except AttributeError:
+            logging.error(
+                'Work Licence {} not in expected URL format'.format(thoth_licence_raw))
+            sys.exit(1)
+        zenodo_licence = self.api.search_licences(thoth_licence)
+        if zenodo_licence is None:
+            logging.error(
+                'Work Licence {} not supported by Zenodo'.format(thoth_licence_raw))
+            sys.exit(1)
+        return zenodo_licence
 
     @staticmethod
     def get_zenodo_creators(metadata):
@@ -134,6 +168,39 @@ class ZenodoApi:
                 response.status_code)
             raise DisseminationError(error_message)
         return response
+
+    def search_licences(self, licence_url):
+        """
+        Search the Zenodo licences endpoint for ones matching the specified URL.
+        @param licence_url: normalised licence URL, without prefixes/suffixes.
+        """
+        url = '{}/licenses/?q="{}"'.format(self.API_ROOT, licence_url)
+        try:
+            response = self.issue_request('GET', url, 200)
+        except DisseminationError as error:
+            logging.error('Searching for licence failed: {}'.format(error))
+            sys.exit(1)
+        try:
+            hits = response.json()['hits']
+        # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
+        except (KeyError, requests.exceptions.JSONDecodeError):
+            logging.error('Searching for licence failed: Zenodo API returned unexpected response')
+            sys.exit(1)
+        if hits['total'] == 1:
+            return hits['hits'][0]['id']
+        else:
+            # If there are multiple matches, it might be because the specified
+            # URL also appears as a substring of other licence URLs (e.g.
+            # CC `by/3.0/` will also match `by/3.0/us/`). Zenodo lists CC URLs
+            # in their `https://[...]/legalcode` format, so see if any of the
+            # matches has the exact URL we're looking for (in this format).
+            licence_id = next((n['id'] for n in hits['hits']
+                if n['props']['url'] == 'https://{}/legalcode'.format(licence_url)),
+                None)
+            if licence_id:
+                return licence_id
+            else:
+                return None
 
     def create_deposition(self, metadata):
         """Create a deposition with the specified metadata."""
