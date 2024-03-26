@@ -153,21 +153,42 @@ class ZenodoApi:
         """Set up API connection."""
         self.api_token = api_token
 
-    def issue_request(self, method, url, expected_status, data_body=None, json_body=None):
+    def issue_request(self, method, url, expected_status, data_body=None,
+                      json_body=None, return_json=False):
         """
         Issue a request to the API, with optional request body, and handle the response.
         @param expected_status: HTTP status code expected for response.
         @param data_body: Optional request body, as bytes.
         @param json_body: Optional request body, as JSON.
+        @param return_json: True if caller expects JSON in the response and wants it returned.
         """
         headers = {'Authorization': 'Bearer ' + self.api_token}
         response = requests.request(
             method, url, headers=headers, data=data_body, json=json_body)
         if response.status_code != expected_status:
-            error_message = 'Zenodo API error (HTTP status {})'.format(
+            error_message = 'Zenodo API error {}'.format(
                 response.status_code)
+            try:
+                json = response.json()
+                try:
+                    # Per-error messages are the most useful, but only provide
+                    # the first one so as not to overload the user
+                    error_message += ' - {}'.format(json['errors'][0]['messages'][0])
+                except (KeyError, IndexError):
+                    # Fall back to main message if no per-error messages
+                    error_message += ' - {}'.format(json['message'])
+            except (requests.exceptions.JSONDecodeError, KeyError):
+                # If JSON response body is empty, calling .json() will trigger a JSONDecodeError -
+                # this just means no additional error details are available
+                pass
             raise DisseminationError(error_message)
-        return response
+
+        if return_json:
+            try:
+                return response.json()
+            # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
+            except requests.exceptions.JSONDecodeError:
+                raise DisseminationError('Zenodo API returned unexpected response')
 
     def search_licences(self, licence_url):
         """
@@ -176,44 +197,40 @@ class ZenodoApi:
         """
         url = '{}/licenses/?q="{}"'.format(self.API_ROOT, licence_url)
         try:
-            response = self.issue_request('GET', url, 200)
+            response = self.issue_request('GET', url, 200, return_json=True)
         except DisseminationError as error:
             logging.error('Searching for licence failed: {}'.format(error))
             sys.exit(1)
         try:
-            hits = response.json()['hits']
-        # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
-        except (KeyError, requests.exceptions.JSONDecodeError):
+            hits = response['hits']
+            if hits['total'] == 1:
+                licence_id = hits['hits'][0]['id']
+            else:
+                # If there are multiple matches, it might be because the specified
+                # URL also appears as a substring of other licence URLs (e.g.
+                # CC `by/3.0/` will also match `by/3.0/us/`). Zenodo lists CC URLs
+                # in their `https://[...]/legalcode` format, so see if any of the
+                # matches has the exact URL we're looking for (in this format).
+                licence_id = next((n['id'] for n in hits['hits']
+                    if n['props']['url'] == 'https://{}/legalcode'.format(licence_url)),
+                    None)
+            return licence_id
+        except KeyError:
             logging.error('Searching for licence failed: Zenodo API returned unexpected response')
             sys.exit(1)
-        if hits['total'] == 1:
-            return hits['hits'][0]['id']
-        else:
-            # If there are multiple matches, it might be because the specified
-            # URL also appears as a substring of other licence URLs (e.g.
-            # CC `by/3.0/` will also match `by/3.0/us/`). Zenodo lists CC URLs
-            # in their `https://[...]/legalcode` format, so see if any of the
-            # matches has the exact URL we're looking for (in this format).
-            licence_id = next((n['id'] for n in hits['hits']
-                if n['props']['url'] == 'https://{}/legalcode'.format(licence_url)),
-                None)
-            if licence_id:
-                return licence_id
-            else:
-                return None
 
     def create_deposition(self, metadata):
         """Create a deposition with the specified metadata."""
         url = '{}/deposit/depositions'.format(self.API_ROOT)
         try:
-            response = self.issue_request('POST', url, 201, json_body=metadata)
+            response = self.issue_request('POST', url, 201, json_body=metadata,
+                                          return_json=True)
         except DisseminationError as error:
             logging.error('Creating deposition failed: {}'.format(error))
             sys.exit(1)
         try:
-            return (response.json()['id'], response.json()['links']['bucket'])
-        # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
-        except (KeyError, requests.exceptions.JSONDecodeError):
+            return (response['id'], response['links']['bucket'])
+        except KeyError:
             logging.error('Creating deposition failed: Zenodo API returned unexpected response')
             sys.exit(1)
 
@@ -221,7 +238,7 @@ class ZenodoApi:
         """Upload the supplied file under the specified API bucket."""
         url = '{}/{}'.format(api_bucket, file_name)
         try:
-            return self.issue_request('PUT', url, 201, data_body=file_bytes)
+            self.issue_request('PUT', url, 201, data_body=file_bytes)
         except DisseminationError as error:
             raise DisseminationError('Uploading file failed: {}'.format(error))
 
@@ -230,14 +247,13 @@ class ZenodoApi:
         url = '{}/deposit/depositions/{}/actions/publish'.format(
             self.API_ROOT, deposition_id)
         try:
-            response = self.issue_request('POST', url, 202)
+            response = self.issue_request('POST', url, 202, return_json=True)
         except DisseminationError as error:
             raise DisseminationError(
                 'Publishing deposition failed: {}'.format(error))
         try:
-            return response.json()['links']['html']
-        # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
-        except (KeyError, requests.exceptions.JSONDecodeError):
+            return response['links']['html']
+        except KeyError:
             raise DisseminationError(
                 'Publishing deposition failed: Zenodo API returned unexpected response')
 
