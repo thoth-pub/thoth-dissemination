@@ -216,7 +216,8 @@ class FigshareIDFinder(IDFinder):
                 break
             offset += 1
             next_work = next_batch[0]
-            next_work_pub_date = datetime.strptime(next_work.publicationDate, "%Y-%m-%d").date()
+            next_work_pub_date = datetime.strptime(
+                next_work.publicationDate, "%Y-%m-%d").date()
             if next_work_pub_date > previous_month_end:
                 # This work will be handled in next month's run - don't cause duplication
                 continue

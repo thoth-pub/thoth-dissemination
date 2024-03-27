@@ -16,7 +16,7 @@ from pathlib import Path
 from iauploader import IAUploader
 from oapenuploader import OAPENUploader
 from souploader import SOUploader
-from swordv2uploader import SwordV2Uploader
+from culuploader import CULUploader
 from crossrefuploader import CrossrefUploader
 from fsuploader import FigshareUploader
 
@@ -24,7 +24,7 @@ UPLOADERS = {
     "InternetArchive": IAUploader,
     "OAPEN": OAPENUploader,
     "ScienceOpen": SOUploader,
-    "SWORD": SwordV2Uploader,
+    "CUL": CULUploader,
     "Crossref": CrossrefUploader,
     "Figshare": FigshareUploader,
 }
@@ -48,15 +48,22 @@ ARGS = [
         "action": "store",
         "default": "https://export.thoth.pub",
         "help": "Thoth's Export API endpoint URL",
+    }, {
+        "val": "--client-url",
+        "dest": "client_url",
+        "action": "store",
+        "default": None,
+        "help": "URL of GraphQL API endpoint to use with Thoth Client",
     }
 ]
 
 
-def run(work_id, platform, export_url):
+def run(work_id, platform, export_url, client_url):
     """Execute a dissemination uploader based on input parameters"""
     logging.info('Beginning upload of {} to {}'.format(work_id, platform))
     try:
-        uploader = UPLOADERS[platform](work_id, export_url, __version__)
+        uploader = UPLOADERS[platform](
+            work_id, export_url, client_url, __version__)
     except KeyError:
         logging.error('{} not supported: platform must be one of {}'.format(
             platform, UPLOADERS_STR))
@@ -91,4 +98,5 @@ if __name__ == '__main__':
     dotenv_path = Path('./config.env')
     load_dotenv(dotenv_path=dotenv_path)
     ARGUMENTS = get_arguments()
-    run(ARGUMENTS.work_id, ARGUMENTS.platform, ARGUMENTS.export_url)
+    run(ARGUMENTS.work_id, ARGUMENTS.platform,
+        ARGUMENTS.export_url, ARGUMENTS.client_url)
