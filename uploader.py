@@ -59,20 +59,23 @@ PUB_FORMATS = {
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
-    def __init__(self, work_id, export_url, version):
+    def __init__(self, work_id, export_url, client_url, version):
         """Save argument values and retrieve and store JSON-formatted work metadata"""
         self.work_id = work_id
         self.export_url = export_url
-        self.metadata = self.get_thoth_metadata()
+        self.metadata = self.get_thoth_metadata(client_url)
         self.version = version
 
     def run(self):
         """Execute upload logic specific to the selected platform"""
         self.upload_to_platform()
 
-    def get_thoth_metadata(self):
+    def get_thoth_metadata(self, client_url):
         """Retrieve JSON-formatted work metadata from Thoth GraphQL API via Thoth Client"""
-        thoth = ThothClient()
+        if client_url:
+            thoth = ThothClient(client_url)
+        else:
+            thoth = ThothClient()
         try:
             metadata_string = thoth.work_by_id(self.work_id, raw=True)
         except ThothError:
@@ -170,7 +173,7 @@ class Uploader():
             'data').get('work').get('publications')
         for publication in publications:
             # Required ISBN is under paperback publication
-            if publication.get('publicationType') == 'PDF':
+            if publication.get('publicationType') == 'PAPERBACK':
                 if pb_isbn is None:
                     pb_isbn = publication.get('isbn')
                 else:

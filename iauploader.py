@@ -102,7 +102,8 @@ class IAUploader(Uploader):
         # Repeatable fields such as 'creator', 'isbn', 'subject'
         # can be set by submitting a list of values
         creators = [n.get('fullName')
-                    for n in work_metadata.get('contributions') if n.get('mainContribution') == True]
+                    for n in work_metadata.get('contributions')
+                    if n.get('mainContribution') is True]
         # IA metadata schema suggests hyphens should be omitted,
         # although including them does not cause any errors
         isbns = [n.get('isbn').replace(
