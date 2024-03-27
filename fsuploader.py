@@ -18,9 +18,9 @@ from uploader import Uploader, PUB_FORMATS
 class FigshareUploader(Uploader):
     """Dissemination logic for Figshare"""
 
-    def __init__(self, work_id, export_url, version):
+    def __init__(self, work_id, export_url, client_url, version):
         """Instantiate class for accessing Figshare API."""
-        super().__init__(work_id, export_url, version)
+        super().__init__(work_id, export_url, client_url, version)
         try:
             api_token = self.get_credential_from_env(
                 'figshare_token', 'Figshare')
@@ -125,9 +125,8 @@ class FigshareUploader(Uploader):
     def parse_metadata(self):
         """Convert work metadata into Figshare format."""
         work_metadata = self.metadata.get('data').get('work')
-        try:
-            long_abstract = work_metadata.get('longAbstract')
-        except KeyError:
+        long_abstract = work_metadata.get('longAbstract')
+        if long_abstract is None:
             logging.error(
                 'Cannot upload to Figshare: Work must have a Long Abstract')
             sys.exit(1)
@@ -261,7 +260,7 @@ class FigshareUploader(Uploader):
         """
         # fullName is mandatory so we do not expect KeyErrors
         authors = [{'name': n['fullName']} for n in metadata.get('contributions')
-                   if n.get('mainContribution') == True]
+                   if n.get('mainContribution') is True]
         if len(authors) < 1:
             logging.error(
                 'Cannot upload to Figshare: Work must have at least one Main Contribution')
