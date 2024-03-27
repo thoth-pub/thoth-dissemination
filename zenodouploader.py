@@ -15,9 +15,9 @@ from uploader import Uploader
 class ZenodoUploader(Uploader):
     """Dissemination logic for Zenodo"""
 
-    def __init__(self, work_id, export_url, version):
+    def __init__(self, work_id, export_url, client_url, version):
         """Instantiate class for accessing Zenodo API."""
-        super().__init__(work_id, export_url, version)
+        super().__init__(work_id, export_url, client_url, version)
         try:
             api_token = self.get_credential_from_env(
                 'zenodo_token', 'Zenodo')
