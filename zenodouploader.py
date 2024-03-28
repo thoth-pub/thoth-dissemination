@@ -104,10 +104,20 @@ class ZenodoUploader(Uploader):
                                ('references') if n.get('unstructuredCitation') is not None],
                 'communities': [{'identifier': 'thoth'}],
                 'imprint_publisher': self.get_publisher_name(),
+                # Will be safely ignored if None
+                'imprint_isbn': next((n.get('isbn') for n in work_metadata.get('publications')
+                     if n.get('isbn') is not None and n['publicationType'] == 'PDF'), None),
                 # Requested in format `city, country` but seems not to be checked
                 'imprint_place': work_metadata.get('place'),
+                'notes': 'thoth-work-id:{}'.format(self.work_id)
             }
         }
+
+        # Only one language can be supplied, and must not be None
+        language = next((n['languageCode'] for n in work_metadata.get('languages')), None)
+        if language is not None:
+            zenodo_metadata['metadata'].update({'language': language.lower()})
+
         return zenodo_metadata
 
     def get_zenodo_licence(self, metadata):
@@ -144,35 +154,34 @@ class ZenodoUploader(Uploader):
         Create a list of main contributors in the format required by Zenodo.
         """
         zenodo_creators = []
-        for contribution in metadata.get('contributions'):
-            if contribution['mainContribution'] is True:
-                first_name = contribution.get('firstName')
-                # Zenodo requests author names in `Family name, Given name(s)` format
-                # But if we only have full name, supply that as a workaround
-                if first_name is not None:
-                    name = '{}, {}'.format(contribution['lastName'], first_name)
-                else:
-                    name = contribution['fullName']
-                # OK to submit in URL format - Zenodo will convert to ID-only format
-                # (will also validate ORCID and prevent publication if invalid)
-                # Will be safely ignored if None
-                orcid = contribution.get('contributor').get('orcid')
-                affiliations = contribution.get('affiliations')
-                # Will be safely ignored if None
-                first_institution = next((a.get('institution').get(
-                    'institutionName') for a in affiliations if affiliations), None)
-                zenodo_creators.append({
-                    'name': name,
-                    'orcid': orcid,
-                    'affiliation': first_institution})
+        for contribution in [n for n in metadata.get('contributions')
+                             if n['mainContribution'] is True]:
+            first_name = contribution.get('firstName')
+            # Zenodo requests author names in `Family name, Given name(s)` format
+            # But if we only have full name, supply that as a workaround
+            if first_name is not None:
+                name = '{}, {}'.format(contribution['lastName'], first_name)
+            else:
+                name = contribution['fullName']
+            # OK to submit in URL format - Zenodo will convert to ID-only format
+            # (will also validate ORCID and prevent publication if invalid)
+            # Will be safely ignored if None
+            orcid = contribution.get('contributor').get('orcid')
+            affiliations = contribution.get('affiliations')
+            # Will be safely ignored if None
+            first_institution = next((a.get('institution').get(
+                'institutionName') for a in affiliations if affiliations), None)
+            zenodo_creators.append({
+                'name': name,
+                'orcid': orcid,
+                'affiliation': first_institution})
         if len(zenodo_creators) < 1:
             logging.error(
                 'Cannot upload to Zenodo: Work must have at least one Main Contribution')
             sys.exit(1)
         return zenodo_creators
 
-    @staticmethod
-    def get_zenodo_relations(metadata):
+    def get_zenodo_relations(self, metadata):
         """
         Create a list of work relations in the format required by Zenodo.
         Relations must have a standard identifier (e.g. ISBN, DOI).
@@ -182,7 +191,7 @@ class ZenodoUploader(Uploader):
         zenodo_relations = []
 
         for isbn in [n.get('isbn') for n in metadata.get('publications')
-                     if n.get('isbn') is not None]:
+                     if n.get('isbn') is not None and n['publicationType'] != 'PDF']:
             zenodo_relations.append({
                 'relation': 'isVariantFormOf',
                 'identifier': isbn,
@@ -224,14 +233,36 @@ class ZenodoUploader(Uploader):
                 'resource_type': resource_type,
                 'scheme': 'doi'})
 
-        for issn in [n.get('series').get(key) for n in metadata.get('issues')
-                     for key in ['issnPrint', 'issnDigital']
-                     if n.get('series').get(key) is not None]:
+        for issn in [n.get('series').get('issnPrint') for n in metadata.get('issues')
+                     if n.get('series').get('issnPrint') is not None]:
             zenodo_relations.append({
                 'relation': 'isPartOf',
                 'identifier': issn,
                 # No appropriate resource type for book series
                 'scheme': 'issn'})
+
+        for issn in [n.get('series').get('issnDigital') for n in metadata.get('issues')
+                     if n.get('series').get('issnDigital') is not None]:
+            zenodo_relations.append({
+                'relation': 'isPartOf',
+                'identifier': issn,
+                # No appropriate resource type for book series
+                'scheme': 'eissn'})
+
+        # Only one "alternate identifier" per scheme is permitted
+        zenodo_relations.append({
+            'relation': 'isAlternateIdentifier',
+            'identifier': 'urn:uuid:{}'.format(self.work_id),
+            # Resource type is ignored for type `isAlternateIdentifier``
+            'scheme': 'urn'})
+
+        landing_page = metadata.get('landingPage')
+        if landing_page is not None:
+            zenodo_relations.append({
+                'relation': 'isAlternateIdentifier',
+                'identifier': landing_page,
+                # Resource type is ignored for type `isAlternateIdentifier``
+                'scheme': 'url'})
 
         return(zenodo_relations)
 
