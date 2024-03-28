@@ -72,6 +72,11 @@ class ZenodoUploader(Uploader):
             logging.error(
                 'Cannot upload to Zenodo: Work must have a Long Abstract')
             sys.exit(1)
+        doi = work_metadata.get('doi')
+        if doi is None:
+            logging.error(
+                'Cannot upload to Zenodo: Work must have a DOI')
+            sys.exit(1)
         zenodo_metadata = {
             'metadata': {
                 # Mandatory fields which will prevent publication if not set explicitly:
@@ -85,6 +90,22 @@ class ZenodoUploader(Uploader):
                 'date': work_metadata.get('publicationDate'),
                 'access_right': 'open',
                 'license': self.get_zenodo_licence(work_metadata),  # mandatory when access_right is open
+                # Optional fields:
+                # If own DOI is not supplied, Zenodo will register one
+                'doi': doi,
+                'prereserve_doi': False,
+                # Will be safely ignored if empty
+                'keywords': [n['subjectCode'] for n in work_metadata.get
+                             ('subjects') if n.get('subjectType') == 'KEYWORD'],
+                # Will be safely ignored if empty
+                'related_identifiers': self.get_zenodo_relations(work_metadata),
+                # Will be safely ignored if empty
+                'references': [n['unstructuredCitation'] for n in work_metadata.get
+                               ('references') if n.get('unstructuredCitation') is not None],
+                'communities': [{'identifier': 'thoth'}],
+                'imprint_publisher': self.get_publisher_name(),
+                # Requested in format `city, country` but seems not to be checked
+                'imprint_place': work_metadata.get('place'),
             }
         }
         return zenodo_metadata
@@ -122,23 +143,97 @@ class ZenodoUploader(Uploader):
         """
         Create a list of main contributors in the format required by Zenodo.
         """
-        authors = []
-        for author in metadata.get('contributions'):
-            if author['mainContribution'] is True:
-                first_name = author.get('firstName')
+        zenodo_creators = []
+        for contribution in metadata.get('contributions'):
+            if contribution['mainContribution'] is True:
+                first_name = contribution.get('firstName')
                 # Zenodo requests author names in `Family name, Given name(s)` format
                 # But if we only have full name, supply that as a workaround
                 if first_name is not None:
-                    name = '{}, {}'.format(author['lastName'], first_name)
+                    name = '{}, {}'.format(contribution['lastName'], first_name)
                 else:
-                    name = author['fullName']
-                authors.append({'name': name})
-        if len(authors) < 1:
+                    name = contribution['fullName']
+                # OK to submit in URL format - Zenodo will convert to ID-only format
+                # (will also validate ORCID and prevent publication if invalid)
+                # Will be safely ignored if None
+                orcid = contribution.get('contributor').get('orcid')
+                affiliations = contribution.get('affiliations')
+                # Will be safely ignored if None
+                first_institution = next((a.get('institution').get(
+                    'institutionName') for a in affiliations if affiliations), None)
+                zenodo_creators.append({
+                    'name': name,
+                    'orcid': orcid,
+                    'affiliation': first_institution})
+        if len(zenodo_creators) < 1:
             logging.error(
                 'Cannot upload to Zenodo: Work must have at least one Main Contribution')
             sys.exit(1)
-        return authors
+        return zenodo_creators
 
+    @staticmethod
+    def get_zenodo_relations(metadata):
+        """
+        Create a list of work relations in the format required by Zenodo.
+        Relations must have a standard identifier (e.g. ISBN, DOI).
+        Can be used to represent alternative format ISBNs, references,
+        Thoth work relations (e.g. child, parent), and series.
+        """
+        zenodo_relations = []
+
+        for isbn in [n.get('isbn') for n in metadata.get('publications')
+                     if n.get('isbn') is not None]:
+            zenodo_relations.append({
+                'relation': 'isVariantFormOf',
+                'identifier': isbn,
+                # Resource type is optional but can be guaranteed here
+                'resource_type': 'publication-book',
+                # Scheme will be auto-detected if not submitted
+                'scheme': 'isbn'})
+
+        for reference in [n['doi'] for n in metadata.get('references')
+                          if n.get('doi') is not None]:
+            zenodo_relations.append({
+                'relation': 'cites',
+                'identifier': reference,
+                'scheme': 'doi'})
+
+        for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
+                'relatedWork').get('doi')) for n in metadata.get('relations')
+                if n.get('relatedWork').get('doi') is not None]:
+            resource_type = 'publication-book'
+            if relation_type == 'HAS_PART' or relation_type == 'HAS_CHILD':
+                zenodo_type = 'hasPart'
+                # `section` in API displays as "Book chapter" in UI
+                resource_type = 'publication-section'
+            elif relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
+                zenodo_type = 'isPartOf'
+            elif relation_type == 'HAS_TRANSLATION':
+                zenodo_type = 'isSourceOf'
+            elif relation_type == 'IS_TRANSLATION_OF':
+                zenodo_type = 'isDerivedFrom'
+            elif relation_type == 'REPLACES':
+                zenodo_type = 'obsoletes'
+            elif relation_type == 'IS_REPLACED_BY':
+                zenodo_type = 'isObsoletedBy'
+            else:
+                raise NotImplementedError
+            zenodo_relations.append({
+                'relation': zenodo_type,
+                'identifier': relation_doi,
+                'resource_type': resource_type,
+                'scheme': 'doi'})
+
+        for issn in [n.get('series').get(key) for n in metadata.get('issues')
+                     for key in ['issnPrint', 'issnDigital']
+                     if n.get('series').get(key) is not None]:
+            zenodo_relations.append({
+                'relation': 'isPartOf',
+                'identifier': issn,
+                # No appropriate resource type for book series
+                'scheme': 'issn'})
+
+        return(zenodo_relations)
 
 class ZenodoApi:
     """
