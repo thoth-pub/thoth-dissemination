@@ -210,7 +210,12 @@ class Uploader():
             # Attempt a HEAD request to check validity before downloading full data
             # Other request methods follow redirects by default, but we need to
             # set this behaviour explicitly for `head()`
-            url_headers = requests.head(url, allow_redirects=True)
+            try:
+                url_headers = requests.head(url, allow_redirects=True)
+            except requests.exceptions.ConnectTimeout:
+                raise DisseminationError(
+                    'Connection to "{}" timed out: URL may not be valid'
+                    .format(url))
 
             if url_headers.status_code != 200:
                 raise DisseminationError('Error retrieving data from "{}": {}'.format(
