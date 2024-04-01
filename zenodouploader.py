@@ -29,6 +29,13 @@ class ZenodoUploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to Zenodo."""
 
+        # Test that no record associated with this Work already exists in Zenodo.
+        search_results = self.api.search_records(self.work_id)
+        if search_results['total'] > 0:
+            logging.error(
+                'Cannot upload to Zenodo: an item with this Work ID already exists')
+            sys.exit(1)
+
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Zenodo metadata fields.
         metadata_bytes = self.get_formatted_metadata('json::thoth')
@@ -315,6 +322,24 @@ class ZenodoApi:
             # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
             except requests.exceptions.JSONDecodeError:
                 raise DisseminationError('Zenodo API returned unexpected response')
+
+    def search_records(self, thoth_work_id):
+        """
+        Search Zenodo for published records containing the supplied Thoth ID.
+        Note that login is not required to perform this query.
+        """
+        query = 'q=notes:"thoth-work-id:{}"'.format(thoth_work_id)
+        url = '{}/records/?{}'.format(self.API_ROOT, query)
+        try:
+            response = self.issue_request('GET', url, 200, return_json=True)
+        except DisseminationError as error:
+            logging.error('Records search failed: {}'.format(error))
+            sys.exit(1)
+        try:
+            return response['hits']
+        except KeyError:
+            logging.error('Records search failed: Zenodo API returned unexpected response')
+            sys.exit(1)
 
     def search_licences(self, licence_url):
         """
