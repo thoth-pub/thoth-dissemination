@@ -36,27 +36,36 @@ class ZenodoUploader(Uploader):
                 'Cannot upload to Zenodo: an item with this Work ID already exists')
             sys.exit(1)
 
+        # Include all available publication files. Don't fail if
+        # one is missing, but do fail if none are found at all.
+        # (Any paywalled publications will not be retrieved.)
+        publications = {}
+        for format in PUB_FORMATS:
+            try:
+                publication_bytes = self.get_publication_bytes(format)
+                publications[format] = publication_bytes
+            except DisseminationError as error:
+                pass
+        if len(publications) < 1:
+            logging.error(
+                'Cannot upload to Zenodo: no suitable publication files found')
+            sys.exit(1)
+
         # Include full work metadata file in JSON format,
         # as a supplement to filling out Zenodo metadata fields.
         metadata_bytes = self.get_formatted_metadata('json::thoth')
-        # Can't continue if no PDF file is present.
-        # TODO do we want to also upload any other formats?
-        try:
-            pdf_bytes = self.get_publication_bytes('PDF')
-        except DisseminationError as error:
-            logging.error(error)
-            sys.exit(1)
 
         # Create a deposition to represent the Work.
         zenodo_metadata = self.parse_metadata()
         (deposition_id, api_bucket) = self.api.create_deposition(zenodo_metadata)
 
         try:
-            filename = self.work_id
-            self.api.upload_file(
-                pdf_bytes, '{}.pdf'.format(filename), api_bucket)
-            self.api.upload_file(
-                metadata_bytes, '{}.json'.format(filename), api_bucket)
+            filename = self.get_title()
+            for pub_format, pub_bytes in publications.items():
+                self.api.upload_file(pub_bytes, '{}_book{}'.format(filename,
+                    PUB_FORMATS[pub_format]['file_extension']), api_bucket)
+            self.api.upload_file(metadata_bytes,
+                '{}_metadata.json'.format(filename), api_bucket)
             published_url = self.api.publish_deposition(deposition_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Zenodo storage.

@@ -190,17 +190,17 @@ class Uploader():
 
     def get_publisher_name(self):
         """Extract publisher name from work metadata"""
-        publisher = self.metadata.get('data').get('work').get(
+        return self.metadata.get('data').get('work').get(
             'imprint').get('publisher').get('publisherName')
-
-        return publisher
 
     def get_publisher_id(self):
         """Extract publisher id from work metadata"""
-        publisher = self.metadata.get('data').get('work').get(
+        return self.metadata.get('data').get('work').get(
             'imprint').get('publisher').get('publisherId')
 
-        return publisher
+    def get_title(self):
+        """Extract work title from work metadata"""
+        return self.metadata.get('data').get('work').get('title')
 
     @staticmethod
     def get_data_from_url(url, expected_format=None):
