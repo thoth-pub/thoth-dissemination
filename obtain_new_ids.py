@@ -2,7 +2,7 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to Internet Archive and (Loughborough) Figshare: find newly-published works for upload.
+For dissemination to Internet Archive, (Loughborough) Figshare and Zenodo: find newly-published works for upload.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
 Based on `iabulkupload/obtain_work_ids.py`.
 """
@@ -173,11 +173,16 @@ class InternetArchiveIDFinder(IDFinder):
         self.thoth_ids = list(set(self.thoth_ids).difference(ia_ids))
 
 
-class FigshareIDFinder(IDFinder):
-    """Logic for retrieving work IDs which is specific to (Loughborough) Figshare dissemination"""
+class CatchupIDFinder(IDFinder):
+    """
+    Logic for retrieving work IDs which is specific to recurring 'catchup'
+    dissemination of recent publications to various archiving platforms.
+    Currently used for (Loughborough) Figshare and Zenodo.
+    Internet Archive is handled separately, as its API allows a simpler workflow.
+    """
 
     def get_query_parameters(self):
-        """Construct Thoth work ID query parameters depending on Figshare-specific requirements"""
+        """Construct Thoth work ID query parameters depending on platform-specific requirements"""
         # Target: all active (published) works listed in Thoth (from the selected publishers).
         self.work_statuses = '[ACTIVE]'
         # Start with the most recent, so that we can disregard everything else
@@ -230,8 +235,8 @@ class FigshareIDFinder(IDFinder):
                 break
 
     def post_process(self):
-        """Amend list of retrieved work IDs depending on Figshare-specific requirements"""
-        # Not required for Figshare dissemination - keep full list
+        """Amend list of retrieved work IDs depending on platform-specific requirements"""
+        # Not required - keep full list
         pass
 
 
@@ -255,11 +260,11 @@ if __name__ == '__main__':
             id_finder = InternetArchiveIDFinder()
         case 'Crossref':
             id_finder = CrossrefIDFinder()
-        case 'Figshare':
-            id_finder = FigshareIDFinder()
+        case 'Figshare' | 'Zenodo':
+            id_finder = CatchupIDFinder()
         case _:
             logging.error(
-                'Platform must be one of InternetArchive, Crossref, or Figshare')
+                'Platform must be one of InternetArchive, Crossref, Figshare, or Zenodo')
             sys.exit(1)
 
     id_finder.run()
