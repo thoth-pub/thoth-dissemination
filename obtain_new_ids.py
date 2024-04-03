@@ -96,7 +96,8 @@ class IDFinder():
         if environ.get('ENV_EXCEPTIONS') is not None:
             try:
                 exceptions = json.loads(environ.get('ENV_EXCEPTIONS'))
-                self.thoth_ids = list(set(self.thoth_ids).difference(exceptions))
+                self.thoth_ids = list(
+                    set(self.thoth_ids).difference(exceptions))
             except:
                 # No need to early-exit; current use case for exceptions list is
                 # just to avoid attempting uploads which are expected to fail
