@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
   - Support for uploading files and metadata to Zenodo
 
+## [[0.1.11]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.11) - 2024-04-03
+### Fixed
+  - Fixed bug in logic for finding targets for automatic dissemination
+### Changed
+  - Upgraded GitHub Actions dependency from Node 16 to 20 (`docker/metadata-action@v5`)
+
 ## [[0.1.10]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.10) - 2024-03-27
 ### Changed
   - Enhanced basic SWORD v2 (DSpace v7) functionality to fit CUL requirements
