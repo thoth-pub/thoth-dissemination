@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+  - Fixed bug in logic for finding targets for automatic dissemination
+
+### Changed
+  - Upgraded GitHub Actions dependency from Node 16 to 20 (`docker/metadata-action@v5`)
 
 ## [[0.1.10]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.10) - 2024-03-27
 ### Changed
