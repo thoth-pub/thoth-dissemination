@@ -5,7 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [[0.1.11]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.11) - 2024-04-03
+### Fixed
+  - Fixed bug in logic for finding targets for automatic dissemination
 ### Changed
+  - Upgraded GitHub Actions dependency from Node 16 to 20 (`docker/metadata-action@v5`)
+
+## [[0.1.10]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.10) - 2024-03-27
+### Changed
+  - Enhanced basic SWORD v2 (DSpace v7) functionality to fit CUL requirements
   - Upgraded GitHub Actions dependencies from Node 16 to 20 (`docker/setup-qemu-action@v3`, `docker/setup-buildx-action@v3`, `docker/login-action@v3`, `docker/build-push-action@v5`, `actions/checkout@v4`, `actions/setup-python@v5`, `oNaiPs/secrets-to-env-action@v1.5`)
 
 ## [[0.1.9]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.9) - 2023-12-05

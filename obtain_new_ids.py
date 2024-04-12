@@ -96,7 +96,8 @@ class IDFinder():
         if environ.get('ENV_EXCEPTIONS') is not None:
             try:
                 exceptions = json.loads(environ.get('ENV_EXCEPTIONS'))
-                self.thoth_ids = set(self.thoth_ids).difference(exceptions)
+                self.thoth_ids = list(
+                    set(self.thoth_ids).difference(exceptions))
             except:
                 # No need to early-exit; current use case for exceptions list is
                 # just to avoid attempting uploads which are expected to fail
@@ -216,7 +217,8 @@ class FigshareIDFinder(IDFinder):
                 break
             offset += 1
             next_work = next_batch[0]
-            next_work_pub_date = datetime.strptime(next_work.publicationDate, "%Y-%m-%d").date()
+            next_work_pub_date = datetime.strptime(
+                next_work.publicationDate, "%Y-%m-%d").date()
             if next_work_pub_date > previous_month_end:
                 # This work will be handled in next month's run - don't cause duplication
                 continue
