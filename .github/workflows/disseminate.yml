@@ -26,7 +26,7 @@ jobs:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
       - name: Run disseminator using Dockerhub image
-        uses: docker://openbookpublishers/thoth-dissemination:latest
+        uses: docker://openbookpublishers/thoth-dissemination:test
         with:
           entrypoint: /disseminator.py
           args: >-
