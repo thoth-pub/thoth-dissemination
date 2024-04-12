@@ -26,9 +26,13 @@ jobs:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
       - name: Run disseminator using Dockerhub image
-        uses: docker://openbookpublishers/thoth-dissemination:test
-        with:
-          entrypoint: /disseminator.py
-          args: >-
-            --work ${{ matrix.work-id }}
-            --platform ${{ inputs.platform }}
+        id: docker_run
+        run: |
+          docker run --rm \
+          openbookpublishers/thoth-dissemination:test \
+          ./disseminator.py \
+          --work ${{ matrix.work-id }} \
+          --platform ${{ inputs.platform }} \
+          | echo "output=$(cat)" >> $GITHUB_OUTPUT
+      - name: Test passing output
+        run: echo "${{ steps.docker_run.outputs.output }}"
