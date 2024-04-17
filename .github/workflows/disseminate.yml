@@ -57,7 +57,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.work-id }}
-          path: ${{ matrix.work-id }}
       - name: Test passing output between jobs using artifacts
         run: |
           cat ${{ matrix.work-id }}
