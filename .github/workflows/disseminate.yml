@@ -16,7 +16,7 @@ jobs:
   disseminate:
     runs-on: ubuntu-latest
     outputs:
-      OUTPUT: ${{ steps.docker_run.outputs.* }}
+      ${{ matrix.work-id }}: ${{ steps.docker_run.outputs.OUTPUT }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,11 +35,11 @@ jobs:
           ./disseminator.py \
           --work ${{ matrix.work-id }} \
           --platform ${{ inputs.platform }} \
-          | echo "${{ matrix.work-id }}=$(cat)" >> $GITHUB_OUTPUT
+          | echo "OUTPUT=$(cat)" >> $GITHUB_OUTPUT
       - name: Test passing output
         run: |
           OUTPUT_NAME=${{ matrix.work-id }}
-          echo "${{ steps.docker_run.outputs.$OUTPUT_NAME }}"
+          echo "${{ steps.docker_run.outputs.OUTPUT }}"
 
   test-passing-output:
     runs-on: ubuntu-latest
@@ -52,5 +52,5 @@ jobs:
       - name: Test passing output between jobs
         run: |
           OUTPUT_NAME=${{ matrix.work-id }}
-          echo "${{ needs.disseminate.outputs.OUTPUT.$OUTPUT_NAME }}"
+          echo "${{ needs.disseminate.outputs[$OUTPUT_NAME] }}"
     
