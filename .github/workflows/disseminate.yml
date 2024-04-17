@@ -16,7 +16,7 @@ jobs:
   disseminate:
     runs-on: ubuntu-latest
     outputs:
-      OUTPUT: ${{ toJSON(steps.docker_run.outputs) }}
+      ${{ inputs.platform }}: ${{ toJSON(steps.docker_run.outputs) }}
     strategy:
       fail-fast: false
       matrix:
