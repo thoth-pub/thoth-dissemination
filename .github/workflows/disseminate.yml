@@ -15,8 +15,6 @@ on:
 jobs:
   disseminate:
     runs-on: ubuntu-latest
-    outputs:
-      ${{ inputs.platform }}: ${{ toJSON(steps.docker_run.outputs) }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,17 +26,24 @@ jobs:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
       - name: Run disseminator using Dockerhub image
-        id: docker_run
         run: |
           docker run --rm \
           openbookpublishers/thoth-dissemination:test \
           ./disseminator.py \
           --work ${{ matrix.work-id }} \
           --platform ${{ inputs.platform }} \
-          | echo "${{ matrix.work-id }}=$(cat)" >> $GITHUB_OUTPUT
-      - name: Test passing output
+          | echo "${{ matrix.work-id }}=$(cat)" >> ${{ matrix.work-id }}
+      - name: Check that output file works before uploading
         run: |
-          echo "${{ steps.docker_run.outputs[matrix.work-id] }}"
+          cat ${{ matrix.work-id }}
+      - name: Upload output to artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.work-id }}
+          path: ${{ matrix.work-id }}
+          retention-days: 1
+          overwrite: false
 
   test-passing-output:
     runs-on: ubuntu-latest
@@ -48,7 +53,12 @@ jobs:
       matrix:
         work-id: ${{ fromJSON(inputs.work-ids) }}
     steps:
-      - name: Test passing output between jobs
+      - name: Download output from artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.work-id }}
+          path: ${{ matrix.work-id }}
+      - name: Test passing output between jobs using artifacts
         run: |
-          echo "${{ needs.disseminate.outputs.OUTPUT }}"
+          cat ${{ matrix.work-id }}
     
