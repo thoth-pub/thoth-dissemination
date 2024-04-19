@@ -138,6 +138,19 @@ class Uploader():
             logging.error(error)
             sys.exit(1)
 
+    def get_publication_id(self, publication_type):
+        """Extract publication ID for specified type from work metadata"""
+        publications = self.metadata.get(
+            'data').get('work').get('publications')
+        # There should be a maximum of one publication per type;
+        # more than one would be a Thoth database error
+        try:
+            return [n['publicationId'] for n in publications
+                    if n['publicationType'] == publication_type][0]
+        except (KeyError, IndexError):
+            raise DisseminationError(
+                'No {} publication ID found for Work'.format(publication_type))
+
     def get_publication_url(self, publication_type):
         """Extract canonical work publication URL from work metadata"""
         publications = self.metadata.get(

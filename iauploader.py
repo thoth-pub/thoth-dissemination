@@ -96,6 +96,13 @@ class IAUploader(Uploader):
         logging.info(
             'Successfully uploaded to Internet Archive at https://archive.org/details/{}'.format(filename))
 
+        # Return details of created upload to be entered as a Thoth Location
+        landing_page = 'https://archive.org/details/{}'.format(filename)
+        full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(filename, filename)
+        publication_id = self.get_publication_id('PDF')
+        location_platform = 'INTERNET_ARCHIVE'
+        print(' '.join((publication_id, location_platform, landing_page, full_text_url)))
+
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""
         work_metadata = self.metadata.get('data').get('work')
