@@ -76,6 +76,9 @@ class FigshareUploader(Uploader):
         # Create a project to represent the Work.
         project_id = self.api.create_project(project_metadata)
 
+        locations = []
+        location_platform = 'OTHER'
+
         # Any failure after this point will leave incomplete data in
         # Figshare storage which will need to be removed.
         try:
@@ -86,12 +89,22 @@ class FigshareUploader(Uploader):
                 article_id = self.api.create_article(dict(article_metadata,
                                                           title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
                 # Add the publication file and full JSON metadata file to it.
-                self.api.upload_file(pub_bytes, '{}{}'.format(
+                pub_file_id = self.api.upload_file(pub_bytes, '{}{}'.format(
                     filename, PUB_FORMATS[pub_format]['file_extension']), article_id)
                 self.api.upload_file(
                     metadata_bytes, '{}.json'.format(filename), article_id)
                 # Publish the article.
                 self.api.publish_article(article_id)
+                publication_id = self.get_publication_id(pub_format)
+                try:
+                    landing_page = 'https://hdl.handle.net/{}'.format(
+                        self.api.get_article_handle(article_id))
+                except:
+                    landing_page = None
+                if landing_page is None:
+                    landing_page = 'https://repository.lboro.ac.uk/articles/book/{}'.format(article_id)
+                full_text_url = 'https://repository.lboro.ac.uk/ndownloader/files/{}'.format(pub_file_id)
+                locations.append((publication_id, location_platform, landing_page, full_text_url))
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage.
             logging.error(error)
@@ -121,6 +134,9 @@ class FigshareUploader(Uploader):
         # the project details endpoint and extracting the "figshare_url" (if any).
         logging.info(
             'Successfully uploaded to Figshare: project ID {}'.format(project_id))
+
+        for location in locations:
+            print(location[0], location[1], location[2], location[3])
 
     def parse_metadata(self):
         """Convert work metadata into Figshare format."""
@@ -472,6 +488,16 @@ class FigshareApi:
             raise DisseminationError(
                 'Publishing article failed: {}'.format(error))
 
+    def get_article_handle(self, article_id):
+        """Retrieve the handle of the supplied Article."""
+        url = '{}/account/articles/{}'.format(
+            self.API_ROOT, article_id)
+        try:
+            return self.issue_request('GET', url, 200, expected_keys=['handle'])
+        except DisseminationError as error:
+            raise DisseminationError(
+                'Retrieving article details failed: {}'.format(error))
+
     def clean_up(self, project_id):
         """
         Remove any items created during the upload process if it fails partway through.
@@ -504,7 +530,7 @@ class FigshareApi:
             # Contact main Figshare API again to confirm we've finished uploading data.
             self.complete_upload(file_url)
             # Check that the data was processed successfully.
-            self.check_upload_status(file_url)
+            return self.check_upload_status(file_url)
         except DisseminationError as error:
             raise DisseminationError('Uploading file failed: {}'.format(error))
 
@@ -607,8 +633,8 @@ class FigshareApi:
         tries = 0
         while True:
             try:
-                status = self.issue_request(
-                    'GET', file_url, 200, expected_keys=['status'])
+                [status, file_id] = self.issue_request(
+                    'GET', file_url, 200, expected_keys=['status', 'id'])
             except DisseminationError:
                 raise
             match status:
@@ -625,3 +651,4 @@ class FigshareApi:
                 case 'created' | 'ic_failure' | _:
                     raise DisseminationError(
                         'Error checking uploaded file: status is {}'.format(status))
+            return file_id
