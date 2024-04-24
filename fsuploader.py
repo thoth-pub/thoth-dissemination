@@ -12,7 +12,7 @@ import re
 from io import BytesIO
 from time import sleep
 from errors import DisseminationError
-from uploader import Uploader, PUB_FORMATS
+from uploader import Uploader, PUB_FORMATS, Location
 
 
 class FigshareUploader(Uploader):
@@ -104,7 +104,8 @@ class FigshareUploader(Uploader):
                 if landing_page is None:
                     landing_page = 'https://repository.lboro.ac.uk/articles/book/{}'.format(article_id)
                 full_text_url = 'https://repository.lboro.ac.uk/ndownloader/files/{}'.format(pub_file_id)
-                locations.append((publication_id, location_platform, landing_page, full_text_url))
+                locations.append(
+                    Location(publication_id, location_platform, landing_page, full_text_url))
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage.
             logging.error(error)
@@ -135,8 +136,7 @@ class FigshareUploader(Uploader):
         logging.info(
             'Successfully uploaded to Figshare: project ID {}'.format(project_id))
 
-        for location in locations:
-            print(location[0], location[1], location[2], location[3])
+        return locations
 
     def parse_metadata(self):
         """Convert work metadata into Figshare format."""

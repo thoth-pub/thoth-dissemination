@@ -9,7 +9,7 @@ from internetarchive import get_item, upload, exceptions as ia_except
 from io import BytesIO
 from requests import exceptions as req_except
 from errors import DisseminationError
-from uploader import Uploader
+from uploader import Uploader, Location
 
 
 class IAUploader(Uploader):
@@ -101,7 +101,7 @@ class IAUploader(Uploader):
         full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(filename, filename)
         publication_id = self.get_publication_id('PDF')
         location_platform = 'INTERNET_ARCHIVE'
-        print(publication_id, location_platform, landing_page, full_text_url)
+        return [Location(publication_id, location_platform, landing_page, full_text_url)]
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""

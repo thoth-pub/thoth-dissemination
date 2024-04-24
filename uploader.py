@@ -56,6 +56,22 @@ PUB_FORMATS = {
 }
 
 
+class Location():
+    def __init__(self, publication_id, location_platform, landing_page, full_text_url):
+        self.publication_id = publication_id
+        self.location_platform = location_platform
+        self.landing_page = landing_page
+        self.full_text_url = full_text_url
+
+    def __str__(self):
+        return "{} {} {} {}".format(
+            self.publication_id,
+            self.location_platform,
+            self.landing_page,
+            self.full_text_url
+        )
+
+
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
@@ -68,7 +84,11 @@ class Uploader():
 
     def run(self):
         """Execute upload logic specific to the selected platform"""
-        self.upload_to_platform()
+        locations = self.upload_to_platform()
+        # Not all platforms will return upload location information
+        if locations is not None:
+            for location in locations:
+                print(location)
 
     def get_thoth_metadata(self, client_url):
         """Retrieve JSON-formatted work metadata from Thoth GraphQL API via Thoth Client"""

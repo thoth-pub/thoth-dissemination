@@ -5,6 +5,7 @@ Cambridge University Library DSpace
 """
 
 from dspaceuploader import DSpaceUploader, MetadataProfile
+from uploader import Location
 
 
 class CULUploader(DSpaceUploader):
@@ -41,4 +42,4 @@ class CULUploader(DSpaceUploader):
         else:
             full_text_url = None
         location_platform = 'OTHER'
-        print(publication_id, location_platform, landing_page, full_text_url)
+        return [Location(publication_id, location_platform, landing_page, full_text_url)]
