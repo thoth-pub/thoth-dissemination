@@ -114,15 +114,8 @@ class SwordV2Uploader(Uploader):
             'Successfully uploaded to SWORD v2 at {}'.format(
                 deposit_receipt.alternate))
 
-        bitstream_id = pdf_upload_receipt.location.partition(
-            '/bitstream/')[2].partition('/')[0]
-        if len(bitstream_id) > 0:
-            full_text_url = 'https://thoth-arch.lib.cam.ac.uk/bitstreams/{}/download'.format(bitstream_id)
-        else:
-            full_text_url = None
         publication_id = self.get_publication_id('PDF')
-        location_platform = 'OTHER'
-        print(publication_id, location_platform, landing_page, full_text_url)
+        return (publication_id, pdf_upload_receipt, deposit_receipt)
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
