@@ -87,7 +87,7 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
-            self.api.upload_pdf(create_receipt.edit_media, pdf_bytes)
+            pdf_upload_receipt = self.api.upload_pdf(create_receipt.edit_media, pdf_bytes)
             self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             deposit_receipt = self.api.complete_deposit(create_receipt.edit)
         except Exception as error:
@@ -113,6 +113,16 @@ class SwordV2Uploader(Uploader):
             # use `location` for back-end URL)
             'Successfully uploaded to SWORD v2 at {}'.format(
                 deposit_receipt.alternate))
+
+        bitstream_id = pdf_upload_receipt.location.partition(
+            '/bitstream/')[2].partition('/')[0]
+        if len(bitstream_id) > 0:
+            full_text_url = 'https://thoth-arch.lib.cam.ac.uk/bitstreams/{}/download'.format(bitstream_id)
+        else:
+            full_text_url = None
+        publication_id = self.get_publication_id('PDF')
+        location_platform = 'OTHER'
+        print(publication_id, location_platform, landing_page, full_text_url)
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
