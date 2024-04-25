@@ -60,7 +60,7 @@ class ZenodoUploader(Uploader):
         (deposition_id, api_bucket) = self.api.create_deposition(zenodo_metadata)
 
         try:
-            filename = self.get_title()
+            filename = self.work_id
             for pub_format, pub_bytes in publications.items():
                 self.api.upload_file(pub_bytes, '{}_book{}'.format(filename,
                     PUB_FORMATS[pub_format]['file_extension']), api_bucket)
