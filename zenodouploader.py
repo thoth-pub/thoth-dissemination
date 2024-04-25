@@ -168,8 +168,8 @@ class ZenodoUploader(Uploader):
         # licences are lowercased on entry into database)
         try:
             thoth_licence = re.fullmatch(
-                '^(?:https?://)?(?:www\.)?(.*?)/?(?:(?:deed|legalcode)'
-                '(?:\.[a-zA-Z]{2})?)?$',
+                r'^(?:https?://)?(?:www\.)?(.*?)/?(?:(?:deed|legalcode)'
+                r'(?:\.[a-zA-Z]{2})?)?$',
                 thoth_licence_raw, re.IGNORECASE).group(1)
         except AttributeError:
             logging.error(

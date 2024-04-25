@@ -228,7 +228,7 @@ class FigshareUploader(Uploader):
         # Thoth licence field is unchecked free text and Figshare licences format
         # is not strongly policed. When checking for matches, we therefore want to
         # disregard http(s) and www prefixes, and optional final '/'.
-        match_pattern = '^(?:https?://)?(?:www\.)?{}/?$'
+        match_pattern = r'^(?:https?://)?(?:www\.)?{}/?$'
         # Retrieve a normalised version of the Thoth licence, without prefixes.
         # We'll re-insert this into the match pattern for comparison with the non-normalised Figshare licences.
         # (IGNORECASE may be redundant here if Thoth licences are lowercased on entry into database)
