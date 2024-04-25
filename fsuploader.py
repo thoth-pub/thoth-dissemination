@@ -237,14 +237,16 @@ class FigshareUploader(Uploader):
                 '(.*)'), thoth_licence_raw, re.IGNORECASE).group(1)
         except AttributeError:
             logging.error(
-                'Work Licence {} not in expected URL format'.format(thoth_licence_raw))
+                'Work Licence {} not in expected URL format'
+                .format(thoth_licence_raw))
             sys.exit(1)
         # Figshare requires licence information to be submitted as the integer representing the licence object.
         licence_int = next((fs_licence.get('value') for fs_licence in licence_list
                             if re.fullmatch(match_pattern.format(thoth_licence), fs_licence.get('url'), re.IGNORECASE) is not None), None)
         if licence_int == None:
             logging.error(
-                'Work Licence {} not supported by Figshare'.format(thoth_licence_raw))
+                'Work Licence {} not supported by Figshare'
+                .format(thoth_licence_raw))
             sys.exit(1)
         return licence_int
 

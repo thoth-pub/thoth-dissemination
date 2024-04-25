@@ -29,11 +29,12 @@ class ZenodoUploader(Uploader):
     def upload_to_platform(self):
         """Upload work in required format to Zenodo."""
 
-        # Test that no record associated with this Work already exists in Zenodo.
+        # Test that no record representing this Work already exists in Zenodo.
         search_results = self.api.search_records(self.work_id)
         if search_results['total'] > 0:
             logging.error(
-                'Cannot upload to Zenodo: an item with this Work ID already exists')
+                'Cannot upload to Zenodo: an item with this Work ID already '
+                'exists')
             sys.exit(1)
 
         # Include all available publication files. Don't fail if
@@ -57,22 +58,26 @@ class ZenodoUploader(Uploader):
 
         # Create a deposition to represent the Work.
         zenodo_metadata = self.parse_metadata()
-        (deposition_id, api_bucket) = self.api.create_deposition(zenodo_metadata)
+        (deposition_id, api_bucket) = self.api.create_deposition(
+            zenodo_metadata)
 
         try:
             filename = self.work_id
             for pub_format, pub_bytes in publications.items():
                 self.api.upload_file(pub_bytes, '{}_book{}'.format(filename,
-                                     PUB_FORMATS[pub_format]['file_extension']), api_bucket)
+                                     PUB_FORMATS[pub_format]['file_extension']),
+                                     api_bucket)
             self.api.upload_file(metadata_bytes,
-                                 '{}_metadata.json'.format(filename), api_bucket)
+                                 '{}_metadata.json'.format(filename),
+                                 api_bucket)
             published_url = self.api.publish_deposition(deposition_id)
         except DisseminationError as error:
-            # Report failure, and remove any partially-created items from Zenodo storage.
+            # Report failure, and remove any partially-created items
+            # from Zenodo storage.
             logging.error(error)
             self.api.clean_up(deposition_id)
             sys.exit(1)
-        except:
+        except Exception:
             # Unexpected failure. Let program crash, but still need to tidy Zenodo storage.
             self.api.clean_up(deposition_id)
             raise
@@ -95,13 +100,16 @@ class ZenodoUploader(Uploader):
             sys.exit(1)
         zenodo_metadata = {
             'metadata': {
-                # Mandatory fields which will prevent publication if not set explicitly:
+                # Mandatory fields which will prevent publication
+                # if not set explicitly:
                 'title': work_metadata['fullTitle'],  # mandatory in Thoth
                 'upload_type': 'publication',
-                'publication_type': 'book',  # mandatory when upload_type is publication
+                # Mandatory when upload_type is publication
+                'publication_type': 'book',
                 'description': long_abstract,
                 'creators': self.get_zenodo_creators(work_metadata),
-                # Mandatory fields which will be defaulted if not set explicitly:
+                # Mandatory fields which will be defaulted
+                # if not set explicitly:
                 # Zenodo requires date in YYYY-MM-DD format, as output by Thoth
                 'date': work_metadata.get('publicationDate'),
                 'access_right': 'open',
@@ -112,19 +120,24 @@ class ZenodoUploader(Uploader):
                 'doi': doi,
                 'prereserve_doi': False,
                 # Will be safely ignored if empty
-                'keywords': [n['subjectCode'] for n in work_metadata.get
-                             ('subjects') if n.get('subjectType') == 'KEYWORD'],
+                'keywords': [n['subjectCode']
+                             for n in work_metadata.get('subjects')
+                             if n.get('subjectType') == 'KEYWORD'],
                 # Will be safely ignored if empty
-                'related_identifiers': self.get_zenodo_relations(work_metadata),
+                'related_identifiers': self.get_zenodo_relations(
+                    work_metadata),
                 # Will be safely ignored if empty
-                'references': [n['unstructuredCitation'] for n in work_metadata.get
-                               ('references') if n.get('unstructuredCitation') is not None],
+                'references': [n['unstructuredCitation']
+                               for n in work_metadata.get('references')
+                               if n.get('unstructuredCitation') is not None],
                 'communities': [{'identifier': 'thoth'}],
                 'imprint_publisher': self.get_publisher_name(),
                 # Will be safely ignored if None
-                'imprint_isbn': next((n.get('isbn') for n in work_metadata.get('publications')
-                                      if n.get('isbn') is not None and n['publicationType'] == 'PDF'), None),
-                # Requested in format `city, country` but seems not to be checked
+                'imprint_isbn': next(
+                    (n.get('isbn') for n in work_metadata.get('publications')
+                     if n.get('isbn') is not None
+                     and n['publicationType'] == 'PDF'), None),
+                # Requested in format `city, country` but seemingly not checked
                 'imprint_place': work_metadata.get('place'),
                 'notes': 'thoth-work-id:{}'.format(self.work_id)
             }
@@ -147,22 +160,26 @@ class ZenodoUploader(Uploader):
             logging.error(
                 'Cannot upload to Zenodo: Work must have a Licence')
             sys.exit(1)
-        # Thoth licence field is unchecked free text. Retrieve a normalised version
-        # of the Thoth licence, without http(s) or www prefixes, optional final '/',
-        # or the `deed`/`legalcode` suffixes sometimes given with CC licences.
-        # (IGNORECASE may be redundant here if Thoth licences are lowercased on entry into database)
+        # Thoth licence field is unchecked free text. Retrieve a normalised
+        # version of the Thoth licence, without http(s) or www prefixes,
+        # optional final '/', or the `deed`/`legalcode` suffixes sometimes
+        # given with CC licences. (IGNORECASE may be redundant here if Thoth
+        # licences are lowercased on entry into database)
         try:
             thoth_licence = re.fullmatch(
-                '^(?:https?://)?(?:www\.)?(.*?)/?(?:(?:deed|legalcode)(?:\.[a-zA-Z]{2})?)?$',
+                '^(?:https?://)?(?:www\.)?(.*?)/?(?:(?:deed|legalcode)'
+                '(?:\.[a-zA-Z]{2})?)?$',
                 thoth_licence_raw, re.IGNORECASE).group(1)
         except AttributeError:
             logging.error(
-                'Work Licence {} not in expected URL format'.format(thoth_licence_raw))
+                'Work Licence {} not in expected URL format'
+                .format(thoth_licence_raw))
             sys.exit(1)
         zenodo_licence = self.api.search_licences(thoth_licence)
         if zenodo_licence is None:
             logging.error(
-                'Work Licence {} not supported by Zenodo'.format(thoth_licence_raw))
+                'Work Licence {} not supported by Zenodo'
+                .format(thoth_licence_raw))
             sys.exit(1)
         return zenodo_licence
 
@@ -175,27 +192,30 @@ class ZenodoUploader(Uploader):
         for contribution in [n for n in metadata.get('contributions')
                              if n['mainContribution'] is True]:
             first_name = contribution.get('firstName')
-            # Zenodo requests author names in `Family name, Given name(s)` format
-            # But if we only have full name, supply that as a workaround
+            # Zenodo requests author names in `Family name, Given name(s)`
+            # format, but if we only have full name, supply that as a
+            # workaround
             if first_name is not None:
                 name = '{}, {}'.format(contribution['lastName'], first_name)
             else:
                 name = contribution['fullName']
-            # OK to submit in URL format - Zenodo will convert to ID-only format
-            # (will also validate ORCID and prevent publication if invalid)
-            # Will be safely ignored if None
+            # OK to submit in URL format - Zenodo will convert to ID-only
+            # format (will also validate ORCID and prevent publication if
+            # invalid). Will be safely ignored if None.
             orcid = contribution.get('contributor').get('orcid')
             affiliations = contribution.get('affiliations')
             # Will be safely ignored if None
             first_institution = next((a.get('institution').get(
-                'institutionName') for a in affiliations if affiliations), None)
+                'institutionName') for a in affiliations if affiliations),
+                None)
             zenodo_creators.append({
                 'name': name,
                 'orcid': orcid,
                 'affiliation': first_institution})
         if len(zenodo_creators) < 1:
             logging.error(
-                'Cannot upload to Zenodo: Work must have at least one Main Contribution')
+                'Cannot upload to Zenodo: Work must have at least one Main '
+                'Contribution')
             sys.exit(1)
         return zenodo_creators
 
@@ -209,7 +229,8 @@ class ZenodoUploader(Uploader):
         zenodo_relations = []
 
         for isbn in [n.get('isbn') for n in metadata.get('publications')
-                     if n.get('isbn') is not None and n['publicationType'] != 'PDF']:
+                     if n.get('isbn') is not None
+                     and n['publicationType'] != 'PDF']:
             zenodo_relations.append({
                 'relation': 'isVariantFormOf',
                 'identifier': isbn,
@@ -233,7 +254,8 @@ class ZenodoUploader(Uploader):
                 zenodo_type = 'hasPart'
                 # `section` in API displays as "Book chapter" in UI
                 resource_type = 'publication-section'
-            elif relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
+            elif (relation_type == 'IS_PART_OF' or
+                    relation_type == 'IS_CHILD_OF'):
                 zenodo_type = 'isPartOf'
             elif relation_type == 'HAS_TRANSLATION':
                 zenodo_type = 'isSourceOf'
@@ -251,7 +273,8 @@ class ZenodoUploader(Uploader):
                 'resource_type': resource_type,
                 'scheme': 'doi'})
 
-        for issn in [n.get('series').get('issnPrint') for n in metadata.get('issues')
+        for issn in [n.get('series').get('issnPrint')
+                     for n in metadata.get('issues')
                      if n.get('series').get('issnPrint') is not None]:
             zenodo_relations.append({
                 'relation': 'isPartOf',
@@ -259,7 +282,8 @@ class ZenodoUploader(Uploader):
                 # No appropriate resource type for book series
                 'scheme': 'issn'})
 
-        for issn in [n.get('series').get('issnDigital') for n in metadata.get('issues')
+        for issn in [n.get('series').get('issnDigital')
+                     for n in metadata.get('issues')
                      if n.get('series').get('issnDigital') is not None]:
             zenodo_relations.append({
                 'relation': 'isPartOf',
@@ -301,11 +325,13 @@ class ZenodoApi:
     def issue_request(self, method, url, expected_status, data_body=None,
                       json_body=None, return_json=False):
         """
-        Issue a request to the API, with optional request body, and handle the response.
+        Issue a request to the API, with optional request body, and handle
+        the response.
         @param expected_status: HTTP status code expected for response.
         @param data_body: Optional request body, as bytes.
         @param json_body: Optional request body, as JSON.
-        @param return_json: True if caller expects JSON in the response and wants it returned.
+        @param return_json: True if caller expects JSON in the response
+                            and wants it returned.
         """
         headers = {'Authorization': 'Bearer ' + self.api_token}
         response = requests.request(
@@ -324,15 +350,17 @@ class ZenodoApi:
                     # Fall back to main message if no per-error messages
                     error_message += ' - {}'.format(json['message'])
             except (requests.exceptions.JSONDecodeError, KeyError):
-                # If JSON response body is empty, calling .json() will trigger a JSONDecodeError -
-                # this just means no additional error details are available
+                # If JSON response body is empty, calling .json() will trigger
+                # a JSONDecodeError - this just means no additional error
+                # details are available
                 pass
             raise DisseminationError(error_message)
 
         if return_json:
             try:
                 return response.json()
-            # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
+            # If JSON response body is empty, calling .json() will trigger
+            # a JSONDecodeError
             except requests.exceptions.JSONDecodeError:
                 raise DisseminationError(
                     'Zenodo API returned unexpected response')
@@ -353,7 +381,8 @@ class ZenodoApi:
             return response['hits']
         except KeyError:
             logging.error(
-                'Records search failed: Zenodo API returned unexpected response')
+                'Records search failed: Zenodo API returned unexpected '
+                'response')
             sys.exit(1)
 
     def search_licences(self, licence_url):
@@ -372,18 +401,20 @@ class ZenodoApi:
             if hits['total'] == 1:
                 licence_id = hits['hits'][0]['id']
             else:
-                # If there are multiple matches, it might be because the specified
-                # URL also appears as a substring of other licence URLs (e.g.
-                # CC `by/3.0/` will also match `by/3.0/us/`). Zenodo lists CC URLs
-                # in their `https://[...]/legalcode` format, so see if any of the
-                # matches has the exact URL we're looking for (in this format).
+                # If there are multiple matches, it might be because the
+                # specified URL also appears as a substring of other licence
+                # URLs (e.g. CC `by/3.0/` will also match `by/3.0/us/`). Zenodo
+                # lists CC URLs in their `https://[...]/legalcode` format, so
+                # see if any of the matches has the exact URL we're looking for
+                # (in this format).
                 licence_id = next(
                     (n['id'] for n in hits['hits'] if n['props']['url'] ==
                      'https://{}/legalcode'.format(licence_url)), None)
             return licence_id
         except KeyError:
             logging.error(
-                'Searching for licence failed: Zenodo API returned unexpected response')
+                'Searching for licence failed: Zenodo API returned unexpected '
+                'response')
             sys.exit(1)
 
     def create_deposition(self, metadata):
@@ -399,7 +430,8 @@ class ZenodoApi:
             return (response['id'], response['links']['bucket'])
         except KeyError:
             logging.error(
-                'Creating deposition failed: Zenodo API returned unexpected response')
+                'Creating deposition failed: Zenodo API returned unexpected '
+                'response')
             sys.exit(1)
 
     def upload_file(self, file_bytes, file_name, api_bucket):
@@ -423,11 +455,13 @@ class ZenodoApi:
             return response['links']['html']
         except KeyError:
             raise DisseminationError(
-                'Publishing deposition failed: Zenodo API returned unexpected response')
+                'Publishing deposition failed: Zenodo API returned unexpected '
+                'response')
 
     def clean_up(self, deposition_id):
         """
-        Remove any items created during the upload process if it fails partway through.
+        Remove any items created during the upload process if it fails partway
+        through.
 
         Deleting a deposition should delete any files under it.
         This will fail with a 403 error if the deposition is already published.
@@ -439,4 +473,5 @@ class ZenodoApi:
         except DisseminationError as error:
             # Can't do anything about this. Calling function will exit.
             logging.error(
-                'Failed to delete incomplete deposition {}: {}'.format(deposition_id, error))
+                'Failed to delete incomplete deposition {}: {}'
+                .format(deposition_id, error))
