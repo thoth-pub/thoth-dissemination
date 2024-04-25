@@ -64,9 +64,9 @@ class ZenodoUploader(Uploader):
         try:
             filename = self.work_id
             for pub_format, pub_bytes in publications.items():
-                self.api.upload_file(pub_bytes, '{}_book{}'.format(filename,
-                                     PUB_FORMATS[pub_format]['file_extension']),
-                                     api_bucket)
+                self.api.upload_file(
+                    pub_bytes, '{}_book{}'.format(filename,
+                    PUB_FORMATS[pub_format]['file_extension']), api_bucket)
             self.api.upload_file(metadata_bytes,
                                  '{}_metadata.json'.format(filename),
                                  api_bucket)
@@ -78,7 +78,8 @@ class ZenodoUploader(Uploader):
             self.api.clean_up(deposition_id)
             sys.exit(1)
         except Exception:
-            # Unexpected failure. Let program crash, but still need to tidy Zenodo storage.
+            # Unexpected failure. Let program crash, but still need to tidy
+            # Zenodo storage.
             self.api.clean_up(deposition_id)
             raise
 
@@ -387,7 +388,7 @@ class ZenodoApi:
 
     def search_licences(self, licence_url):
         """
-        Search the Zenodo licences endpoint for ones matching the specified URL.
+        Search the Zenodo licences endpoint for ones matching the supplied URL.
         @param licence_url: normalised licence URL, without prefixes/suffixes.
         """
         url = '{}/licenses/?q="{}"'.format(self.API_ROOT, licence_url)
