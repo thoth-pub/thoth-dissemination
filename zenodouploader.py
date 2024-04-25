@@ -65,8 +65,11 @@ class ZenodoUploader(Uploader):
             filename = self.work_id
             for pub_format, pub_bytes in publications.items():
                 self.api.upload_file(
-                    pub_bytes, '{}_book{}'.format(filename,
-                    PUB_FORMATS[pub_format]['file_extension']), api_bucket)
+                    pub_bytes,
+                    '{}_book{}'.format(
+                        filename,
+                        PUB_FORMATS[pub_format]['file_extension']),
+                    api_bucket)
             self.api.upload_file(metadata_bytes,
                                  '{}_metadata.json'.format(filename),
                                  api_bucket)
