@@ -63,9 +63,9 @@ class ZenodoUploader(Uploader):
             filename = self.work_id
             for pub_format, pub_bytes in publications.items():
                 self.api.upload_file(pub_bytes, '{}_book{}'.format(filename,
-                    PUB_FORMATS[pub_format]['file_extension']), api_bucket)
+                                     PUB_FORMATS[pub_format]['file_extension']), api_bucket)
             self.api.upload_file(metadata_bytes,
-                '{}_metadata.json'.format(filename), api_bucket)
+                                 '{}_metadata.json'.format(filename), api_bucket)
             published_url = self.api.publish_deposition(deposition_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Zenodo storage.
@@ -105,7 +105,8 @@ class ZenodoUploader(Uploader):
                 # Zenodo requires date in YYYY-MM-DD format, as output by Thoth
                 'date': work_metadata.get('publicationDate'),
                 'access_right': 'open',
-                'license': self.get_zenodo_licence(work_metadata),  # mandatory when access_right is open
+                # Mandatory when access_right is open
+                'license': self.get_zenodo_licence(work_metadata),
                 # Optional fields:
                 # If own DOI is not supplied, Zenodo will register one
                 'doi': doi,
@@ -122,7 +123,7 @@ class ZenodoUploader(Uploader):
                 'imprint_publisher': self.get_publisher_name(),
                 # Will be safely ignored if None
                 'imprint_isbn': next((n.get('isbn') for n in work_metadata.get('publications')
-                     if n.get('isbn') is not None and n['publicationType'] == 'PDF'), None),
+                                      if n.get('isbn') is not None and n['publicationType'] == 'PDF'), None),
                 # Requested in format `city, country` but seems not to be checked
                 'imprint_place': work_metadata.get('place'),
                 'notes': 'thoth-work-id:{}'.format(self.work_id)
@@ -130,7 +131,8 @@ class ZenodoUploader(Uploader):
         }
 
         # Only one language can be supplied, and must not be None
-        language = next((n['languageCode'] for n in work_metadata.get('languages')), None)
+        language = next((n['languageCode']
+                        for n in work_metadata.get('languages')), None)
         if language is not None:
             zenodo_metadata['metadata'].update({'language': language.lower()})
 
@@ -280,7 +282,8 @@ class ZenodoUploader(Uploader):
                 # Resource type is ignored for type `isAlternateIdentifier``
                 'scheme': 'url'})
 
-        return(zenodo_relations)
+        return zenodo_relations
+
 
 class ZenodoApi:
     """
@@ -315,7 +318,8 @@ class ZenodoApi:
                 try:
                     # Per-error messages are the most useful, but only provide
                     # the first one so as not to overload the user
-                    error_message += ' - {}'.format(json['errors'][0]['messages'][0])
+                    error_message += ' - {}'.format(
+                        json['errors'][0]['messages'][0])
                 except (KeyError, IndexError):
                     # Fall back to main message if no per-error messages
                     error_message += ' - {}'.format(json['message'])
@@ -330,7 +334,8 @@ class ZenodoApi:
                 return response.json()
             # If JSON response body is empty, calling .json() will trigger a JSONDecodeError
             except requests.exceptions.JSONDecodeError:
-                raise DisseminationError('Zenodo API returned unexpected response')
+                raise DisseminationError(
+                    'Zenodo API returned unexpected response')
 
     def search_records(self, thoth_work_id):
         """
@@ -347,7 +352,8 @@ class ZenodoApi:
         try:
             return response['hits']
         except KeyError:
-            logging.error('Records search failed: Zenodo API returned unexpected response')
+            logging.error(
+                'Records search failed: Zenodo API returned unexpected response')
             sys.exit(1)
 
     def search_licences(self, licence_url):
@@ -371,12 +377,13 @@ class ZenodoApi:
                 # CC `by/3.0/` will also match `by/3.0/us/`). Zenodo lists CC URLs
                 # in their `https://[...]/legalcode` format, so see if any of the
                 # matches has the exact URL we're looking for (in this format).
-                licence_id = next((n['id'] for n in hits['hits']
-                    if n['props']['url'] == 'https://{}/legalcode'.format(licence_url)),
-                    None)
+                licence_id = next(
+                    (n['id'] for n in hits['hits'] if n['props']['url'] ==
+                     'https://{}/legalcode'.format(licence_url)), None)
             return licence_id
         except KeyError:
-            logging.error('Searching for licence failed: Zenodo API returned unexpected response')
+            logging.error(
+                'Searching for licence failed: Zenodo API returned unexpected response')
             sys.exit(1)
 
     def create_deposition(self, metadata):
@@ -391,7 +398,8 @@ class ZenodoApi:
         try:
             return (response['id'], response['links']['bucket'])
         except KeyError:
-            logging.error('Creating deposition failed: Zenodo API returned unexpected response')
+            logging.error(
+                'Creating deposition failed: Zenodo API returned unexpected response')
             sys.exit(1)
 
     def upload_file(self, file_bytes, file_name, api_bucket):
