@@ -115,6 +115,7 @@ class SwordV2Uploader(Uploader):
             'Successfully uploaded to SWORD v2 at {}'.format(
                 deposit_receipt.alternate))
 
+        # Return server responses as caller may want to extract location info
         return (pdf_publication.id, pdf_upload_receipt, deposit_receipt)
 
     def parse_metadata(self):

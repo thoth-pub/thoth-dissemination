@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-TODO
+Write one or more sets of publication location information to Thoth.
+Input: path to file containing location information, one location per line,
+containing publication ID, location platform, landing page and full text URL,
+separated by spaces.
+Requires: Thoth credentials as THOTH_EMAIL and THOTH_PWD env vars.
 """
+
+# Third-party package already included in thoth-dissemination/requirements.txt
 from thothlibrary import ThothClient, ThothError
 from os import environ
 import sys
@@ -34,3 +40,7 @@ if __name__ == '__main__':
         for location in locations:
             parts = location.rstrip().split(' ')
             write_thoth_location(parts[0], parts[1], parts[2], parts[3])
+            try:
+                write_thoth_location(parts[0], parts[1], parts[2], parts[3])
+            except IndexError:
+                raise ValueError('Not enough data in entry "{}"'.location)

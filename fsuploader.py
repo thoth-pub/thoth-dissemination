@@ -18,6 +18,9 @@ from uploader import Uploader, Location
 class FigshareUploader(Uploader):
     """Dissemination logic for Figshare"""
 
+    # Figshare dissemination is currently only to Loughborough instance
+    REPO_ROOT = 'https://repository.lboro.ac.uk'
+
     def __init__(self, work_id, export_url, client_url, version):
         """Instantiate class for accessing Figshare API."""
         super().__init__(work_id, export_url, client_url, version)
@@ -77,6 +80,11 @@ class FigshareUploader(Uploader):
         project_id = self.api.create_project(project_metadata)
 
         locations = []
+        # Uploads to any Figshare-backed institutional repository create
+        # mirrored records both in figshare.com and under the repository's
+        # home URL. Repository version is listed as canonical in HTML, so use
+        # that and treat it as an institution-specific location i.e. 'OTHER'.
+        # In future we may also add the figshare.com version under 'FIGSHARE'.
         location_platform = 'OTHER'
 
         # Any failure after this point will leave incomplete data in
@@ -86,8 +94,11 @@ class FigshareUploader(Uploader):
             for publication in publications:
                 # Create an article to represent the Publication.
                 # Append publication type to article title, to tell them apart.
-                article_id = self.api.create_article(dict(article_metadata,
-                                                          title='{} ({})'.format(article_metadata['title'], publication.type)), project_id)
+                article_id = self.api.create_article(
+                    dict(article_metadata,
+                         title='{} ({})'.format(article_metadata['title'],
+                         publication.type)),
+                    project_id)
                 # Add the publication file and full JSON metadata file to it.
                 pub_file_id = self.api.upload_file(publication.bytes, '{}{}'.format(
                     filename, publication.file_ext), article_id)
@@ -96,13 +107,18 @@ class FigshareUploader(Uploader):
                 # Publish the article.
                 self.api.publish_article(article_id)
                 try:
+                    # We expect Figshare to assign a handle to every article
                     landing_page = 'https://hdl.handle.net/{}'.format(
                         self.api.get_article_handle(article_id))
-                except:
+                except Exception:
+                    # If this API call fails, the upload should still proceed
                     landing_page = None
                 if landing_page is None:
-                    landing_page = 'https://repository.lboro.ac.uk/articles/book/{}'.format(article_id)
-                full_text_url = 'https://repository.lboro.ac.uk/ndownloader/files/{}'.format(pub_file_id)
+                    # API returns full repo URL as `figshare_url`, but this
+                    # pattern reliably redirects - use as backup
+                    landing_page = '{}/articles/book/{}'.format(REPO_ROOT, article_id)
+                # API only returns figshare.com URLs - construct repo URL
+                full_text_url = '{}/ndownloader/files/{}'.format(REPO_ROOT, pub_file_id)
                 locations.append(
                     Location(publication.id, location_platform, landing_page, full_text_url))
         except DisseminationError as error:
@@ -135,6 +151,7 @@ class FigshareUploader(Uploader):
         logging.info(
             'Successfully uploaded to Figshare: project ID {}'.format(project_id))
 
+        # Return details of created uploads to be entered as Thoth Locations
         return locations
 
     def parse_metadata(self):
@@ -362,8 +379,10 @@ class FigshareApi:
                 for key in expected_keys:
                     try:
                         key_value = response_json[key]
+                        if len(str(key_value)) < 1:
+                            raise ValueError
                         key_values.append(key_value)
-                    except KeyError:
+                    except (KeyError, ValueError):
                         raise DisseminationError(
                             'No data found in Figshare API for requested item {}'.format(key))
                 if len(key_values) == 1:
