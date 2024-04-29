@@ -12,7 +12,7 @@ import re
 from io import BytesIO
 from time import sleep
 from errors import DisseminationError
-from uploader import Uploader, PUB_FORMATS, Location
+from uploader import Uploader, Location
 
 
 class FigshareUploader(Uploader):
@@ -57,11 +57,11 @@ class FigshareUploader(Uploader):
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
         # (Any paywalled publications will not be retrieved.)
-        publications = {}
+        publications = []
         for format in PUB_FORMATS:
             try:
-                publication_bytes = self.get_publication_bytes(format)
-                publications[format] = publication_bytes
+                publication = self.get_publication_details(format)
+                publications.append(publication)
             except DisseminationError as error:
                 pass
         if len(publications) < 1:
@@ -83,19 +83,18 @@ class FigshareUploader(Uploader):
         # Figshare storage which will need to be removed.
         try:
             filename = self.work_id
-            for pub_format, pub_bytes in publications.items():
+            for publication in publications:
                 # Create an article to represent the Publication.
                 # Append publication type to article title, to tell them apart.
                 article_id = self.api.create_article(dict(article_metadata,
-                                                          title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
+                                                          title='{} ({})'.format(article_metadata['title'], publication.type)), project_id)
                 # Add the publication file and full JSON metadata file to it.
-                pub_file_id = self.api.upload_file(pub_bytes, '{}{}'.format(
-                    filename, PUB_FORMATS[pub_format]['file_extension']), article_id)
+                pub_file_id = self.api.upload_file(publication.bytes, '{}{}'.format(
+                    filename, publication.file_ext), article_id)
                 self.api.upload_file(
                     metadata_bytes, '{}.json'.format(filename), article_id)
                 # Publish the article.
                 self.api.publish_article(article_id)
-                publication_id = self.get_publication_id(pub_format)
                 try:
                     landing_page = 'https://hdl.handle.net/{}'.format(
                         self.api.get_article_handle(article_id))
@@ -105,7 +104,7 @@ class FigshareUploader(Uploader):
                     landing_page = 'https://repository.lboro.ac.uk/articles/book/{}'.format(article_id)
                 full_text_url = 'https://repository.lboro.ac.uk/ndownloader/files/{}'.format(pub_file_id)
                 locations.append(
-                    Location(publication_id, location_platform, landing_page, full_text_url))
+                    Location(publication.id, location_platform, landing_page, full_text_url))
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage.
             logging.error(error)

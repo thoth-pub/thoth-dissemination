@@ -70,7 +70,8 @@ class SwordV2Uploader(Uploader):
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         # Can't continue if no PDF file is present
         try:
-            pdf_bytes = self.get_publication_bytes('PDF')
+            pdf_publication = self.get_publication_details('PDF')
+            pdf_bytes = pdf_publication.bytes
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
@@ -114,8 +115,7 @@ class SwordV2Uploader(Uploader):
             'Successfully uploaded to SWORD v2 at {}'.format(
                 deposit_receipt.alternate))
 
-        publication_id = self.get_publication_id('PDF')
-        return (publication_id, pdf_upload_receipt, deposit_receipt)
+        return (pdf_publication.id, pdf_upload_receipt, deposit_receipt)
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""

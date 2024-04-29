@@ -72,6 +72,14 @@ class Location():
         )
 
 
+class Publication():
+    def __init__(self, publication_type, publication_id, publication_bytes, file_extension):
+        self.type = publication_type
+        self.id = publication_id
+        self.bytes = publication_bytes
+        self.file_ext = file_extension
+
+
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
@@ -114,16 +122,6 @@ class Uploader():
 
         return metadata_json
 
-    def get_publication_bytes(self, publication_type):
-        """Retrieve canonical work publication from URL specified in work metadata"""
-        try:
-            # Extract publication URL from Thoth metadata
-            publication_url = self.get_publication_url(publication_type)
-            # Download publication bytes from publication URL
-            return self.get_data_from_url(publication_url, PUB_FORMATS[publication_type]['content_type'])
-        except DisseminationError:
-            raise
-
     def get_formatted_metadata(self, format):
         """Retrieve work metadata from Thoth Export API in specified format"""
         metadata_url = self.export_url + '/specifications/' + \
@@ -158,36 +156,43 @@ class Uploader():
             logging.error(error)
             sys.exit(1)
 
-    def get_publication_id(self, publication_type):
-        """Extract publication ID for specified type from work metadata"""
+    def get_publication_details(self, publication_type):
+        """
+        Retrieve publication details for specified type from work metadata:
+        Thoth ID, canonical content file (via location URL) and extension
+        """
         publications = self.metadata.get(
             'data').get('work').get('publications')
         # There should be a maximum of one publication per type;
         # more than one would be a Thoth database error
         try:
-            return [n['publicationId'] for n in publications
-                    if n['publicationType'] == publication_type][0]
-        except (KeyError, IndexError):
+            publication = [n for n in publications
+                           if n['publicationType'] == publication_type][0]
+        except (IndexError, KeyError):
             raise DisseminationError(
-                'No {} publication ID found for Work'.format(publication_type))
-
-    def get_publication_url(self, publication_type):
-        """Extract canonical work publication URL from work metadata"""
-        publications = self.metadata.get(
-            'data').get('work').get('publications')
+                'No {} publication found for Work'.format(publication_type))
+        publication_id = publication.get('publicationId')
         try:
-            # There should be a maximum of one publication per type with a maximum of
-            # one canonical location; more than one would be a Thoth database error
-            publication_locations = [n.get('locations') for n in publications if n.get(
-                'publicationType') == publication_type][0]
-            publication_url = [n.get('fullTextUrl')
-                               for n in publication_locations if n.get('canonical')][0]
-            if not publication_url:
-                raise ValueError
-            return publication_url
-        except (IndexError, ValueError):
+            publication_url = [n['fullTextUrl']
+                               for n in publication['locations']
+                               if n['canonical']][0]
+        except (IndexError, KeyError):
             raise DisseminationError(
                 'No {} Full Text URL found for Work'.format(publication_type))
+        try:
+            publication_bytes = self.get_data_from_url(
+                publication_url, PUB_FORMATS[publication_type]['content_type'])
+        except DisseminationError:
+            raise
+
+        file_extension = PUB_FORMATS[publication_type]['file_extension']
+
+        return Publication(
+            publication_type,
+            publication_id,
+            publication_bytes,
+            file_extension
+        )
 
     def get_cover_url(self):
         """Extract cover URL from work metadata"""

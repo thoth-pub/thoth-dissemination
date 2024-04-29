@@ -44,7 +44,8 @@ class IAUploader(Uploader):
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         # Can't continue if no PDF file is present
         try:
-            pdf_bytes = self.get_publication_bytes('PDF')
+            publication = self.get_publication_details('PDF')
+            pdf_bytes = publication.bytes
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
@@ -99,9 +100,8 @@ class IAUploader(Uploader):
         # Return details of created upload to be entered as a Thoth Location
         landing_page = 'https://archive.org/details/{}'.format(filename)
         full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(filename, filename)
-        publication_id = self.get_publication_id('PDF')
         location_platform = 'INTERNET_ARCHIVE'
-        return [Location(publication_id, location_platform, landing_page, full_text_url)]
+        return [Location(publication.id, location_platform, landing_page, full_text_url)]
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""
