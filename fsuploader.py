@@ -12,7 +12,7 @@ import re
 from io import BytesIO
 from time import sleep
 from errors import DisseminationError
-from uploader import Uploader, Location
+from uploader import Uploader, PUB_FORMATS, Location
 
 
 class FigshareUploader(Uploader):

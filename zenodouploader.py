@@ -9,7 +9,7 @@ import re
 import requests
 from io import BytesIO
 from errors import DisseminationError
-from uploader import Uploader
+from uploader import Uploader, PUB_FORMATS
 
 
 class ZenodoUploader(Uploader):
