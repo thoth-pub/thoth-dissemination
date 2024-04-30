@@ -9,7 +9,7 @@ import re
 import requests
 from io import BytesIO
 from errors import DisseminationError
-from uploader import Uploader, PUB_FORMATS
+from uploader import Uploader
 
 
 class ZenodoUploader(Uploader):
@@ -40,11 +40,11 @@ class ZenodoUploader(Uploader):
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
         # (Any paywalled publications will not be retrieved.)
-        publications = {}
+        publications = []
         for format in PUB_FORMATS:
             try:
-                publication_bytes = self.get_publication_bytes(format)
-                publications[format] = publication_bytes
+                publication = self.get_publication_details(format)
+                publications.append(publication)
             except DisseminationError as error:
                 pass
         if len(publications) < 1:
@@ -63,12 +63,10 @@ class ZenodoUploader(Uploader):
 
         try:
             filename = self.work_id
-            for pub_format, pub_bytes in publications.items():
+            for publication in publications:
                 self.api.upload_file(
-                    pub_bytes,
-                    '{}_book{}'.format(
-                        filename,
-                        PUB_FORMATS[pub_format]['file_extension']),
+                    publication.bytes,
+                    '{}_book{}'.format(filename, publication.file_ext),
                     api_bucket)
             self.api.upload_file(metadata_bytes,
                                  '{}_metadata.json'.format(filename),
