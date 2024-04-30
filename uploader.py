@@ -228,17 +228,17 @@ class Uploader():
 
     def get_publisher_name(self):
         """Extract publisher name from work metadata"""
-        publisher = self.metadata.get('data').get('work').get(
+        return self.metadata.get('data').get('work').get(
             'imprint').get('publisher').get('publisherName')
-
-        return publisher
 
     def get_publisher_id(self):
         """Extract publisher id from work metadata"""
-        publisher = self.metadata.get('data').get('work').get(
+        return self.metadata.get('data').get('work').get(
             'imprint').get('publisher').get('publisherId')
 
-        return publisher
+    def get_title(self):
+        """Extract work title from work metadata"""
+        return self.metadata.get('data').get('work').get('title')
 
     @staticmethod
     def get_data_from_url(url, expected_format=None):
@@ -248,7 +248,12 @@ class Uploader():
             # Attempt a HEAD request to check validity before downloading full data
             # Other request methods follow redirects by default, but we need to
             # set this behaviour explicitly for `head()`
-            url_headers = requests.head(url, allow_redirects=True)
+            try:
+                url_headers = requests.head(url, allow_redirects=True)
+            except requests.exceptions.ConnectTimeout:
+                raise DisseminationError(
+                    'Connection to "{}" timed out: URL may not be valid'
+                    .format(url))
 
             if url_headers.status_code != 200:
                 raise DisseminationError('Error retrieving data from "{}": {}'.format(

@@ -19,6 +19,7 @@ from souploader import SOUploader
 from culuploader import CULUploader
 from crossrefuploader import CrossrefUploader
 from fsuploader import FigshareUploader
+from zenodouploader import ZenodoUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
@@ -27,6 +28,7 @@ UPLOADERS = {
     "CUL": CULUploader,
     "Crossref": CrossrefUploader,
     "Figshare": FigshareUploader,
+    "Zenodo": ZenodoUploader,
 }
 
 UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())
