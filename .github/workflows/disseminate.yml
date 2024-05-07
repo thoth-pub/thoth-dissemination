@@ -37,7 +37,6 @@ jobs:
         run: |
           cat ${{ matrix.work-id }}
       - name: Upload output to artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.work-id }}
