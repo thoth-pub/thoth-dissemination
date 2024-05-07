@@ -99,7 +99,8 @@ class IAUploader(Uploader):
 
         # Return details of created upload to be entered as a Thoth Location
         landing_page = 'https://archive.org/details/{}'.format(filename)
-        full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(filename, filename)
+        full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(
+            filename, filename)
         location_platform = 'INTERNET_ARCHIVE'
         return [Location(publication.id, location_platform, landing_page, full_text_url)]
 

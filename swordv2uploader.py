@@ -88,7 +88,8 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
-            pdf_upload_receipt = self.api.upload_pdf(create_receipt.edit_media, pdf_bytes)
+            pdf_upload_receipt = self.api.upload_pdf(
+                create_receipt.edit_media, pdf_bytes)
             self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             deposit_receipt = self.api.complete_deposit(create_receipt.edit)
         except Exception as error:

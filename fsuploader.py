@@ -97,7 +97,7 @@ class FigshareUploader(Uploader):
                 article_id = self.api.create_article(
                     dict(article_metadata,
                          title='{} ({})'.format(article_metadata['title'],
-                         publication.type)),
+                                                publication.type)),
                     project_id)
                 # Add the publication file and full JSON metadata file to it.
                 pub_file_id = self.api.upload_file(publication.bytes, '{}{}'.format(
@@ -116,9 +116,11 @@ class FigshareUploader(Uploader):
                 if landing_page is None:
                     # API returns full repo URL as `figshare_url`, but this
                     # pattern reliably redirects - use as backup
-                    landing_page = '{}/articles/book/{}'.format(REPO_ROOT, article_id)
+                    landing_page = '{}/articles/book/{}'.format(
+                        REPO_ROOT, article_id)
                 # API only returns figshare.com URLs - construct repo URL
-                full_text_url = '{}/ndownloader/files/{}'.format(REPO_ROOT, pub_file_id)
+                full_text_url = '{}/ndownloader/files/{}'.format(
+                    REPO_ROOT, pub_file_id)
                 locations.append(
                     Location(publication.id, location_platform, landing_page, full_text_url))
         except DisseminationError as error:

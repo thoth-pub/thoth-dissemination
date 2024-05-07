@@ -73,13 +73,13 @@ class ZenodoUploader(Uploader):
             filename = self.work_id
             for publication in publications:
                 full_filename = '{}_book{}'.format(filename,
-                    publication.file_ext)
+                                                   publication.file_ext)
                 self.api.upload_file(publication.bytes, full_filename,
-                    api_bucket)
+                                     api_bucket)
                 full_text_url = '{}/files/{}'.format(landing_page,
-                    full_filename)
+                                                     full_filename)
                 locations.append(Location(publication.id, location_platform,
-                    landing_page, full_text_url))
+                                          landing_page, full_text_url))
             self.api.upload_file(metadata_bytes,
                                  '{}_metadata.json'.format(filename),
                                  api_bucket)

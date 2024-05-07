@@ -34,14 +34,16 @@ class CULUploader(DSpaceUploader):
 
     def upload_to_platform(self):
         """Perform standard upload then CUL-specific processing"""
-        (publication_id, pdf_upload_receipt, deposit_receipt) = super().upload_to_platform()
+        (publication_id, pdf_upload_receipt,
+         deposit_receipt) = super().upload_to_platform()
         # Return details of created upload to be entered as a Thoth Location
         landing_page = deposit_receipt.alternate
         # Receipt only contains SWORDv2 server URL - translate to frontend URL
         bitstream_id = pdf_upload_receipt.location.partition(
             '/bitstream/')[2].partition('/')[0]
         if len(bitstream_id) > 0:
-            full_text_url = 'https://copim-f-dev.lib.cam.ac.uk/bitstreams/{}/download'.format(bitstream_id)
+            full_text_url = 'https://copim-f-dev.lib.cam.ac.uk/bitstreams/{}/download'.format(
+                bitstream_id)
         else:
             full_text_url = None
         location_platform = 'OTHER'
