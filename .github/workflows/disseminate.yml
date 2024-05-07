@@ -61,4 +61,3 @@ jobs:
       - name: Test passing output between jobs using artifacts
         run: |
           cat ${{ matrix.work-id }}
-    
