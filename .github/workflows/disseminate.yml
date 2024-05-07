@@ -32,7 +32,7 @@ jobs:
           ./disseminator.py \
           --work ${{ matrix.work-id }} \
           --platform ${{ inputs.platform }} \
-          >> ${{ matrix.work-id }}
+          > ${{ matrix.work-id }}
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
         with:
