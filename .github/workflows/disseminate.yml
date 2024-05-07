@@ -28,14 +28,11 @@ jobs:
       - name: Run disseminator using Dockerhub image
         run: |
           docker run --rm \
-          openbookpublishers/thoth-dissemination:test \
+          openbookpublishers/thoth-dissemination:latest \
           ./disseminator.py \
           --work ${{ matrix.work-id }} \
           --platform ${{ inputs.platform }} \
           >> ${{ matrix.work-id }}
-      - name: Check that output file works before uploading
-        run: |
-          cat ${{ matrix.work-id }}
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
         with:
