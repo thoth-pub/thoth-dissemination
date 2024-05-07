@@ -26,9 +26,36 @@ jobs:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
       - name: Run disseminator using Dockerhub image
-        uses: docker://openbookpublishers/thoth-dissemination:latest
+        run: |
+          docker run --rm \
+          openbookpublishers/thoth-dissemination:latest \
+          ./disseminator.py \
+          --work ${{ matrix.work-id }} \
+          --platform ${{ inputs.platform }} \
+          > ${{ matrix.work-id }}
+      - name: Upload output to artifact
+        uses: actions/upload-artifact@v4
+        if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo"]'), inputs.platform)
         with:
-          entrypoint: /disseminator.py
-          args: >-
-            --work ${{ matrix.work-id }}
-            --platform ${{ inputs.platform }}
+          name: ${{ matrix.work-id }}
+          path: ${{ matrix.work-id }}
+          retention-days: 1
+          if-no-files-found: ignore
+          overwrite: false
+
+  test-passing-output:
+    runs-on: ubuntu-latest
+    needs: disseminate
+    if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo"]'), inputs.platform)
+    strategy:
+      fail-fast: false
+      matrix:
+        work-id: ${{ fromJSON(inputs.work-ids) }}
+    steps:
+      - name: Download output from artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.work-id }}
+      - name: Test passing output between jobs using artifacts
+        run: |
+          cat ${{ matrix.work-id }}
