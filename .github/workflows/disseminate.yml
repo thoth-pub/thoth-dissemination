@@ -32,7 +32,7 @@ jobs:
           ./disseminator.py \
           --work ${{ matrix.work-id }} \
           --platform ${{ inputs.platform }} \
-          | echo "$(cat)" >> ${{ matrix.work-id }}
+          >> ${{ matrix.work-id }}
       - name: Check that output file works before uploading
         run: |
           cat ${{ matrix.work-id }}
