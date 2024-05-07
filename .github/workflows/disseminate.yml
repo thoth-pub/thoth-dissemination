@@ -43,6 +43,7 @@ jobs:
           name: ${{ matrix.work-id }}
           path: ${{ matrix.work-id }}
           retention-days: 1
+          if-no-files-found: ignore
           overwrite: false
 
   test-passing-output:
