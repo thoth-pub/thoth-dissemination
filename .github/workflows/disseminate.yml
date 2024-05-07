@@ -25,6 +25,7 @@ jobs:
         with:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
+
       - name: Run disseminator using Dockerhub image
         run: |
           docker run --rm \
@@ -33,6 +34,7 @@ jobs:
           --work ${{ matrix.work-id }} \
           --platform ${{ inputs.platform }} \
           > ${{ matrix.work-id }}
+
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
         if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo"]'), inputs.platform)
@@ -56,12 +58,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.work-id }}
+
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       - name: Write locations to Thoth using Python script
         run: |
           pip install -r requirements_write_locations.txt
