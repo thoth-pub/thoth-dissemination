@@ -9,7 +9,7 @@ import re
 import requests
 from io import BytesIO
 from errors import DisseminationError
-from uploader import Uploader, PUB_FORMATS
+from uploader import Uploader, PUB_FORMATS, Location
 
 
 class ZenodoUploader(Uploader):
@@ -61,13 +61,25 @@ class ZenodoUploader(Uploader):
         (deposition_id, api_bucket) = self.api.create_deposition(
             zenodo_metadata)
 
+        locations = []
+        location_platform = 'OTHER'
+        # Treat Zenodo deposition as a single "landing page" which may be
+        # shared by multiple "publications".
+        landing_page = 'https://zenodo.org/records/{}'.format(deposition_id)
+
+        # Any failure after this point will leave incomplete data in
+        # Zenodo storage which will need to be removed.
         try:
             filename = self.work_id
             for publication in publications:
-                self.api.upload_file(
-                    publication.bytes,
-                    '{}_book{}'.format(filename, publication.file_ext),
+                full_filename = '{}_book{}'.format(filename,
+                    publication.file_ext)
+                self.api.upload_file(publication.bytes, full_filename,
                     api_bucket)
+                full_text_url = '{}/files/{}'.format(landing_page,
+                    full_filename)
+                locations.append(Location(publication.id, location_platform,
+                    landing_page, full_text_url))
             self.api.upload_file(metadata_bytes,
                                  '{}_metadata.json'.format(filename),
                                  api_bucket)
@@ -86,6 +98,9 @@ class ZenodoUploader(Uploader):
 
         logging.info(
             'Successfully uploaded to Zenodo at {}'.format(published_url))
+
+        # Return details of created uploads to be entered as Thoth Locations
+        return locations
 
     def parse_metadata(self):
         """Convert work metadata into Zenodo format."""
