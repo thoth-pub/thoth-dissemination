@@ -102,7 +102,8 @@ class IAUploader(Uploader):
         full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(
             filename, filename)
         location_platform = 'INTERNET_ARCHIVE'
-        return [Location(publication.id, location_platform, landing_page, full_text_url)]
+        return [Location(publication.id, location_platform, landing_page,
+                         full_text_url)]
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""

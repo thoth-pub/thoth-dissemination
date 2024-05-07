@@ -57,7 +57,8 @@ PUB_FORMATS = {
 
 
 class Location():
-    def __init__(self, publication_id, location_platform, landing_page, full_text_url):
+    def __init__(self, publication_id, location_platform, landing_page,
+                 full_text_url):
         self.publication_id = publication_id
         self.location_platform = location_platform
         self.landing_page = landing_page
@@ -73,7 +74,8 @@ class Location():
 
 
 class Publication():
-    def __init__(self, publication_type, publication_id, publication_bytes, file_extension):
+    def __init__(self, publication_type, publication_id, publication_bytes,
+                 file_extension):
         self.type = publication_type
         self.id = publication_id
         self.bytes = publication_bytes

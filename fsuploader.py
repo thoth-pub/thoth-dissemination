@@ -100,8 +100,10 @@ class FigshareUploader(Uploader):
                                                 publication.type)),
                     project_id)
                 # Add the publication file and full JSON metadata file to it.
-                pub_file_id = self.api.upload_file(publication.bytes, '{}{}'.format(
-                    filename, publication.file_ext), article_id)
+                pub_file_id = self.api.upload_file(
+                    publication.bytes,
+                    '{}{}'.format(filename, publication.file_ext),
+                    article_id)
                 self.api.upload_file(
                     metadata_bytes, '{}.json'.format(filename), article_id)
                 # Publish the article.
@@ -121,8 +123,8 @@ class FigshareUploader(Uploader):
                 # API only returns figshare.com URLs - construct repo URL
                 full_text_url = '{}/ndownloader/files/{}'.format(
                     REPO_ROOT, pub_file_id)
-                locations.append(
-                    Location(publication.id, location_platform, landing_page, full_text_url))
+                locations.append(Location(publication.id, location_platform,
+                                          landing_page, full_text_url))
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage.
             logging.error(error)
@@ -515,7 +517,8 @@ class FigshareApi:
         url = '{}/account/articles/{}'.format(
             self.API_ROOT, article_id)
         try:
-            return self.issue_request('GET', url, 200, expected_keys=['handle'])
+            return self.issue_request('GET', url, 200,
+                                      expected_keys=['handle'])
         except DisseminationError as error:
             raise DisseminationError(
                 'Retrieving article details failed: {}'.format(error))
