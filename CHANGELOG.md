@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
   - Support for uploading files and metadata to Zenodo
+  - Automatic writing of location info to Thoth on successful dissemination
 
 ## [[0.1.11]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.11) - 2024-04-03
 ### Fixed
