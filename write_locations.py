@@ -25,7 +25,7 @@ def write_thoth_location(publication_id, location_platform, landing_page,
         raise KeyError('No Thoth password provided (THOTH_PWD environment '
                        'variable not set)')
     try:
-        self.thoth.login(username, password)
+        thoth.login(username, password)
     except ThothError:
         raise ValueError('Thoth login failed: credentials may be incorrect')
 
