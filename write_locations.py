@@ -44,7 +44,6 @@ if __name__ == '__main__':
     with open(locations_file, 'r') as locations:
         for location in locations:
             parts = location.rstrip().split(' ')
-            write_thoth_location(parts[0], parts[1], parts[2], parts[3])
             try:
                 write_thoth_location(parts[0], parts[1], parts[2], parts[3])
             except IndexError:
