@@ -51,6 +51,7 @@ class IAUploader(Uploader):
             sys.exit(1)
 
         # Convert Thoth work metadata into Internet Archive format
+        # (not expected to fail, as "required" metadata is minimal)
         ia_metadata = self.parse_metadata()
 
         try:

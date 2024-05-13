@@ -55,7 +55,13 @@ class FigshareUploader(Uploader):
                 'Cannot upload to Figshare: an item with this Work ID already exists')
             sys.exit(1)
 
+        # If any required metadata is missing, this step will fail, so do it
+        # before attempting large file downloads.
         (project_metadata, article_metadata) = self.parse_metadata()
+
+        # Include full work metadata file in JSON format,
+        # as a supplement to filling out Figshare metadata fields.
+        metadata_bytes = self.get_formatted_metadata('json::thoth')
 
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
@@ -71,10 +77,6 @@ class FigshareUploader(Uploader):
             logging.error(
                 'Cannot upload to Figshare: no suitable publication files found')
             sys.exit(1)
-
-        # Include full work metadata file in JSON format,
-        # as a supplement to filling out Figshare metadata fields.
-        metadata_bytes = self.get_formatted_metadata('json::thoth')
 
         # Create a project to represent the Work.
         project_id = self.api.create_project(project_metadata)
@@ -125,6 +127,8 @@ class FigshareUploader(Uploader):
                     REPO_ROOT, pub_file_id)
                 locations.append(Location(publication.id, location_platform,
                                           landing_page, full_text_url))
+            # Publish project.
+            self.api.publish_project(project_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage.
             logging.error(error)
@@ -135,23 +139,10 @@ class FigshareUploader(Uploader):
             self.api.clean_up(project_id)
             raise
 
-        # Publish project.
-        # Don't do this within the try block for Loughborough repository
-        # as it's configured to require review before publishing -
-        # articles will therefore be "pending" at this stage so
-        # publishing project itself would always fail and trigger cleanup.
-        # (TBD whether this will have any effect or if a manual publication step is required)
-        try:
-            self.api.publish_project(project_id)
-        except DisseminationError as error:
-            # Assume that publishing has failed due to review requirement.
-            # Don't clean up, but warn and continue. TBD how to handle long-term.
-            logging.warning(error)
-
         # The public project URL would be more useful than the project ID, but
-        # the API doesn't return it as part of the workflow (and it won't be created
-        # until the review stage is completed). We could obtain it by calling
-        # the project details endpoint and extracting the "figshare_url" (if any).
+        # the API doesn't return it as part of the workflow. We could obtain it
+        # by calling the project details endpoint and extracting the
+        # "figshare_url" (if any).
         logging.info(
             'Successfully uploaded to Figshare: project ID {}'.format(project_id))
 

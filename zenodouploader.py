@@ -37,6 +37,14 @@ class ZenodoUploader(Uploader):
                 'exists')
             sys.exit(1)
 
+        # If any required metadata is missing, this step will fail, so do it
+        # before attempting large file downloads.
+        zenodo_metadata = self.parse_metadata()
+
+        # Include full work metadata file in JSON format,
+        # as a supplement to filling out Zenodo metadata fields.
+        metadata_bytes = self.get_formatted_metadata('json::thoth')
+
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
         # (Any paywalled publications will not be retrieved.)
@@ -52,12 +60,7 @@ class ZenodoUploader(Uploader):
                 'Cannot upload to Zenodo: no suitable publication files found')
             sys.exit(1)
 
-        # Include full work metadata file in JSON format,
-        # as a supplement to filling out Zenodo metadata fields.
-        metadata_bytes = self.get_formatted_metadata('json::thoth')
-
         # Create a deposition to represent the Work.
-        zenodo_metadata = self.parse_metadata()
         (deposition_id, api_bucket) = self.api.create_deposition(
             zenodo_metadata)
 

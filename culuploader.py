@@ -14,11 +14,12 @@ class CULUploader(DSpaceUploader):
         user_name_string = 'cam_ds7_user'
         user_pass_string = 'cam_ds7_pw'
         service_document_iri = (
-            'https://copim-b-dev.lib.cam.ac.uk/server/swordv2/servicedocument'
+            'https://api-thoth-arch.lib.cam.ac.uk/server/swordv2/'
+            'servicedocument'
         )
         collection_iri = (
-            'https://copim-b-dev.lib.cam.ac.uk/server/swordv2/collection/1811/'
-            '7'
+            'https://api-thoth-arch.lib.cam.ac.uk/server/swordv2/collection/'
+            '1811/2'
         )
         metadata_profile = MetadataProfile.JISC_ROUTER
         super().__init__(
