@@ -94,8 +94,8 @@ class FigshareUploader(Uploader):
                     metadata_bytes, '{}.json'.format(filename), article_id)
                 # Publish the article.
                 self.api.publish_article(article_id)
-                # Publish project.
-                self.api.publish_project(project_id)
+            # Publish project.
+            self.api.publish_project(project_id)
         except DisseminationError as error:
             # Report failure, and remove any partially-created items from Figshare storage.
             logging.error(error)
