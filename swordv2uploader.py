@@ -76,6 +76,7 @@ class SwordV2Uploader(Uploader):
             sys.exit(1)
 
         # Convert Thoth work metadata into SWORD v2 format
+        # (not expected to fail, as "required" metadata is minimal)
         sword_metadata = self.parse_metadata()
 
         try:

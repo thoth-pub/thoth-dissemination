@@ -52,7 +52,13 @@ class FigshareUploader(Uploader):
                 'Cannot upload to Figshare: an item with this Work ID already exists')
             sys.exit(1)
 
+        # If any required metadata is missing, this step will fail, so do it
+        # before attempting large file downloads.
         (project_metadata, article_metadata) = self.parse_metadata()
+
+        # Include full work metadata file in JSON format,
+        # as a supplement to filling out Figshare metadata fields.
+        metadata_bytes = self.get_formatted_metadata('json::thoth')
 
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
@@ -68,10 +74,6 @@ class FigshareUploader(Uploader):
             logging.error(
                 'Cannot upload to Figshare: no suitable publication files found')
             sys.exit(1)
-
-        # Include full work metadata file in JSON format,
-        # as a supplement to filling out Figshare metadata fields.
-        metadata_bytes = self.get_formatted_metadata('json::thoth')
 
         # Create a project to represent the Work.
         project_id = self.api.create_project(project_metadata)
