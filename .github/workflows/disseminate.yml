@@ -31,9 +31,9 @@ jobs:
       - name: Run disseminator using Dockerhub image
         run: |
           /disseminator.py \
-          --work ${{ matrix.work-id }} \
-          --platform ${{ inputs.platform }} \
-          > ${{ matrix.work-id }}
+            --work ${{ matrix.work-id }} \
+            --platform ${{ inputs.platform }} \
+            > ${{ matrix.work-id }}
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
