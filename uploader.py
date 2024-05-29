@@ -39,7 +39,7 @@ PUB_FORMATS = {
     },
     # The following have not been tested as no examples exist in Thoth yet
     'DOCX': {
-        'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'content_type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'file_extension': '.docx',
     },
     'FICTION_BOOK': {
@@ -258,8 +258,8 @@ class Uploader():
                     .format(url))
 
             if url_headers.status_code != 200:
-                raise DisseminationError('Error retrieving data from "{}": {}'.format(
-                    url, url_headers.text))
+                raise DisseminationError('Error retrieving data from "{}": {} (code {})'.format(
+                    url, url_headers.text, url_headers.status_code))
             elif url_headers.headers.get('Content-Type') != expected_format:
                 raise DisseminationError('Data at "{}" is not in format "{}"'.format(
                     url, expected_format))
@@ -269,8 +269,8 @@ class Uploader():
             # Return downloaded data as bytes
             return url_content.content
         else:
-            raise DisseminationError('Error retrieving data from "{}": {}'.format(
-                url, url_content.text))
+            raise DisseminationError('Error retrieving data from "{}": {} (code {})'.format(
+                url, url_content.text, url_content.status_code))
 
     @staticmethod
     def get_credential_from_env(credential_name, platform_name):

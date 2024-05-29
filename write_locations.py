@@ -36,7 +36,8 @@ def write_thoth_location(publication_id, location_platform, landing_page,
         'locationPlatform': location_platform,
         'canonical': 'false'
     }
-    thoth.create_location(location)
+    location_id = thoth.create_location(location)
+    print(location_id)
 
 
 if __name__ == '__main__':

@@ -28,10 +28,14 @@ class CrossrefUploader(Uploader):
 
         # Check that Crossref credentials have been provided for this publisher
         publisher_id = self.get_publisher_id()
-        login_id = self.get_credential_from_env(
-            'crossref_user_' + publisher_id.replace('-', '_'), 'Crossref')
-        login_passwd = self.get_credential_from_env(
-            'crossref_pw_' + publisher_id.replace('-', '_'), 'Crossref')
+        try:
+            login_id = self.get_credential_from_env(
+                'crossref_user_' + publisher_id.replace('-', '_'), 'Crossref')
+            login_passwd = self.get_credential_from_env(
+                'crossref_pw_' + publisher_id.replace('-', '_'), 'Crossref')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
         metadata_bytes = self.get_formatted_metadata('doideposit::crossref')
 
