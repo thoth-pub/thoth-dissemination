@@ -20,6 +20,8 @@ class FigshareUploader(Uploader):
 
     # Figshare dissemination is currently only to Loughborough instance
     REPO_ROOT = 'https://repository.lboro.ac.uk'
+    # Loughborough handle: https://hdl.handle.net/2134
+    HANDLE_PREFIX = '2134'
 
     def __init__(self, work_id, export_url, client_url, version):
         """Instantiate class for accessing Figshare API."""
@@ -110,18 +112,10 @@ class FigshareUploader(Uploader):
                     metadata_bytes, '{}.json'.format(filename), article_id)
                 # Publish the article.
                 self.api.publish_article(article_id)
-                try:
-                    # We expect Figshare to assign a handle to every article
-                    landing_page = 'https://hdl.handle.net/{}'.format(
-                        self.api.get_article_handle(article_id))
-                except Exception:
-                    # If this API call fails, the upload should still proceed
-                    landing_page = None
-                if landing_page is None:
-                    # API returns full repo URL as `figshare_url`, but this
-                    # pattern reliably redirects - use as backup
-                    landing_page = '{}/articles/book/{}'.format(
-                        REPO_ROOT, article_id)
+                # We expect Figshare to assign a handle to every article,
+                # using a standard pattern of repo-specific prefix plus article ID
+                # (prefix doesn't appear to be obtainable from API)
+                landing_page = 'https://hdl.handle.net/{}/{}'.format(HANDLE_PREFIX, article_id)
                 # API only returns figshare.com URLs - construct repo URL
                 full_text_url = '{}/ndownloader/files/{}'.format(
                     REPO_ROOT, pub_file_id)
@@ -502,17 +496,6 @@ class FigshareApi:
         except DisseminationError as error:
             raise DisseminationError(
                 'Publishing article failed: {}'.format(error))
-
-    def get_article_handle(self, article_id):
-        """Retrieve the handle of the supplied Article."""
-        url = '{}/account/articles/{}'.format(
-            self.API_ROOT, article_id)
-        try:
-            return self.issue_request('GET', url, 200,
-                                      expected_keys=['handle'])
-        except DisseminationError as error:
-            raise DisseminationError(
-                'Retrieving article details failed: {}'.format(error))
 
     def clean_up(self, project_id):
         """
