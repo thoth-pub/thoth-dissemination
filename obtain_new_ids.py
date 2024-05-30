@@ -96,7 +96,7 @@ class IDFinder():
         """
         if environ.get('ENV_EXCEPTIONS') is not None:
             try:
-                exceptions = json.loads(environ.get('ENV_EXCEPTIONS'))
+                exceptions = json.loads(environ.get('ENV_EXCEPTIONS').lower())
                 self.thoth_ids = list(
                     set(self.thoth_ids).difference(exceptions))
             except:
