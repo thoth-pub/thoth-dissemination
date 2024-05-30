@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Retrieve and disseminate files and metadata to
-Cambridge University Library DSpace
+Cambridge University Library pilot collaboration DSpace
 """
 
 from dspaceuploader import DSpaceUploader, MetadataProfile
@@ -11,8 +11,8 @@ from uploader import Location
 class CULUploader(DSpaceUploader):
     def __init__(self, work_id, export_url, client_url, version):
         """Set CUL-specific parameters and pass them to DSpaceUploader"""
-        user_name_string = 'cam_ds7_user'
-        user_pass_string = 'cam_ds7_pw'
+        user_name_string = 'cul_pilot_user'
+        user_pass_string = 'cul_pilot_pw'
         service_document_iri = (
             'https://api-thoth-arch.lib.cam.ac.uk/server/swordv2/'
             'servicedocument'

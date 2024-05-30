@@ -2,7 +2,7 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to Internet Archive, (Loughborough) Figshare and Zenodo:
+For dissemination to Internet Archive, (Loughborough) Figshare, Zenodo and CUL:
 find newly-published works for upload.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
 Based on `iabulkupload/obtain_work_ids.py`.
@@ -96,14 +96,17 @@ class IDFinder():
         """
         if environ.get('ENV_EXCEPTIONS') is not None:
             try:
-                exceptions = json.loads(environ.get('ENV_EXCEPTIONS'))
+                exceptions = json.loads(environ.get('ENV_EXCEPTIONS').lower())
                 self.thoth_ids = list(
                     set(self.thoth_ids).difference(exceptions))
-            except:
-                # No need to early-exit; current use case for exceptions list is
-                # just to avoid attempting uploads which are expected to fail
-                logging.warning(
+            except Exception:
+                # Current use case for exceptions list is just to avoid attempting
+                # uploads which are expected to fail. However, an exception here
+                # would indicate that the list has been entered incorrectly.
+                # Early-exit to alert users that it needs to be fixed.
+                logging.error(
                     'Failed to retrieve excepted works from environment variable')
+                sys.exit(1)
 
 
 class CrossrefIDFinder(IDFinder):
@@ -268,12 +271,12 @@ if __name__ == '__main__':
             id_finder = InternetArchiveIDFinder()
         case 'Crossref':
             id_finder = CrossrefIDFinder()
-        case 'Figshare' | 'Zenodo':
+        case 'Figshare' | 'Zenodo' | 'CUL':
             id_finder = CatchupIDFinder()
         case _:
             logging.error(
                 'Platform must be one of InternetArchive, Crossref, Figshare, '
-                'or Zenodo')
+                'Zenodo, or CUL')
             sys.exit(1)
 
     id_finder.run()
