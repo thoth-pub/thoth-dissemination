@@ -99,11 +99,14 @@ class IDFinder():
                 exceptions = json.loads(environ.get('ENV_EXCEPTIONS').lower())
                 self.thoth_ids = list(
                     set(self.thoth_ids).difference(exceptions))
-            except:
-                # No need to early-exit; current use case for exceptions list is
-                # just to avoid attempting uploads which are expected to fail
-                logging.warning(
+            except Exception:
+                # Current use case for exceptions list is just to avoid attempting
+                # uploads which are expected to fail. However, an exception here
+                # would indicate that the list has been entered incorrectly.
+                # Early-exit to alert users that it needs to be fixed.
+                logging.error(
                     'Failed to retrieve excepted works from environment variable')
+                sys.exit(1)
 
 
 class CrossrefIDFinder(IDFinder):
