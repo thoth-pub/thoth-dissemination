@@ -2,7 +2,7 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to Internet Archive, (Loughborough) Figshare and Zenodo:
+For dissemination to Internet Archive, (Loughborough) Figshare, Zenodo and CUL:
 find newly-published works for upload.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
 Based on `iabulkupload/obtain_work_ids.py`.
@@ -268,12 +268,12 @@ if __name__ == '__main__':
             id_finder = InternetArchiveIDFinder()
         case 'Crossref':
             id_finder = CrossrefIDFinder()
-        case 'Figshare' | 'Zenodo':
+        case 'Figshare' | 'Zenodo' | 'CUL':
             id_finder = CatchupIDFinder()
         case _:
             logging.error(
                 'Platform must be one of InternetArchive, Crossref, Figshare, '
-                'or Zenodo')
+                'Zenodo, or CUL')
             sys.exit(1)
 
     id_finder.run()
