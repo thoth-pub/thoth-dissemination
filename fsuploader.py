@@ -650,4 +650,4 @@ class FigshareApi:
                 case 'created' | 'ic_failure' | _:
                     raise DisseminationError(
                         'Error checking uploaded file: status is {}'.format(status))
-            return file_id
+        return file_id
