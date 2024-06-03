@@ -115,10 +115,10 @@ class FigshareUploader(Uploader):
                 # We expect Figshare to assign a handle to every article,
                 # using a standard pattern of repo-specific prefix plus article ID
                 # (prefix doesn't appear to be obtainable from API)
-                landing_page = 'https://hdl.handle.net/{}/{}'.format(HANDLE_PREFIX, article_id)
+                landing_page = 'https://hdl.handle.net/{}/{}'.format(self.HANDLE_PREFIX, article_id)
                 # API only returns figshare.com URLs - construct repo URL
                 full_text_url = '{}/ndownloader/files/{}'.format(
-                    REPO_ROOT, pub_file_id)
+                    self.REPO_ROOT, pub_file_id)
                 locations.append(Location(publication.id, location_platform,
                                           landing_page, full_text_url))
             # Publish project.
