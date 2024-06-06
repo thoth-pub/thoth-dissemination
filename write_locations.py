@@ -16,14 +16,14 @@ import sys
 def write_thoth_location(publication_id, location_platform, landing_page,
                          full_text_url):
     thoth = ThothClient()
-    username = environ.get('THOTH_EMAIL')
-    password = environ.get('THOTH_PWD')
-    if username is None:
-        raise KeyError('No Thoth username provided (THOTH_EMAIL environment '
-                       'variable not set)')
-    if password is None:
-        raise KeyError('No Thoth password provided (THOTH_PWD environment '
-                       'variable not set)')
+    try:
+        username = environ['THOTH_EMAIL']
+    except KeyError as e:
+        raise KeyError('No Thoth username provided (THOTH_EMAIL environment variable not set)') from e
+    try:
+        password = environ['THOTH_PWD']
+    except KeyError as e:
+        raise KeyError('No Thoth password provided (THOTH_PWD environment variable not set)') from e
     try:
         thoth.login(username, password)
     except ThothError:

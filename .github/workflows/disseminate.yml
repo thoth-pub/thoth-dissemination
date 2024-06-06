@@ -67,10 +67,11 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Install dependencies
+        run: pip install -r requirements_write_locations.txt
+
       - name: Write locations to Thoth using Python script
-        run: |
-          pip install -r requirements_write_locations.txt
-          python write_locations.py ${{ matrix.work-id }}
+        run: python write_locations.py ${{ matrix.work-id }}
         env:
           THOTH_EMAIL: ${{ secrets.THOTH_EMAIL }}
           THOTH_PWD: ${{ secrets.THOTH_PWD }}
