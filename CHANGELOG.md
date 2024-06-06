@@ -5,8 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [[0.1.12]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.12) - 2024-06-06
 ### Added
-  - Support for uploading files and metadata to Zenodo
+  - Support for uploading files and metadata to Zenodo (including recurring automatic uploads)
+  - GitHub Actions for recurring automatic uploads of newly published works to CUL
   - Automatic writing of location info to Thoth on successful dissemination
 
 ## [[0.1.11]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.11) - 2024-04-03
