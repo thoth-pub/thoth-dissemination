@@ -20,25 +20,44 @@ class CrossrefUploader(Uploader):
         Only the Crossref DOI deposit file is required.
         """
 
-        # Check that Crossref credentials have been provided for this publisher
-        publisher_id = self.get_publisher_id()
-        login_id = self.get_credential_from_env(
-            'crossref_user_' + publisher_id.replace('-', '_'), 'Crossref')
-        login_passwd = self.get_credential_from_env(
-            'crossref_pw_' + publisher_id.replace('-', '_'), 'Crossref')
-
-        CROSSREF_ENDPOINT = 'https://doi.crossref.org/servlet/deposit'
-        # The Crossref API is minimal and will not necessarily return errors if
+        CR_PREFIX_ENDPOINT = 'https://api.crossref.org/prefixes'
+        CR_DEPOSIT_ENDPOINT = 'https://doi.crossref.org/servlet/deposit'
+        # The deposit API is minimal and will not necessarily return errors if
         # requests are malformed, so check the response text for confirmation
         SUCCESS_MSG = 'Your batch submission was successfully received.'
 
+        # Check that Crossref credentials have been provided for this publisher
+        publisher_id = self.get_publisher_id()
+        try:
+            login_id = self.get_credential_from_env(
+                'crossref_user_' + publisher_id.replace('-', '_'), 'Crossref')
+            login_passwd = self.get_credential_from_env(
+                'crossref_pw_' + publisher_id.replace('-', '_'), 'Crossref')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
+
         metadata_bytes = self.get_formatted_metadata('doideposit::crossref')
+
+        # Check that the provided DOI prefix is a valid Crossref prefix, as
+        # this is not checked by Crossref at point of submission
+        doi = self.metadata.get('data').get('work').get('doi')
+        # DOI must not be None or deposit file request above would have failed
+        # (Thoth database guarantees consistent DOI URL format)
+        doi_prefix = doi.replace('https://doi.org/', '').split('/')[0]
+        doi_rsp = requests.get('{}/{}'.format(CR_PREFIX_ENDPOINT, doi_prefix))
+        if doi_rsp.status_code != 200:
+            logging.error(
+                'Not a valid Crossref DOI prefix: {}'.format(doi_prefix)
+            )
+            sys.exit(1)
+
         # No specifications for filename given in Crossref guide, and it seems
         # not to impact success/failure of upload. Use work ID for simplicity.
         filename = '{}.xml'.format(self.work_id)
 
         crossref_rsp = requests.post(
-            url=CROSSREF_ENDPOINT,
+            url=CR_DEPOSIT_ENDPOINT,
             files={filename: metadata_bytes},
             params={
                 'operation': 'doMDUpload',

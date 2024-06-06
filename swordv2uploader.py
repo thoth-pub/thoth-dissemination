@@ -70,12 +70,14 @@ class SwordV2Uploader(Uploader):
         metadata_bytes = self.get_formatted_metadata('json::thoth')
         # Can't continue if no PDF file is present
         try:
-            pdf_bytes = self.get_publication_bytes('PDF')
+            pdf_publication = self.get_publication_details('PDF')
+            pdf_bytes = pdf_publication.bytes
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
 
         # Convert Thoth work metadata into SWORD v2 format
+        # (not expected to fail, as "required" metadata is minimal)
         sword_metadata = self.parse_metadata()
 
         try:
@@ -87,7 +89,8 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
-            self.api.upload_pdf(create_receipt.edit_media, pdf_bytes)
+            pdf_upload_receipt = self.api.upload_pdf(
+                create_receipt.edit_media, pdf_bytes)
             self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             deposit_receipt = self.api.complete_deposit(create_receipt.edit)
         except Exception as error:
@@ -113,6 +116,9 @@ class SwordV2Uploader(Uploader):
             # use `location` for back-end URL)
             'Successfully uploaded to SWORD v2 at {}'.format(
                 deposit_receipt.alternate))
+
+        # Return server responses as caller may want to extract location info
+        return (pdf_publication.id, pdf_upload_receipt, deposit_receipt)
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
@@ -427,6 +433,9 @@ class SwordV2Api:
             service_document_iri=service_document_iri,
             user_name=user_name,
             user_pass=user_pass,
+            # We don't make use of history/cache, so turn off to minimise bloat
+            keep_history=False,
+            cache_deposit_receipts=False,
             # SWORD2 library doesn't handle timeout-related errors gracefully
             # and large files (e.g. 50MB) can't be fully uploaded within the
             # 30-second default timeout. Allow lots of leeway. (This otherwise

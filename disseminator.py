@@ -6,7 +6,7 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '0.1.11'
+__version__ = '0.1.12'
 
 import argparse
 import logging
@@ -19,6 +19,7 @@ from souploader import SOUploader
 from culuploader import CULUploader
 from crossrefuploader import CrossrefUploader
 from fsuploader import FigshareUploader
+from zenodouploader import ZenodoUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
@@ -27,6 +28,7 @@ UPLOADERS = {
     "CUL": CULUploader,
     "Crossref": CrossrefUploader,
     "Figshare": FigshareUploader,
+    "Zenodo": ZenodoUploader,
 }
 
 UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())

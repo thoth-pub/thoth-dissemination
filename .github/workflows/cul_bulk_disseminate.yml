@@ -1,0 +1,26 @@
+# Purpose: upload newly-published works from Thoth to Cambridge University Library
+# pilot collaboration repository (https://thoth-arch.lib.cam.ac.uk/home).
+# Uploads all active Thoth works with a publication date within the previous calendar month.
+# Work must have a valid URL supplied as the PDF Publication Canonical Location.
+# Credentials must be present as repository secrets named CUL_PILOT_USER and CUL_PILOT_PW.
+name: cul-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 04:40 on day-of-month 7'
+    # There might be a delay between a book being published and the publisher
+    # correctly setting its publication date and Active status in Thoth.
+    # Therefore, this action is run a few days after the start of the month,
+    # to minimise situations where e.g. a book which was published on the 31st, but
+    # whose record was not updated until the 1st, is missed out of both months' runs.
+    - cron: '40 4 7 * *'
+  workflow_dispatch:
+
+jobs:
+  cul-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'CUL'
+      env_publishers: ${{ vars.CUL_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.CUL_ENV_EXCEPTIONS }}
+    secrets: inherit

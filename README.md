@@ -19,15 +19,20 @@ pip3 install -r ./requirements.txt
 ./disseminator.py --work ${work} --platform ${platform}
 ```
 
-### Run with Docker
+### Run with Docker (locally)
 ```sh
 docker build . -t ${imagename} # Dockerfile handles Python package requirements
 docker run --rm ${imagename} ./disseminator.py --work ${work_id} --platform ${platform}
 ```
 
+### Run with Docker (from Dockerhub)
+```sh
+docker run --rm --env-file config.env openbookpublishers/thoth-dissemination:latest ./disseminator.py --work ${work_id} --platform ${platform}
+```
+
 ### Options
 `--work` = Thoth ID of work to be disseminated
 
-`--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`, `CUL`, `Crossref`, `Figshare`)
+`--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`, `CUL`, `Crossref`, `Figshare`, `Zenodo`)
 
 See also `--help`.

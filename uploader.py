@@ -39,7 +39,7 @@ PUB_FORMATS = {
     },
     # The following have not been tested as no examples exist in Thoth yet
     'DOCX': {
-        'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'content_type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'file_extension': '.docx',
     },
     'FICTION_BOOK': {
@@ -56,6 +56,32 @@ PUB_FORMATS = {
 }
 
 
+class Location():
+    def __init__(self, publication_id, location_platform, landing_page,
+                 full_text_url):
+        self.publication_id = publication_id
+        self.location_platform = location_platform
+        self.landing_page = landing_page
+        self.full_text_url = full_text_url
+
+    def __str__(self):
+        return "{} {} {} {}".format(
+            self.publication_id,
+            self.location_platform,
+            self.landing_page,
+            self.full_text_url
+        )
+
+
+class Publication():
+    def __init__(self, publication_type, publication_id, publication_bytes,
+                 file_extension):
+        self.type = publication_type
+        self.id = publication_id
+        self.bytes = publication_bytes
+        self.file_ext = file_extension
+
+
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
 
@@ -68,7 +94,11 @@ class Uploader():
 
     def run(self):
         """Execute upload logic specific to the selected platform"""
-        self.upload_to_platform()
+        locations = self.upload_to_platform()
+        # Not all platforms will return upload location information
+        if locations is not None:
+            for location in locations:
+                print(location)
 
     def get_thoth_metadata(self, client_url):
         """Retrieve JSON-formatted work metadata from Thoth GraphQL API via Thoth Client"""
@@ -93,16 +123,6 @@ class Uploader():
             sys.exit(1)
 
         return metadata_json
-
-    def get_publication_bytes(self, publication_type):
-        """Retrieve canonical work publication from URL specified in work metadata"""
-        try:
-            # Extract publication URL from Thoth metadata
-            publication_url = self.get_publication_url(publication_type)
-            # Download publication bytes from publication URL
-            return self.get_data_from_url(publication_url, PUB_FORMATS[publication_type]['content_type'])
-        except DisseminationError:
-            raise
 
     def get_formatted_metadata(self, format):
         """Retrieve work metadata from Thoth Export API in specified format"""
@@ -138,23 +158,43 @@ class Uploader():
             logging.error(error)
             sys.exit(1)
 
-    def get_publication_url(self, publication_type):
-        """Extract canonical work publication URL from work metadata"""
+    def get_publication_details(self, publication_type):
+        """
+        Retrieve publication details for specified type from work metadata:
+        Thoth ID, canonical content file (via location URL) and extension
+        """
         publications = self.metadata.get(
             'data').get('work').get('publications')
+        # There should be a maximum of one publication per type;
+        # more than one would be a Thoth database error
         try:
-            # There should be a maximum of one publication per type with a maximum of
-            # one canonical location; more than one would be a Thoth database error
-            publication_locations = [n.get('locations') for n in publications if n.get(
-                'publicationType') == publication_type][0]
-            publication_url = [n.get('fullTextUrl')
-                               for n in publication_locations if n.get('canonical')][0]
-            if not publication_url:
-                raise ValueError
-            return publication_url
-        except (IndexError, ValueError):
+            publication = [n for n in publications
+                           if n['publicationType'] == publication_type][0]
+        except (IndexError, KeyError):
+            raise DisseminationError(
+                'No {} publication found for Work'.format(publication_type))
+        publication_id = publication.get('publicationId')
+        try:
+            publication_url = [n['fullTextUrl']
+                               for n in publication['locations']
+                               if n['canonical']][0]
+        except (IndexError, KeyError):
             raise DisseminationError(
                 'No {} Full Text URL found for Work'.format(publication_type))
+        try:
+            publication_bytes = self.get_data_from_url(
+                publication_url, PUB_FORMATS[publication_type]['content_type'])
+        except DisseminationError:
+            raise
+
+        file_extension = PUB_FORMATS[publication_type]['file_extension']
+
+        return Publication(
+            publication_type,
+            publication_id,
+            publication_bytes,
+            file_extension
+        )
 
     def get_cover_url(self):
         """Extract cover URL from work metadata"""
@@ -190,17 +230,17 @@ class Uploader():
 
     def get_publisher_name(self):
         """Extract publisher name from work metadata"""
-        publisher = self.metadata.get('data').get('work').get(
+        return self.metadata.get('data').get('work').get(
             'imprint').get('publisher').get('publisherName')
-
-        return publisher
 
     def get_publisher_id(self):
         """Extract publisher id from work metadata"""
-        publisher = self.metadata.get('data').get('work').get(
+        return self.metadata.get('data').get('work').get(
             'imprint').get('publisher').get('publisherId')
 
-        return publisher
+    def get_title(self):
+        """Extract work title from work metadata"""
+        return self.metadata.get('data').get('work').get('title')
 
     @staticmethod
     def get_data_from_url(url, expected_format=None):
@@ -210,11 +250,16 @@ class Uploader():
             # Attempt a HEAD request to check validity before downloading full data
             # Other request methods follow redirects by default, but we need to
             # set this behaviour explicitly for `head()`
-            url_headers = requests.head(url, allow_redirects=True)
+            try:
+                url_headers = requests.head(url, allow_redirects=True)
+            except requests.exceptions.ConnectTimeout:
+                raise DisseminationError(
+                    'Connection to "{}" timed out: URL may not be valid'
+                    .format(url))
 
             if url_headers.status_code != 200:
-                raise DisseminationError('Error retrieving data from "{}": {}'.format(
-                    url, url_headers.text))
+                raise DisseminationError('Error retrieving data from "{}": {} (code {})'.format(
+                    url, url_headers.text, url_headers.status_code))
             elif url_headers.headers.get('Content-Type') != expected_format:
                 raise DisseminationError('Data at "{}" is not in format "{}"'.format(
                     url, expected_format))
@@ -224,8 +269,8 @@ class Uploader():
             # Return downloaded data as bytes
             return url_content.content
         else:
-            raise DisseminationError('Error retrieving data from "{}": {}'.format(
-                url, url_content.text))
+            raise DisseminationError('Error retrieving data from "{}": {} (code {})'.format(
+                url, url_content.text, url_content.status_code))
 
     @staticmethod
     def get_credential_from_env(credential_name, platform_name):
