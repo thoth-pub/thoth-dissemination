@@ -12,11 +12,16 @@ import re
 from io import BytesIO
 from time import sleep
 from errors import DisseminationError
-from uploader import Uploader, PUB_FORMATS
+from uploader import Uploader, PUB_FORMATS, Location
 
 
 class FigshareUploader(Uploader):
     """Dissemination logic for Figshare"""
+
+    # Figshare dissemination is currently only to Loughborough instance
+    REPO_ROOT = 'https://repository.lboro.ac.uk'
+    # Loughborough handle: https://hdl.handle.net/2134
+    HANDLE_PREFIX = '2134'
 
     def __init__(self, work_id, export_url, client_url, version):
         """Instantiate class for accessing Figshare API."""
@@ -63,11 +68,11 @@ class FigshareUploader(Uploader):
         # Include all available publication files. Don't fail if
         # one is missing, but do fail if none are found at all.
         # (Any paywalled publications will not be retrieved.)
-        publications = {}
+        publications = []
         for format in PUB_FORMATS:
             try:
-                publication_bytes = self.get_publication_bytes(format)
-                publications[format] = publication_bytes
+                publication = self.get_publication_details(format)
+                publications.append(publication)
             except DisseminationError as error:
                 pass
         if len(publications) < 1:
@@ -78,22 +83,44 @@ class FigshareUploader(Uploader):
         # Create a project to represent the Work.
         project_id = self.api.create_project(project_metadata)
 
+        locations = []
+        # Uploads to any Figshare-backed institutional repository create
+        # mirrored records both in figshare.com and under the repository's
+        # home URL. Repository version is listed as canonical in HTML, so use
+        # that and treat it as an institution-specific location i.e. 'OTHER'.
+        # In future we may also add the figshare.com version under 'FIGSHARE'.
+        location_platform = 'OTHER'
+
         # Any failure after this point will leave incomplete data in
         # Figshare storage which will need to be removed.
         try:
             filename = self.work_id
-            for pub_format, pub_bytes in publications.items():
+            for publication in publications:
                 # Create an article to represent the Publication.
                 # Append publication type to article title, to tell them apart.
-                article_id = self.api.create_article(dict(article_metadata,
-                                                          title='{} ({})'.format(article_metadata['title'], pub_format)), project_id)
+                article_id = self.api.create_article(
+                    dict(article_metadata,
+                         title='{} ({})'.format(article_metadata['title'],
+                                                publication.type)),
+                    project_id)
                 # Add the publication file and full JSON metadata file to it.
-                self.api.upload_file(pub_bytes, '{}{}'.format(
-                    filename, PUB_FORMATS[pub_format]['file_extension']), article_id)
+                pub_file_id = self.api.upload_file(
+                    publication.bytes,
+                    '{}{}'.format(filename, publication.file_ext),
+                    article_id)
                 self.api.upload_file(
                     metadata_bytes, '{}.json'.format(filename), article_id)
                 # Publish the article.
                 self.api.publish_article(article_id)
+                # We expect Figshare to assign a handle to every article,
+                # using a standard pattern of repo-specific prefix plus article ID
+                # (prefix doesn't appear to be obtainable from API)
+                landing_page = 'https://hdl.handle.net/{}/{}'.format(self.HANDLE_PREFIX, article_id)
+                # API only returns figshare.com URLs - construct repo URL
+                full_text_url = '{}/ndownloader/files/{}'.format(
+                    self.REPO_ROOT, pub_file_id)
+                locations.append(Location(publication.id, location_platform,
+                                          landing_page, full_text_url))
             # Publish project.
             self.api.publish_project(project_id)
         except DisseminationError as error:
@@ -112,6 +139,9 @@ class FigshareUploader(Uploader):
         # "figshare_url" (if any).
         logging.info(
             'Successfully uploaded to Figshare: project ID {}'.format(project_id))
+
+        # Return details of created uploads to be entered as Thoth Locations
+        return locations
 
     def parse_metadata(self):
         """Convert work metadata into Figshare format."""
@@ -340,8 +370,10 @@ class FigshareApi:
                 for key in expected_keys:
                     try:
                         key_value = response_json[key]
+                        if len(str(key_value)) < 1:
+                            raise ValueError
                         key_values.append(key_value)
-                    except KeyError:
+                    except (KeyError, ValueError):
                         raise DisseminationError(
                             'No data found in Figshare API for requested item {}'.format(key))
                 if len(key_values) == 1:
@@ -497,7 +529,7 @@ class FigshareApi:
             # Contact main Figshare API again to confirm we've finished uploading data.
             self.complete_upload(file_url)
             # Check that the data was processed successfully.
-            self.check_upload_status(file_url)
+            return self.check_upload_status(file_url)
         except DisseminationError as error:
             raise DisseminationError('Uploading file failed: {}'.format(error))
 
@@ -600,8 +632,8 @@ class FigshareApi:
         tries = 0
         while True:
             try:
-                status = self.issue_request(
-                    'GET', file_url, 200, expected_keys=['status'])
+                [status, file_id] = self.issue_request(
+                    'GET', file_url, 200, expected_keys=['status', 'id'])
             except DisseminationError:
                 raise
             match status:
@@ -618,3 +650,4 @@ class FigshareApi:
                 case 'created' | 'ic_failure' | _:
                     raise DisseminationError(
                         'Error checking uploaded file: status is {}'.format(status))
+        return file_id

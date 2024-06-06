@@ -5,6 +5,7 @@ Cambridge University Library pilot collaboration DSpace
 """
 
 from dspaceuploader import DSpaceUploader, MetadataProfile
+from uploader import Location
 
 
 class CULUploader(DSpaceUploader):
@@ -31,3 +32,21 @@ class CULUploader(DSpaceUploader):
             service_document_iri,
             collection_iri,
             metadata_profile)
+
+    def upload_to_platform(self):
+        """Perform standard upload then CUL-specific processing"""
+        (publication_id, pdf_upload_receipt,
+         deposit_receipt) = super().upload_to_platform()
+        # Return details of created upload to be entered as a Thoth Location
+        landing_page = deposit_receipt.alternate
+        # Receipt only contains SWORDv2 server URL - translate to frontend URL
+        bitstream_id = pdf_upload_receipt.location.partition(
+            '/bitstream/')[2].partition('/')[0]
+        if len(bitstream_id) > 0:
+            full_text_url = ('https://thoth-arch.lib.cam.ac.uk/bitstreams/{}/'
+                             'download'.format(bitstream_id))
+        else:
+            full_text_url = None
+        location_platform = 'OTHER'
+        return [Location(publication_id, location_platform, landing_page,
+                         full_text_url)]
