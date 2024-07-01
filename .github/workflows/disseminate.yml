@@ -54,13 +54,14 @@ jobs:
       matrix:
         work-id: ${{ fromJSON(inputs.work-ids) }}
     steps:
+      - name: Checkout
+        # This step deletes existing directory contents, so must be done before artifact download
+        uses: actions/checkout@v4
+
       - name: Download disseminator output artifact containing location info
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.work-id }}
-
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
