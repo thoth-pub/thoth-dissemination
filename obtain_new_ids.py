@@ -94,7 +94,9 @@ class IDFinder():
         If a list of exceptions has been provided, remove these from the results
         (e.g. works that are ineligible for upload due to not being available as PDFs)
         """
-        if environ.get('ENV_EXCEPTIONS') is not None:
+        # Omitted exceptions may be represented as None if running locally,
+        # or an empty string if passed via GitHub Actions inheritance
+        if environ.get('ENV_EXCEPTIONS'):
             try:
                 exceptions = json.loads(environ.get('ENV_EXCEPTIONS').lower())
                 self.thoth_ids = list(
