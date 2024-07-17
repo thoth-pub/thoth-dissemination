@@ -134,15 +134,22 @@ class Uploader():
             logging.error(error)
             sys.exit(1)
 
-    def get_cover_image(self):
+    def get_cover_image(self, required_format=None):
         """
         Retrieve work cover image from URL specified in work metadata
         (required by some platforms)
+        @param required_format: optional string representing file extension of
+                                image type desired by caller (e.g. 'jpg', 'png')
         """
         # Extract cover URL from Thoth metadata
         cover_url = self.get_cover_url()
+        cover_ext = cover_url.split('.')[-1].lower()
 
-        match cover_url.split('.')[-1].lower():
+        if required_format and not required_format == cover_ext:
+            logging.error('Work cover image has format "{}" instead of "{}"'.format(cover_ext, required_format))
+            sys.exit(1)
+
+        match cover_ext:
             case 'jpg':
                 expected_format = 'image/jpeg'
             case 'png':
