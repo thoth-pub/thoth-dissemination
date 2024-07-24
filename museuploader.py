@@ -35,7 +35,6 @@ class MUSEUploader(Uploader):
             logging.error(error)
             sys.exit(1)
 
-        publisher = self.get_publisher_name()
         filename = self.get_pb_isbn()
         root_dir = 'uploads'
 
