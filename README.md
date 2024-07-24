@@ -33,6 +33,6 @@ docker run --rm --env-file config.env openbookpublishers/thoth-dissemination:lat
 ### Options
 `--work` = Thoth ID of work to be disseminated
 
-`--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`, `CUL`, `Crossref`, `Figshare`, `Zenodo`, `ProjectMUSE`)
+`--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`, `CUL`, `Crossref`, `Figshare`, `Zenodo`, `ProjectMUSE`, `JSTOR`)
 
 See also `--help`.
