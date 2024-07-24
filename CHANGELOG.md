@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
   - Support for uploading files and metadata to Project MUSE
 
+## [[0.1.14]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.14) - 2024-07-24
+### Changed
+  - Upgraded thothlibrary dependency to release v0.26.0 (includes improved error handling)
+
 ## [[0.1.13]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.13) - 2024-07-01
 ### Fixed
   - Fixed bug in GitHub Action causing automatic writing of location info to Thoth to fail
