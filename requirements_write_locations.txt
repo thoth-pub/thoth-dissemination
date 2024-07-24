@@ -1,1 +1,1 @@
-thothlibrary==0.25.0
+thothlibrary==0.26.0
