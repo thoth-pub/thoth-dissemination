@@ -213,27 +213,26 @@ class Uploader():
 
         return cover_url
 
-    def get_pb_isbn(self):
-        """Extract paperback ISBN from work metadata"""
-        pb_isbn = None
+    def get_isbn(self, publication_type):
+        """Extract ISBN of specified type (e.g. 'PAPERBACK') from work metadata"""
+        isbn = None
         publications = self.metadata.get(
             'data').get('work').get('publications')
         for publication in publications:
-            # Required ISBN is under paperback publication
-            if publication.get('publicationType') == 'PAPERBACK':
-                if pb_isbn is None:
-                    pb_isbn = publication.get('isbn')
+            if publication.get('publicationType') == publication_type:
+                if isbn is None:
+                    isbn = publication.get('isbn')
                 else:
                     logging.error(
-                        'Found more than one paperback ISBN - should be unique')
+                        'Found more than one ISBN of type {} - should be unique'.format(publication_type))
                     sys.exit(1)
 
-        if pb_isbn is None:
-            logging.error('No paperback ISBN found for Work')
+        if isbn is None:
+            logging.error('No ISBN of type {} found for Work'.format(publication_type))
             sys.exit(1)
 
         # Remove hyphens from ISBN before returning
-        return pb_isbn.replace('-', '')
+        return isbn.replace('-', '')
 
     def get_publisher_name(self):
         """Extract publisher name from work metadata"""

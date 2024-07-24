@@ -35,7 +35,7 @@ class MUSEUploader(Uploader):
             logging.error(error)
             sys.exit(1)
 
-        filename = self.get_pb_isbn()
+        filename = self.get_isbn('PAPERBACK')
         root_dir = 'uploads'
 
         metadata_bytes = self.get_formatted_metadata('onix_3.0::project_muse')
