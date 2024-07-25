@@ -27,7 +27,6 @@ class JSTORUploader(Uploader):
         # Check that JSTOR credentials have been provided for this publisher
         # TODO not yet confirmed whether credentials will be per-publisher
         # or a single Thoth user
-        publisher_id = self.get_publisher_id()
         try:
             username = self.get_credential_from_env('jstor_ftp_user', 'JSTOR')
             password = self.get_credential_from_env('jstor_ftp_pw', 'JSTOR')
@@ -35,7 +34,6 @@ class JSTORUploader(Uploader):
             logging.error(error)
             sys.exit(1)
 
-        publisher = self.get_publisher_name()
         filename = self.get_isbn('PDF')
         publisher_dir = 'TBD' # TODO
         collection_dir = 'books'
