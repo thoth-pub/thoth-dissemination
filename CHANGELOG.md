@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-  - Support for uploading files and metadata to Project MUSE and JSTOR
+  - Support for uploading files and metadata to Project MUSE, JSTOR, EBSCOHost
 
 ## [[0.1.14]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.14) - 2024-07-24
 ### Changed

@@ -22,6 +22,7 @@ from fsuploader import FigshareUploader
 from zenodouploader import ZenodoUploader
 from museuploader import MUSEUploader
 from jstoruploader import JSTORUploader
+from ebscouploader import EBSCOUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
@@ -33,6 +34,7 @@ UPLOADERS = {
     "Zenodo": ZenodoUploader,
     "ProjectMUSE": MUSEUploader,
     "JSTOR": JSTORUploader,
+    "EBSCOHost": EBSCOUploader,
 }
 
 UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())
