@@ -18,7 +18,7 @@ class JSTORUploader(Uploader):
         """
         Upload work in required format to JSTOR.
 
-        Content required: PDF and/or EPUB work file plus JPG cover file
+        Content required: PDF work file plus JPG cover file
         Metadata required: JSTOR ONIX 3.0 export
         Naming convention: Use PDF ISBN for all filename roots
         Upload directory: per-publisher folder, `books` subfolder
