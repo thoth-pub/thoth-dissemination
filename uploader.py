@@ -215,24 +215,17 @@ class Uploader():
 
     def get_isbn(self, publication_type):
         """Extract ISBN of specified type (e.g. 'PAPERBACK') from work metadata"""
-        isbn = None
-        publications = self.metadata.get(
-            'data').get('work').get('publications')
-        for publication in publications:
-            if publication.get('publicationType') == publication_type:
-                if isbn is None:
-                    isbn = publication.get('isbn')
-                else:
-                    logging.error(
-                        'Found more than one ISBN of type {} - should be unique'.format(publication_type))
-                    sys.exit(1)
-
-        if isbn is None:
+        publications = self.metadata.get('data').get('work').get('publications')
+        # There should be a maximum of one publication per type;
+        # more than one would be a Thoth database error
+        try:
+            isbn = [n['isbn'] for n in publications
+                    if n['publicationType'] == publication_type][0]
+            # Remove hyphens from ISBN before returning
+            return isbn.replace('-', '')
+        except (IndexError, KeyError):
             logging.error('No ISBN of type {} found for Work'.format(publication_type))
             sys.exit(1)
-
-        # Remove hyphens from ISBN before returning
-        return isbn.replace('-', '')
 
     def get_publisher_name(self):
         """Extract publisher name from work metadata"""
