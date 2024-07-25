@@ -23,6 +23,7 @@ from zenodouploader import ZenodoUploader
 from museuploader import MUSEUploader
 from jstoruploader import JSTORUploader
 from ebscouploader import EBSCOUploader
+from proquestuploader import ProquestUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
@@ -35,6 +36,7 @@ UPLOADERS = {
     "ProjectMUSE": MUSEUploader,
     "JSTOR": JSTORUploader,
     "EBSCOHost": EBSCOUploader,
+    "ProQuest": ProquestUploader,
 }
 
 UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())
