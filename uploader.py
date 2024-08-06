@@ -134,15 +134,22 @@ class Uploader():
             logging.error(error)
             sys.exit(1)
 
-    def get_cover_image(self):
+    def get_cover_image(self, required_format=None):
         """
         Retrieve work cover image from URL specified in work metadata
         (required by some platforms)
+        @param required_format: optional string representing file extension of
+                                image type desired by caller (e.g. 'jpg', 'png')
         """
         # Extract cover URL from Thoth metadata
         cover_url = self.get_cover_url()
+        cover_ext = cover_url.split('.')[-1].lower()
 
-        match cover_url.split('.')[-1].lower():
+        if required_format and not required_format == cover_ext:
+            logging.error('Work cover image has format "{}" instead of "{}"'.format(cover_ext, required_format))
+            sys.exit(1)
+
+        match cover_ext:
             case 'jpg':
                 expected_format = 'image/jpeg'
             case 'png':
@@ -206,27 +213,19 @@ class Uploader():
 
         return cover_url
 
-    def get_pb_isbn(self):
-        """Extract paperback ISBN from work metadata"""
-        pb_isbn = None
-        publications = self.metadata.get(
-            'data').get('work').get('publications')
-        for publication in publications:
-            # Required ISBN is under paperback publication
-            if publication.get('publicationType') == 'PAPERBACK':
-                if pb_isbn is None:
-                    pb_isbn = publication.get('isbn')
-                else:
-                    logging.error(
-                        'Found more than one paperback ISBN - should be unique')
-                    sys.exit(1)
-
-        if pb_isbn is None:
-            logging.error('No paperback ISBN found for Work')
+    def get_isbn(self, publication_type):
+        """Extract ISBN of specified type (e.g. 'PAPERBACK') from work metadata"""
+        publications = self.metadata.get('data').get('work').get('publications')
+        # There should be a maximum of one publication per type;
+        # more than one would be a Thoth database error
+        try:
+            isbn = [n['isbn'] for n in publications
+                    if n['publicationType'] == publication_type][0]
+            # Remove hyphens from ISBN before returning
+            return isbn.replace('-', '')
+        except (IndexError, KeyError):
+            logging.error('No ISBN of type {} found for Work'.format(publication_type))
             sys.exit(1)
-
-        # Remove hyphens from ISBN before returning
-        return pb_isbn.replace('-', '')
 
     def get_publisher_name(self):
         """Extract publisher name from work metadata"""

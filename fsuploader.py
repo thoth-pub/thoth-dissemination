@@ -454,7 +454,7 @@ class FigshareApi:
                                              'location'], json_body=metadata)
         except DisseminationError as error:
             raise DisseminationError(
-                'Creating article failed: {}'.format(error))
+                'Creating article failed: {} ({})'.format(error, metadata.get('title')))
         # Derive 'entity_id' from 'location'
         article_id = article_url.split('/')[-1]
         # Figshare default behaviour (confirmed under support ticket #438719)
@@ -495,7 +495,7 @@ class FigshareApi:
             self.issue_request('POST', url, 201)
         except DisseminationError as error:
             raise DisseminationError(
-                'Publishing article failed: {}'.format(error))
+                'Publishing article {} failed: {}'.format(article_id, error))
 
     def clean_up(self, project_id):
         """
@@ -531,7 +531,7 @@ class FigshareApi:
             # Check that the data was processed successfully.
             return self.check_upload_status(file_url)
         except DisseminationError as error:
-            raise DisseminationError('Uploading file failed: {}'.format(error))
+            raise DisseminationError('Uploading file failed: {} ({})'.format(error, file_name))
 
     def initiate_new_upload(self, article_id, file_bytes, file_name):
         """
