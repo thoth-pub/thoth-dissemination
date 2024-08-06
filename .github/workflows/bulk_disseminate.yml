@@ -44,8 +44,12 @@ jobs:
   bulk-disseminate:
     needs: obtain-new-ids
     if: needs.obtain-new-ids.outputs.NEW_IDS != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        work-id: ${{ fromJSON(needs.run-script.outputs.NEW_IDS) }}
     uses: ./.github/workflows/disseminate.yml
     with:
-      work-ids: ${{ needs.obtain-new-ids.outputs.NEW_IDS }}
+      work-id: ${{ matrix.work-id }}
       platform: ${{ inputs.platform }}
     secrets: inherit

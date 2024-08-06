@@ -24,8 +24,12 @@ on:
 
 jobs:
   manual_disseminate:
+    strategy:
+      fail-fast: false
+      matrix:
+        work-id: ${{ fromJSON(github.event.inputs.workIds) }}
     uses: ./.github/workflows/disseminate.yml
     with:
-      work-ids: ${{ github.event.inputs.workIds }}
+      work-id: ${{ matrix.work-id }}
       platform: ${{ github.event.inputs.platform }}
     secrets: inherit
