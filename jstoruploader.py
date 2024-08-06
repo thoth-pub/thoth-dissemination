@@ -49,10 +49,13 @@ class JSTORUploader(Uploader):
         ]
 
         try:
+            cnopts = pysftp.CnOpts()
+            cnopts.hostkeys = None
             with pysftp.Connection(
                 host='ftp.jstor.org',
                 username=username,
                 password=password,
+                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(publisher_dir)

@@ -65,10 +65,13 @@ class MUSEUploader(Uploader):
             sys.exit(1)
 
         try:
+            cnopts = pysftp.CnOpts()
+            cnopts.hostkeys = None
             with pysftp.Connection(
                 host='ftp.press.jhu.edu',
                 username=username,
                 password=password,
+                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)

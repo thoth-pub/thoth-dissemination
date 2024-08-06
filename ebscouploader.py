@@ -65,10 +65,13 @@ class EBSCOUploader(Uploader):
                       BytesIO(metadata_bytes)))
 
         try:
+            cnopts = pysftp.CnOpts()
+            cnopts.hostkeys = None
             with pysftp.Connection(
                 host='sftp.epnet.com',
                 username=username,
                 password=password,
+                cnopts=cnopts,
             ) as sftp:
                 for file in files:
                     try:

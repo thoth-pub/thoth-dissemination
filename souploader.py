@@ -74,10 +74,13 @@ class SOUploader(Uploader):
         zipped_files.seek(0)
 
         try:
+            cnopts = pysftp.CnOpts()
+            cnopts.hostkeys = None
             with pysftp.Connection(
                 host='ftp.scienceopen.com',
                 username=username,
                 password=password,
+                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)

@@ -79,10 +79,13 @@ class ProquestUploader(Uploader):
             sys.exit(1)
 
         try:
+            cnopts = pysftp.CnOpts()
+            cnopts.hostkeys = None
             with pysftp.Connection(
                 host='ftp.ebookcentral.proquest.com',
                 username=username,
                 password=password,
+                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(collection_dir)
