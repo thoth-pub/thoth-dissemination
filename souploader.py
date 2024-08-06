@@ -42,7 +42,7 @@ class SOUploader(Uploader):
             sys.exit(1)
 
         publisher = self.get_publisher_name()
-        filename = self.get_pb_isbn()
+        filename = self.get_isbn('PAPERBACK')
         root_dir = 'UPLOAD_TO_THIS_DIRECTORY'
         collection_dir = 'books'
         new_dir = date.today().isoformat()
@@ -74,10 +74,13 @@ class SOUploader(Uploader):
         zipped_files.seek(0)
 
         try:
+            cnopts = pysftp.CnOpts()
+            cnopts.hostkeys = None
             with pysftp.Connection(
                 host='ftp.scienceopen.com',
                 username=username,
                 password=password,
+                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)

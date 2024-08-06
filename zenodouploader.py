@@ -7,7 +7,6 @@ import logging
 import sys
 import re
 import requests
-from io import BytesIO
 from errors import DisseminationError
 from uploader import Uploader, PUB_FORMATS, Location
 
