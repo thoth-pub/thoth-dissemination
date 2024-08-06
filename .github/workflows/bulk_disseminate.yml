@@ -47,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        work-id: ${{ fromJSON(needs.run-script.outputs.NEW_IDS) }}
+        work-id: ${{ fromJSON(needs.obtain-new-ids.outputs.NEW_IDS) }}
     uses: ./.github/workflows/disseminate.yml
     with:
       work-id: ${{ matrix.work-id }}
