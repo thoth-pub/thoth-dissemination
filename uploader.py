@@ -272,13 +272,13 @@ class Uploader():
                 url, url_content.text, url_content.status_code))
 
     @staticmethod
-    def get_credential_from_env(credential_name, platform_name):
-        """Retrieve specified credential from the environment"""
+    def get_variable_from_env(variable_name, platform_name):
+        """Retrieve specified variable from the environment"""
 
-        credential = environ.get(credential_name)
+        variable = environ.get(variable_name)
 
-        if credential is None or len(credential) < 1:
+        if variable is None or len(variable) < 1:
             raise DisseminationError(
-                'Error uploading to {}: missing credential {}'.format(platform_name, credential_name))
+                'Error uploading to {}: missing value for {}'.format(platform_name, variable_name))
         else:
-            return credential
+            return variable

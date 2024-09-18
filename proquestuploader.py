@@ -31,8 +31,8 @@ class ProquestUploader(Uploader):
         # TODO not yet confirmed whether credentials will be per-publisher
         # or a single Thoth user
         try:
-            username = self.get_credential_from_env('proquest_ftp_user', 'ProQuest Ebook Central')
-            password = self.get_credential_from_env('proquest_ftp_pw', 'ProQuest Ebook Central')
+            username = self.get_variable_from_env('proquest_ftp_user', 'ProQuest Ebook Central')
+            password = self.get_variable_from_env('proquest_ftp_pw', 'ProQuest Ebook Central')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)

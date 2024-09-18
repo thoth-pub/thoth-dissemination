@@ -27,9 +27,9 @@ class JSTORUploader(Uploader):
         # Check that JSTOR credentials and publisher folder name have been provided
         publisher_id = self.get_publisher_id()
         try:
-            username = self.get_credential_from_env('jstor_ftp_user', 'JSTOR')
-            password = self.get_credential_from_env('jstor_ftp_pw', 'JSTOR')
-            publisher_dir = self.get_credential_from_env(
+            username = self.get_variable_from_env('jstor_ftp_user', 'JSTOR')
+            password = self.get_variable_from_env('jstor_ftp_pw', 'JSTOR')
+            publisher_dir = self.get_variable_from_env(
                 'jstor_ftp_folder' + publisher_id.replace('-', '_'), 'JSTOR')
         except DisseminationError as error:
             logging.error(error)

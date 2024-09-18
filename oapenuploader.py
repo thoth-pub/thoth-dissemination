@@ -24,8 +24,8 @@ class OAPENUploader(Uploader):
 
         # Fast-fail if credentials for upload are missing
         try:
-            user = self.get_credential_from_env('oapen_ftp_user', 'OAPEN')
-            passwd = self.get_credential_from_env('oapen_ftp_pw', 'OAPEN')
+            user = self.get_variable_from_env('oapen_ftp_user', 'OAPEN')
+            passwd = self.get_variable_from_env('oapen_ftp_pw', 'OAPEN')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
