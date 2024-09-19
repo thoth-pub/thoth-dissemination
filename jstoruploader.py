@@ -30,7 +30,7 @@ class JSTORUploader(Uploader):
             username = self.get_variable_from_env('jstor_ftp_user', 'JSTOR')
             password = self.get_variable_from_env('jstor_ftp_pw', 'JSTOR')
             publisher_dir = self.get_variable_from_env(
-                'jstor_ftp_folder' + publisher_id.replace('-', '_'), 'JSTOR')
+                'jstor_ftp_folder_' + publisher_id.replace('-', '_'), 'JSTOR')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
@@ -45,7 +45,7 @@ class JSTORUploader(Uploader):
         files = [
             ('{}.xml'.format(filename), BytesIO(metadata_bytes)),
             ('{}.jpg'.format(filename), BytesIO(cover_bytes)),
-            ('{}{}'.format(filename, pdf.file_ext), pdf.bytes),
+            ('{}{}'.format(filename, pdf.file_ext), BytesIO(pdf.bytes)),
         ]
 
         try:

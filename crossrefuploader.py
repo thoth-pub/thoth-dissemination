@@ -7,6 +7,7 @@ Based on guide at https://www.crossref.org/documentation/register-maintain-recor
 import logging
 import sys
 import requests
+from errors import DisseminationError
 from uploader import Uploader
 
 

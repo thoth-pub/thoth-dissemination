@@ -88,7 +88,7 @@ class ProquestUploader(Uploader):
                 cnopts=cnopts,
             ) as sftp:
                 try:
-                    sftp.cwd(collection_dir)
+                    sftp.cwd(root_dir)
                 except FileNotFoundError:
                     logging.error(
                         'Could not find folder "upload" on ProQuest Ebook Central SFTP server')
