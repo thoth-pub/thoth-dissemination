@@ -34,9 +34,9 @@ class SOUploader(Uploader):
 
         # Fast-fail if credentials for upload are missing
         try:
-            username = self.get_credential_from_env(
+            username = self.get_variable_from_env(
                 'so_ftp_user', 'ScienceOpen')
-            password = self.get_credential_from_env('so_ftp_pw', 'ScienceOpen')
+            password = self.get_variable_from_env('so_ftp_pw', 'ScienceOpen')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)

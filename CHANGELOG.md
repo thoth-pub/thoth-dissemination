@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[0.1.16]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.16) - 2024-10-21
+### Changed
+  - Finalised JSTOR upload workflow
+  - Upgraded dependencies: thothlibrary v0.26.2, internetarchive v4.1.0, requests v2.32.3
+
 ## [[0.1.15]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.15) - 2024-08-06
 ### Added
   - Support for uploading files and metadata to Project MUSE, JSTOR, EBSCOHost, ProQuest (Ebook Central)

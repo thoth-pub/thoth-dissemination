@@ -20,9 +20,9 @@ class IAUploader(Uploader):
 
         # Fast-fail if credentials for upload are missing
         try:
-            access_key = self.get_credential_from_env(
+            access_key = self.get_variable_from_env(
                 'ia_s3_access', 'Internet Archive')
-            secret_key = self.get_credential_from_env(
+            secret_key = self.get_variable_from_env(
                 'ia_s3_secret', 'Internet Archive')
         except DisseminationError as error:
             logging.error(error)

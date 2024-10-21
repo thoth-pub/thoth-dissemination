@@ -18,7 +18,7 @@ class ZenodoUploader(Uploader):
         """Instantiate class for accessing Zenodo API."""
         super().__init__(work_id, export_url, client_url, version)
         try:
-            api_token = self.get_credential_from_env(
+            api_token = self.get_variable_from_env(
                 'zenodo_token', 'Zenodo')
         except DisseminationError as error:
             logging.error(error)

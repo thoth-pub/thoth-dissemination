@@ -7,6 +7,7 @@ Based on guide at https://www.crossref.org/documentation/register-maintain-recor
 import logging
 import sys
 import requests
+from errors import DisseminationError
 from uploader import Uploader
 
 
@@ -29,9 +30,9 @@ class CrossrefUploader(Uploader):
         # Check that Crossref credentials have been provided for this publisher
         publisher_id = self.get_publisher_id()
         try:
-            login_id = self.get_credential_from_env(
+            login_id = self.get_variable_from_env(
                 'crossref_user_' + publisher_id.replace('-', '_'), 'Crossref')
-            login_passwd = self.get_credential_from_env(
+            login_passwd = self.get_variable_from_env(
                 'crossref_pw_' + publisher_id.replace('-', '_'), 'Crossref')
         except DisseminationError as error:
             logging.error(error)
@@ -45,7 +46,12 @@ class CrossrefUploader(Uploader):
         # DOI must not be None or deposit file request above would have failed
         # (Thoth database guarantees consistent DOI URL format)
         doi_prefix = doi.replace('https://doi.org/', '').split('/')[0]
-        doi_rsp = requests.get('{}/{}'.format(CR_PREFIX_ENDPOINT, doi_prefix))
+        doi_rsp = requests.get(
+            url='{}/{}'.format(CR_PREFIX_ENDPOINT, doi_prefix),
+            # Crossref REST API requests containing a mailto header get preferentially load-balanced
+            # (https://www.crossref.org/blog/rebalancing-our-rest-api-traffic/)
+            headers={'mailto': 'distribution@thoth.pub'},
+        )
         if doi_rsp.status_code != 200:
             logging.error(
                 'Not a valid Crossref DOI prefix: {}'.format(doi_prefix)

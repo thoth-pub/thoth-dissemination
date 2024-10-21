@@ -29,8 +29,8 @@ class EBSCOUploader(Uploader):
 
         # Check that EBSCOHost credentials have been provided
         try:
-            username = self.get_credential_from_env('ebsco_ftp_user', 'EBSCOHost')
-            password = self.get_credential_from_env('ebsco_ftp_pw', 'EBSCOHost')
+            username = self.get_variable_from_env('ebsco_ftp_user', 'EBSCOHost')
+            password = self.get_variable_from_env('ebsco_ftp_pw', 'EBSCOHost')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
