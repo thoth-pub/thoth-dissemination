@@ -27,9 +27,9 @@ class MUSEUploader(Uploader):
         # Check that Project MUSE credentials have been provided for this publisher
         publisher_id = self.get_publisher_id()
         try:
-            username = self.get_credential_from_env(
+            username = self.get_variable_from_env(
                 'muse_ftp_user_' + publisher_id.replace('-', '_'), 'Project MUSE')
-            password = self.get_credential_from_env(
+            password = self.get_variable_from_env(
                 'muse_ftp_pw_' + publisher_id.replace('-', '_'), 'Project MUSE')
         except DisseminationError as error:
             logging.error(error)

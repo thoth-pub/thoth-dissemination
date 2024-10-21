@@ -27,7 +27,7 @@ class FigshareUploader(Uploader):
         """Instantiate class for accessing Figshare API."""
         super().__init__(work_id, export_url, client_url, version)
         try:
-            api_token = self.get_credential_from_env(
+            api_token = self.get_variable_from_env(
                 'figshare_token', 'Figshare')
         except DisseminationError as error:
             logging.error(error)

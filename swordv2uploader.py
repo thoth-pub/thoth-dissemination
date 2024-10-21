@@ -43,9 +43,9 @@ class SwordV2Uploader(Uploader):
         """Create connection to SWORD v2 endpoint"""
         super().__init__(work_id, export_url, client_url, version)
         try:
-            user_name = self.get_credential_from_env(
+            user_name = self.get_variable_from_env(
                 user_name_string, 'SWORD v2')
-            user_pass = self.get_credential_from_env(
+            user_pass = self.get_variable_from_env(
                 user_pass_string, 'SWORD v2')
         except DisseminationError as error:
             logging.error(error)

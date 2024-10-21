@@ -21,31 +21,31 @@ class JSTORUploader(Uploader):
         Content required: PDF work file plus JPG cover file
         Metadata required: JSTOR ONIX 3.0 export
         Naming convention: Use PDF ISBN for all filename roots
-        Upload directory: per-publisher folder, `books` subfolder
+        Upload directory: per-publisher folder (named ad-hoc), `books` subfolder
         """
 
-        # Check that JSTOR credentials have been provided for this publisher
-        # TODO not yet confirmed whether credentials will be per-publisher
-        # or a single Thoth user
+        # Check that JSTOR credentials and publisher folder name have been provided
+        publisher_id = self.get_publisher_id()
         try:
-            username = self.get_credential_from_env('jstor_ftp_user', 'JSTOR')
-            password = self.get_credential_from_env('jstor_ftp_pw', 'JSTOR')
+            username = self.get_variable_from_env('jstor_ftp_user', 'JSTOR')
+            password = self.get_variable_from_env('jstor_ftp_pw', 'JSTOR')
+            publisher_dir = self.get_variable_from_env(
+                'jstor_ftp_folder_' + publisher_id.replace('-', '_'), 'JSTOR')
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
 
         filename = self.get_isbn('PDF')
-        publisher_dir = 'TBD' # TODO
         collection_dir = 'books'
 
         metadata_bytes = self.get_formatted_metadata('onix_3.0::jstor')
         # Only .jpg cover files are supported
         cover_bytes = self.get_cover_image('jpg')
-        pdf = self.get_publication_details('PDF').bytes
+        pdf = self.get_publication_details('PDF')
         files = [
             ('{}.xml'.format(filename), BytesIO(metadata_bytes)),
             ('{}.jpg'.format(filename), BytesIO(cover_bytes)),
-            ('{}.pdf'.format(filename), pdf_bytes),
+            ('{}{}'.format(filename, pdf.file_ext), BytesIO(pdf.bytes)),
         ]
 
         try:
@@ -55,6 +55,7 @@ class JSTORUploader(Uploader):
                 host='ftp.jstor.org',
                 username=username,
                 password=password,
+                port=2222,
                 cnopts=cnopts,
             ) as sftp:
                 try:
