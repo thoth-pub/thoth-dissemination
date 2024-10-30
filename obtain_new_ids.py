@@ -2,7 +2,7 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to Internet Archive, (Loughborough) Figshare, Zenodo and CUL:
+For dissemination to Internet Archive, (Loughborough) Figshare, Zenodo, CUL and Google Play:
 find newly-published works for upload.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
 Based on `iabulkupload/obtain_work_ids.py`.
@@ -253,6 +253,71 @@ class CatchupIDFinder(IDFinder):
         pass
 
 
+class GooglePlayIDFinder(IDFinder):
+    """Logic for retrieving work IDs which is specific to Google Play dissemination"""
+
+    def get_query_parameters(self):
+        """
+        Construct Thoth work ID query parameters depending on platform-specific
+        requirements
+        """
+        # Target: all active (published) works listed in Thoth (from the selected publishers).
+        self.work_statuses = '[ACTIVE]'
+        # Start with the most recent, so that we can disregard everything else
+        # as soon as we hit the first work published earlier than the desired date range.
+        self.order = '{field: PUBLICATION_DATE, direction: DESC}'
+        self.updated_at_with_relations = None
+
+    def get_thoth_ids(self):
+        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can remove this overriding method and simply construct a standard query
+        # filtering by publication date
+        from datetime import datetime, timedelta
+
+        # In addition to the conditions of the query parameters, we need to filter the results
+        # to obtain only works with a publication date within the previous day.
+        # The schedule for finding and depositing newly published works is once daily.
+        current_date = datetime.utcnow().date()
+        previous_day = current_date - timedelta(days=1)
+
+        offset = 0
+        while True:
+            next_batch = self.thoth.books(
+                limit=1,
+                offset=offset,
+                work_statuses=self.work_statuses,
+                order=self.order,
+                publishers=self.publishers,
+                updated_at_with_relations=self.updated_at_with_relations,
+            )
+            if len(next_batch) < 1:
+                # No more works to be found
+                break
+            offset += 1
+            next_work = next_batch[0]
+            next_work_pub_date = datetime.strptime(
+                next_work.publicationDate, "%Y-%m-%d").date()
+            if next_work_pub_date > previous_day:
+                # This work will be handled in next day's run - don't cause duplication
+                continue
+            elif next_work_pub_date >= previous_day:
+                # This work was published in the previous day - include it
+                self.thoth_ids.append(next_work.workId)
+            else:
+                # We've reached the first work in the list which was published
+                # earlier than the previous day - stop
+                break
+
+    def post_process(self):
+        """
+        Amend list of retrieved work IDs depending on platform-specific
+        requirements
+        """
+        # Not required - keep full list
+        pass
+
+
 def get_arguments():
     """Simple argument parsing"""
     parser = argparse.ArgumentParser()
@@ -273,12 +338,14 @@ if __name__ == '__main__':
             id_finder = InternetArchiveIDFinder()
         case 'Crossref':
             id_finder = CrossrefIDFinder()
+        case 'GooglePlay':
+            id_finder = GooglePlayIDFinder()
         case 'Figshare' | 'Zenodo' | 'CUL':
             id_finder = CatchupIDFinder()
         case _:
             logging.error(
                 'Platform must be one of InternetArchive, Crossref, Figshare, '
-                'Zenodo, or CUL')
+                'Zenodo, CUL or GooglePlay')
             sys.exit(1)
 
     id_finder.run()

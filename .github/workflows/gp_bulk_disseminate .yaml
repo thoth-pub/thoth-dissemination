@@ -1,0 +1,23 @@
+# Purpose: upload newly-published works from Thoth to dedicated Google Play crawl server.
+# Deposits all active/forthcoming Thoth works updated since last scheduled run.
+# Google Play collection-code for each relevant publisher must be present as
+# repository secret named GOOGLE_PLAY_COLL_[publisher_id].
+#TODO credentials
+name: gp-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 05:50 every day'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '50 5 * * *'
+  workflow_dispatch:
+
+jobs:
+  cr-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'GooglePlay'
+      env_publishers: ${{ vars.GP_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.GP_ENV_EXCEPTIONS }}
+    secrets: inherit
