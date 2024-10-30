@@ -1,3 +1,4 @@
+google-cloud-storage==2.18.2
 internetarchive==4.1.0
 pysftp==0.2.9
 python-dotenv==0.19.2
