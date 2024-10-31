@@ -14,7 +14,7 @@ from thothlibrary import errors, ThothClient
 import argparse
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, UTC
 from os import environ
 import sys
 
@@ -151,8 +151,6 @@ class CrossrefIDFinder(IDFinder):
 
     def get_query_parameters(self):
         """Construct Thoth work ID query parameters depending on Crossref-specific requirements"""
-        from datetime import datetime, timedelta, timezone
-
         # The schedule for finding and depositing updated metadata is once hourly.
         # TODO ideally we could pass this value from the GitHub Action to ensure synchronisation.
         DEPOSIT_INTERVAL_HRS = 1
@@ -166,7 +164,7 @@ class CrossrefIDFinder(IDFinder):
         # Target: all works listed in Thoth (from the selected publishers) which are
         # Active, and which have been updated since the last deposit.
         # Use UTC, as GitHub Actions scheduling runs in UTC.
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
         last_deposit_time = current_time - \
             timedelta(hours=(DEPOSIT_INTERVAL_HRS + DELAY_BUFFER_HRS))
         last_deposit_time_str = datetime.strftime(
@@ -240,13 +238,12 @@ class CatchupIDFinder(IDFinder):
         # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
         # we can remove this overriding method and simply construct a standard query
         # filtering by publication date
-        from datetime import timedelta
 
         # In addition to the conditions of the query parameters, we need to filter the results
         # to obtain only works with a publication date within the previous calendar month.
         # The schedule for finding and depositing newly published works is once monthly
         # (a few days after the start of the month, to allow for delays in updating records).
-        current_date = datetime.utcnow().date()
+        current_date = datetime.now(UTC).date()
         current_month_start = current_date.replace(day=1)
         previous_month_end = current_month_start - timedelta(days=1)
         previous_month_start = previous_month_end.replace(day=1)
@@ -282,12 +279,11 @@ class GooglePlayIDFinder(IDFinder):
         # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
         # we can remove this overriding method and simply construct a standard query
         # filtering by publication date
-        from datetime import timedelta
 
         # In addition to the conditions of the query parameters, we need to filter the results
         # to obtain only works with a publication date within the previous day.
         # The schedule for finding and depositing newly published works is once daily.
-        current_date = datetime.utcnow().date()
+        current_date = datetime.now(UTC).date()
         previous_day = current_date - timedelta(days=1)
 
         self.get_thoth_ids_iteratively(previous_day, previous_day)
