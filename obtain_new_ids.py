@@ -14,6 +14,7 @@ from thothlibrary import errors, ThothClient
 import argparse
 import json
 import logging
+from datetime import datetime
 from os import environ
 import sys
 
@@ -88,6 +89,40 @@ class IDFinder():
 
         # Extract the Thoth work ID strings from the set of results
         self.thoth_ids = [n.workId for n in thoth_works]
+
+    def get_thoth_ids_iteratively(self, start_date, end_date):
+        """
+        Query Thoth GraphQL API with relevant parameters to retrieve required work IDs,
+        iterating through results to select only those published between the specified dates
+        """
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can simply construct a standard query filtering by publication date
+        offset = 0
+        while True:
+            next_batch = self.thoth.books(
+                limit=1,
+                offset=offset,
+                work_statuses=self.work_statuses,
+                order=self.order,
+                publishers=self.publishers,
+                updated_at_with_relations=self.updated_at_with_relations,
+            )
+            if len(next_batch) < 1:
+                # No more works to be found
+                break
+            offset += 1
+            next_work = next_batch[0]
+            next_work_pub_date = datetime.strptime(next_work.publicationDate, "%Y-%m-%d").date()
+            if next_work_pub_date > end_date:
+                # This work will be handled in the next run - don't cause duplication
+                continue
+            elif next_work_pub_date >= start_date:
+                # This work was published in the target period - include it
+                self.thoth_ids.append(next_work.workId)
+            else:
+                # We've reached the first work in the list which was published
+                # earlier than the target period - stop
+                break
 
     def remove_exceptions(self):
         """
@@ -205,7 +240,7 @@ class CatchupIDFinder(IDFinder):
         # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
         # we can remove this overriding method and simply construct a standard query
         # filtering by publication date
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         # In addition to the conditions of the query parameters, we need to filter the results
         # to obtain only works with a publication date within the previous calendar month.
@@ -216,33 +251,7 @@ class CatchupIDFinder(IDFinder):
         previous_month_end = current_month_start - timedelta(days=1)
         previous_month_start = previous_month_end.replace(day=1)
 
-        offset = 0
-        while True:
-            next_batch = self.thoth.books(
-                limit=1,
-                offset=offset,
-                work_statuses=self.work_statuses,
-                order=self.order,
-                publishers=self.publishers,
-                updated_at_with_relations=self.updated_at_with_relations,
-            )
-            if len(next_batch) < 1:
-                # No more works to be found
-                break
-            offset += 1
-            next_work = next_batch[0]
-            next_work_pub_date = datetime.strptime(
-                next_work.publicationDate, "%Y-%m-%d").date()
-            if next_work_pub_date > previous_month_end:
-                # This work will be handled in next month's run - don't cause duplication
-                continue
-            elif next_work_pub_date >= previous_month_start:
-                # This work was published in the last month - include it
-                self.thoth_ids.append(next_work.workId)
-            else:
-                # We've reached the first work in the list which was published
-                # earlier than last month - stop
-                break
+        self.get_thoth_ids_iteratively(previous_month_start, previous_month_end)
 
     def post_process(self):
         """
@@ -273,7 +282,7 @@ class GooglePlayIDFinder(IDFinder):
         # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
         # we can remove this overriding method and simply construct a standard query
         # filtering by publication date
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         # In addition to the conditions of the query parameters, we need to filter the results
         # to obtain only works with a publication date within the previous day.
@@ -281,33 +290,7 @@ class GooglePlayIDFinder(IDFinder):
         current_date = datetime.utcnow().date()
         previous_day = current_date - timedelta(days=1)
 
-        offset = 0
-        while True:
-            next_batch = self.thoth.books(
-                limit=1,
-                offset=offset,
-                work_statuses=self.work_statuses,
-                order=self.order,
-                publishers=self.publishers,
-                updated_at_with_relations=self.updated_at_with_relations,
-            )
-            if len(next_batch) < 1:
-                # No more works to be found
-                break
-            offset += 1
-            next_work = next_batch[0]
-            next_work_pub_date = datetime.strptime(
-                next_work.publicationDate, "%Y-%m-%d").date()
-            if next_work_pub_date > previous_day:
-                # This work will be handled in next day's run - don't cause duplication
-                continue
-            elif next_work_pub_date >= previous_day:
-                # This work was published in the previous day - include it
-                self.thoth_ids.append(next_work.workId)
-            else:
-                # We've reached the first work in the list which was published
-                # earlier than the previous day - stop
-                break
+        self.get_thoth_ids_iteratively(previous_day, previous_day)
 
     def post_process(self):
         """
