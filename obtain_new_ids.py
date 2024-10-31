@@ -184,7 +184,7 @@ class CatchupIDFinder(IDFinder):
     """
     Logic for retrieving work IDs which is specific to recurring 'catchup'
     dissemination of recent publications to various archiving platforms.
-    Currently used for (Loughborough) Figshare and Zenodo. Internet Archive
+    Currently used for (Loughborough) Figshare, CUL and Zenodo. Internet Archive
     is handled separately, as its API allows a simpler workflow.
     """
 
