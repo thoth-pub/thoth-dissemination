@@ -20,6 +20,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    secrets: inherit
     steps:
       - uses: actions/checkout@v4
         name: Checkout (google-github-actions/auth prerequisite)
@@ -34,4 +35,3 @@ jobs:
           platform: 'GooglePlay'
           env_publishers: ${{ vars.GP_ENV_PUBLISHERS }}
           env_exceptions: ${{ vars.GP_ENV_EXCEPTIONS }}
-    secrets: inherit
