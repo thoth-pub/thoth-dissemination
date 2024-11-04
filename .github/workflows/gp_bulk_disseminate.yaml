@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  cr-bulk-disseminate:
+  gp-bulk-disseminate:
     permissions:
       contents: read
       id-token: write
