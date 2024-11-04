@@ -2,7 +2,8 @@
 # Deposits all active/forthcoming Thoth works updated since last scheduled run.
 # Google Play collection-code for each relevant publisher must be present as
 # repository secret named GOOGLE_PLAY_COLL_[publisher_id].
-#TODO credentials
+# Repository secrets GOOGLE_PLAY_BUCKET, GOOGLE_SERVICE_ACCOUNT and GOOGLE_WORKLOAD_ID_PROVIDER
+# must also be present to allow connection to the crawl server.
 name: gp-bulk-disseminate
 
 on:
@@ -15,9 +16,21 @@ on:
 
 jobs:
   cr-bulk-disseminate:
-    uses: ./.github/workflows/bulk_disseminate.yml
-    with:
-      platform: 'GooglePlay'
-      env_publishers: ${{ vars.GP_ENV_PUBLISHERS }}
-      env_exceptions: ${{ vars.GP_ENV_EXCEPTIONS }}
-    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout (google-github-actions/auth prerequisite)
+      - uses: google-github-actions/auth@v2
+        name: Authenticate to Google Cloud
+        with:
+          workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
+          service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+      - uses: ./.github/workflows/bulk_disseminate.yml
+        name: Call bulk_disseminate
+        with:
+          platform: 'GooglePlay'
+          env_publishers: ${{ vars.GP_ENV_PUBLISHERS }}
+          env_exceptions: ${{ vars.GP_ENV_EXCEPTIONS }}
+        secrets: inherit
