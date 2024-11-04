@@ -16,6 +16,7 @@ on:
 
 jobs:
   gp-bulk-disseminate:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -33,4 +34,4 @@ jobs:
           platform: 'GooglePlay'
           env_publishers: ${{ vars.GP_ENV_PUBLISHERS }}
           env_exceptions: ${{ vars.GP_ENV_EXCEPTIONS }}
-        secrets: inherit
+    secrets: inherit
