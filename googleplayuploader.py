@@ -36,7 +36,6 @@ class GooglePlayUploader(Uploader):
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
-        # TODO credentials handled automatically in local testing - confirm GitHub Actions workflow
 
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
