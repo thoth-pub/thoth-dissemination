@@ -17,12 +17,27 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: openbookpublishers/thoth-dissemination:latest
+    permissions:
+      # Required for Google Play workflow
+      contents: read
+      id-token: write
     steps:
       - name: Make all platform credentials available to later steps (with names lowercased)
         uses: oNaiPs/secrets-to-env-action@v1.5
         with:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
+          exclude: GOOGLE_WORKLOAD_ID_PROVIDER, GOOGLE_SERVICE_ACCOUNT
+
+      - name: Checkout (google-github-actions/auth prerequisite)
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        if: inputs.platform == 'GooglePlay'
+        with:
+          workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
+          service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
       - name: Run disseminator using Dockerhub image
         run: |
@@ -58,7 +73,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: pip install -r requirements_write_locations.txt

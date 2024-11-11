@@ -24,6 +24,7 @@ from museuploader import MUSEUploader
 from jstoruploader import JSTORUploader
 from ebscouploader import EBSCOUploader
 from proquestuploader import ProquestUploader
+from googleplayuploader import GooglePlayUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
@@ -37,6 +38,7 @@ UPLOADERS = {
     "JSTOR": JSTORUploader,
     "EBSCOHost": EBSCOUploader,
     "ProQuest": ProquestUploader,
+    "GooglePlay": GooglePlayUploader,
 }
 
 UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())
