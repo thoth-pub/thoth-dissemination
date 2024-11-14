@@ -94,7 +94,8 @@ jobs:
         with:
           connection_url: ${{ secrets.THOTH_SMTP }}
           subject: New book submitted to ${{ inputs.platform }} via Thoth (${{ inputs.work-id }})
-          to: [redacted]
+          # NB: Actions secrets names are case-insensitive, so no need to check/change casing of platform name
+          to: ${{ secrets[format('{0}_NOTIF_EMAIL', inputs.platform)] }}
           from: Thoth Open Metadata <distribution@thoth.pub>
           body: Please find the metadata submission for https://thoth.pub/books/${{ inputs.work-id }} in your upload folder. We look forward to receiving the file location once registered. Thank you!
           cc: info@thoth.pub
