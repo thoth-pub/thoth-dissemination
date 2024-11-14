@@ -87,7 +87,7 @@ jobs:
   send-email:
     runs-on: ubuntu-latest
     needs: disseminate
-    if: inputs.platform == 'OAPEN'
+    if: contains(fromJSON('["OAPEN", "EBSCOHost"]'), inputs.platform)
     steps:
       - name: Send notification email
         uses: dawidd6/action-send-mail@v3
