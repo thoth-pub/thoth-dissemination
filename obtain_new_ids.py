@@ -297,6 +297,44 @@ class GooglePlayIDFinder(IDFinder):
         pass
 
 
+class OapenIDFinder(IDFinder):
+    """Logic for retrieving work IDs which is specific to OAPEN dissemination"""
+
+    def get_query_parameters(self):
+        """
+        Construct Thoth work ID query parameters depending on platform-specific
+        requirements
+        """
+        # Target: all active (published) works listed in Thoth (from the selected publishers).
+        self.work_statuses = '[ACTIVE]'
+        # Start with the most recent, so that we can disregard everything else
+        # as soon as we hit the first work published earlier than the desired date range.
+        self.order = '{field: PUBLICATION_DATE, direction: DESC}'
+        self.updated_at_with_relations = None
+
+    def get_thoth_ids(self):
+        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can remove this overriding method and simply construct a standard query
+        # filtering by publication date
+
+        # In addition to the conditions of the query parameters, we need to filter the results
+        # to obtain only works with a publication date within the previous week.
+        # The schedule for finding and depositing newly published works is once weekly.
+        current_date = datetime.now(UTC).date()
+        previous_day = current_date - timedelta(days=7)
+
+        self.get_thoth_ids_iteratively(previous_day, previous_day)
+
+    def post_process(self):
+        """
+        Amend list of retrieved work IDs depending on platform-specific
+        requirements
+        """
+        # Not required - keep full list
+        pass
+
+
 def get_arguments():
     """Simple argument parsing"""
     parser = argparse.ArgumentParser()
@@ -319,12 +357,14 @@ if __name__ == '__main__':
             id_finder = CrossrefIDFinder()
         case 'GooglePlay':
             id_finder = GooglePlayIDFinder()
+        case 'OAPEN':
+            id_finder = OapenIDFinder()
         case 'Figshare' | 'Zenodo' | 'CUL':
             id_finder = CatchupIDFinder()
         case _:
             logging.error(
                 'Platform must be one of InternetArchive, Crossref, Figshare, '
-                'Zenodo, CUL or GooglePlay')
+                'Zenodo, CUL, GooglePlay or OAPEN')
             sys.exit(1)
 
     id_finder.run()
