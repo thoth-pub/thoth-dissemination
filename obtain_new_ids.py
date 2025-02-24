@@ -41,6 +41,7 @@ class IDFinder():
         self.get_thoth_ids()
         self.remove_exceptions()
         self.post_process()
+        logging.info('List of IDs found: {}'.format(self.thoth_ids))
         print(self.thoth_ids)
 
     def get_publishers(self):
