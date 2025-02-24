@@ -285,10 +285,10 @@ class OapenIDFinder(IDFinder):
         # to obtain only works with a publication date within the previous week.
         # The schedule for finding and depositing newly published works is once weekly.
         current_date = datetime.now(UTC).date()
-        previous_day = current_date - timedelta(days=7)
+        previous_week_end = current_date - timedelta(days=1)
+        previous_week_start = previous_week_end - timedelta(days=6)
 
-        self.get_thoth_ids_iteratively(previous_day, previous_day)
-
+        self.get_thoth_ids_iteratively(previous_week_start, previous_week_end)
 
 def get_arguments():
     """Simple argument parsing"""
