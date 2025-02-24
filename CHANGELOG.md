@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[0.1.19]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.19) - 2025-02-24
+### Fixed
+  - Fixed date calculation error in OAPEN automatic upload workflow
+
 ## [[0.1.18]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.18) - 2025-02-20
 ### Added
   - GitHub Actions for recurring automatic uploads of newly published works to OAPEN
