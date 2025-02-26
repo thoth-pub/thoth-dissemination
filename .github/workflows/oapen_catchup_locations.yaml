@@ -1,0 +1,72 @@
+# Purpose: write newly-registered OAPEN/DOAB locations to Thoth records.
+# Weekly catchup check of OAPEN/DOAB APIs for works not previously listed.
+name: oapen-catchup-locations
+
+on:
+  schedule:
+    # 'at 02:20 every Tuesday'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '20 2 * * 2'
+  workflow_dispatch:
+
+jobs:
+  obtain-locations:
+    runs-on: ubuntu-latest
+    outputs:
+      NEW_LOCATIONS: ${{ steps.get-locations.outputs.NEW_LOCATIONS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements_obtain_new_ids.txt
+
+      - name: Get details of works without locations using Python script
+        id: get-ids
+        run: |
+          output=$(python obtain_new_ids.py --platform OAPEN --locations)
+          echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
+        env:
+          ENV_PUBLISHERS: ${{ vars.OAPEN_ENV_PUBLISHERS }}
+          ENV_EXCEPTIONS: ${{ vars.OAPEN_ENV_EXCEPTIONS }}
+
+      - name: Get locations for selected works using Python script
+        id: get-locations
+        run: |
+          output=$(echo "${{ steps.get-ids.outputs.NEW_IDS }}" | python obtain_locations.py)
+          echo "NEW_LOCATIONS=$output" >> $GITHUB_OUTPUT
+
+  write-locations:
+    runs-on: ubuntu-latest
+    needs: obtain-locations
+    if: needs.obtain-locations.outputs.NEW_LOCATIONS != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(needs.obtain-locations.outputs.NEW_LOCATIONS) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements_write_locations.txt
+
+      - name: Write location to temp file
+        run: echo "${{ matrix.location }}" >> location.txt
+
+      - name: Write location to Thoth using Python script
+        run: python write_locations.py location.txt
+        env:
+          THOTH_EMAIL: ${{ secrets.THOTH_EMAIL }}
+          THOTH_PWD: ${{ secrets.THOTH_PWD }}

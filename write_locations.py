@@ -46,6 +46,9 @@ if __name__ == '__main__':
         for location in locations:
             parts = location.rstrip().split(' ')
             try:
+                # Handle locations which only have a landing page, no full text URL
+                if parts[3] == "None":
+                    parts[3] = None
                 write_thoth_location(parts[0], parts[1], parts[2], parts[3])
             except IndexError:
                 raise ValueError('Not enough data in entry "{}"'.location)
