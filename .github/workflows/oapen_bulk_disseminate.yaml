@@ -1,0 +1,22 @@
+# Purpose: upload newly-published works from Thoth to OAPEN FTP server.
+# Uploads all active Thoth works with a publication date within the previous week.
+# Work must have an OA licence, and a valid URL supplied as the PDF Publication Canonical Location.
+# Credentials must be present as repository secrets named OAPEN_FTP_USER and OAPEN_FTP_PW.
+name: oapen-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 02:20 every Monday'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '20 2 * * 1'
+  workflow_dispatch:
+
+jobs:
+  oapen-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'OAPEN'
+      env_publishers: ${{ vars.OAPEN_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.OAPEN_ENV_EXCEPTIONS }}
+    secrets: inherit

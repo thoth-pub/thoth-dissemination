@@ -1,5 +1,5 @@
 # Purpose: upload newly-published works from Thoth to dedicated Google Play crawl server.
-# Deposits all active/forthcoming Thoth works updated since last scheduled run.
+# Uploads all active Thoth works with a publication date within the previous day.
 # Google Play collection-code for each relevant publisher must be present as
 # repository secret named GOOGLE_PLAY_COLL_[publisher_id].
 # Repository secrets GOOGLE_PLAY_BUCKET, GOOGLE_SERVICE_ACCOUNT and GOOGLE_WORKLOAD_ID_PROVIDER

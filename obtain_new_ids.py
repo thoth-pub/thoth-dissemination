@@ -41,6 +41,7 @@ class IDFinder():
         self.get_thoth_ids()
         self.remove_exceptions()
         self.post_process()
+        logging.info('List of IDs found: {}'.format(self.thoth_ids))
         print(self.thoth_ids)
 
     def get_publishers(self):
@@ -73,6 +74,18 @@ class IDFinder():
                 sys.exit(1)
 
         self.publishers = json.dumps(publishers_env)
+
+    def get_query_parameters(self):
+        """
+        Construct Thoth work ID query parameters depending on platform-specific
+        requirements
+        """
+        # Default: all active (published) works listed in Thoth (from the selected publishers).
+        self.work_statuses = '[ACTIVE]'
+        # Start with the most recent, so that we can disregard everything else
+        # as soon as we hit the first work published earlier than the desired date range.
+        self.order = '{field: PUBLICATION_DATE, direction: DESC}'
+        self.updated_at_with_relations = None
 
     def get_thoth_ids(self):
         """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
@@ -145,6 +158,14 @@ class IDFinder():
                     'Failed to retrieve excepted works from environment variable')
                 sys.exit(1)
 
+    def post_process(self):
+        """
+        Amend list of retrieved work IDs depending on platform-specific
+        requirements
+        """
+        # Default: not required - keep full list
+        pass
+
 
 class CrossrefIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Crossref dissemination"""
@@ -175,11 +196,6 @@ class CrossrefIDFinder(IDFinder):
         self.order = '{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}'
         self.updated_at_with_relations = '{{timestamp: "{}", expression: GREATER_THAN}}'.format(
             last_deposit_time_str)
-
-    def post_process(self):
-        """Amend list of retrieved work IDs depending on Crossref-specific requirements"""
-        # Not required for Crossref dissemination - keep full list
-        pass
 
 
 class InternetArchiveIDFinder(IDFinder):
@@ -221,18 +237,6 @@ class CatchupIDFinder(IDFinder):
     is handled separately, as its API allows a simpler workflow.
     """
 
-    def get_query_parameters(self):
-        """
-        Construct Thoth work ID query parameters depending on platform-specific
-        requirements
-        """
-        # Target: all active (published) works listed in Thoth (from the selected publishers).
-        self.work_statuses = '[ACTIVE]'
-        # Start with the most recent, so that we can disregard everything else
-        # as soon as we hit the first work published earlier than the desired date range.
-        self.order = '{field: PUBLICATION_DATE, direction: DESC}'
-        self.updated_at_with_relations = None
-
     def get_thoth_ids(self):
         """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
         # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
@@ -250,29 +254,9 @@ class CatchupIDFinder(IDFinder):
 
         self.get_thoth_ids_iteratively(previous_month_start, previous_month_end)
 
-    def post_process(self):
-        """
-        Amend list of retrieved work IDs depending on platform-specific
-        requirements
-        """
-        # Not required - keep full list
-        pass
-
 
 class GooglePlayIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Google Play dissemination"""
-
-    def get_query_parameters(self):
-        """
-        Construct Thoth work ID query parameters depending on platform-specific
-        requirements
-        """
-        # Target: all active (published) works listed in Thoth (from the selected publishers).
-        self.work_statuses = '[ACTIVE]'
-        # Start with the most recent, so that we can disregard everything else
-        # as soon as we hit the first work published earlier than the desired date range.
-        self.order = '{field: PUBLICATION_DATE, direction: DESC}'
-        self.updated_at_with_relations = None
 
     def get_thoth_ids(self):
         """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
@@ -288,19 +272,74 @@ class GooglePlayIDFinder(IDFinder):
 
         self.get_thoth_ids_iteratively(previous_day, previous_day)
 
+
+class OapenIDFinder(IDFinder):
+    """Logic for retrieving work IDs which is specific to OAPEN dissemination"""
+
+    def get_thoth_ids(self):
+        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can remove this overriding method and simply construct a standard query
+        # filtering by publication date
+
+        # In addition to the conditions of the query parameters, we need to filter the results
+        # to obtain only works with a publication date within the previous week.
+        # The schedule for finding and depositing newly published works is once weekly.
+        current_date = datetime.now(UTC).date()
+        previous_week_end = current_date - timedelta(days=1)
+        previous_week_start = previous_week_end - timedelta(days=6)
+
+        self.get_thoth_ids_iteratively(previous_week_start, previous_week_end)
+
+
+class OapenLocationsIDFinder(IDFinder):
+    """
+    Helper class for workflow which updates Thoth records with newly-registered
+    OAPEN/DOAB location URLs (by searching their APIs). See obtain_locations.py.
+    """
+
+    def get_query_parameters(self):
+        """Construct Thoth work ID query parameters based on OAPEN location workflow requirements"""
+        # Target: all active (published) works listed in Thoth (from the selected publishers).
+        self.work_statuses = '[ACTIVE]'
+        # Order doesn't matter: default to publication date descending
+        self.order = '{field: PUBLICATION_DATE, direction: DESC}'
+        self.updated_at_with_relations = None
+
     def post_process(self):
         """
-        Amend list of retrieved work IDs depending on platform-specific
-        requirements
+        Narrow down the results to works which have a PDF publication but no OAPEN location.
+        Note that this returns a list of tuples of publication IDs and DOIs
+        (both required in next stage of workflow), rather than a list of work IDs.
         """
-        # Not required - keep full list
-        pass
+        oapen_location_required = []
+        for id in self.thoth_ids:
+            work = self.thoth.work_by_id(id)
+            try:
+                pdf_publication = [pub for pub in work.publications
+                                   if pub.publicationType == 'PDF'][0]
+            except IndexError:
+                # No PDF publication, so no OAPEN location - skip
+                continue
+            try:
+                [loc for loc in pdf_publication.locations
+                 if loc.locationPlatform == 'OAPEN'][0]
+            except IndexError:
+                # No existing OAPEN location found - add it to the list to search on
+                if work.doi:
+                    # If the work doesn't have a DOI, we can't easily search on it - skip
+                    doi = work.doi.replace('https://doi.org/', '')
+                    publication_id = pdf_publication.publicationId
+                    oapen_location_required.append((publication_id, doi))
+
+        self.thoth_ids = oapen_location_required
 
 
 def get_arguments():
     """Simple argument parsing"""
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--platform")
+    parser.add_argument("--locations", action=argparse.BooleanOptionalAction)
     args = parser.parse_args()
     return args
 
@@ -311,20 +350,32 @@ if __name__ == '__main__':
 
     args = get_arguments()
     platform = args.platform
+    locations = args.locations
 
-    match platform:
-        case 'InternetArchive':
-            id_finder = InternetArchiveIDFinder()
-        case 'Crossref':
-            id_finder = CrossrefIDFinder()
-        case 'GooglePlay':
-            id_finder = GooglePlayIDFinder()
-        case 'Figshare' | 'Zenodo' | 'CUL':
-            id_finder = CatchupIDFinder()
-        case _:
-            logging.error(
-                'Platform must be one of InternetArchive, Crossref, Figshare, '
-                'Zenodo, CUL or GooglePlay')
-            sys.exit(1)
+    if locations:
+        match platform:
+            case 'OAPEN':
+                id_finder = OapenLocationsIDFinder()
+            case _:
+                logging.error(
+                    'Locations option is only supported for OAPEN')
+                sys.exit(1)
+    else:
+        match platform:
+            case 'InternetArchive':
+                id_finder = InternetArchiveIDFinder()
+            case 'Crossref':
+                id_finder = CrossrefIDFinder()
+            case 'GooglePlay':
+                id_finder = GooglePlayIDFinder()
+            case 'OAPEN':
+                id_finder = OapenIDFinder()
+            case 'Figshare' | 'Zenodo' | 'CUL':
+                id_finder = CatchupIDFinder()
+            case _:
+                logging.error(
+                    'Platform must be one of InternetArchive, Crossref, Figshare, '
+                    'Zenodo, CUL, GooglePlay or OAPEN')
+                sys.exit(1)
 
     id_finder.run()
