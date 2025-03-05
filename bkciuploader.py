@@ -5,7 +5,7 @@ Retrieve and disseminate files and metadata to Clarivate Web of Science Book Cit
 
 import logging
 import sys
-from datetime import date
+from datetime import datetime, UTC
 from ftplib import FTP, error_perm
 from io import BytesIO, TextIOWrapper
 from errors import DisseminationError
@@ -18,6 +18,12 @@ class BKCIUploader(Uploader):
     def upload_to_platform(self):
         """
         Upload work in required format to Clarivate Web of Science Book Citation Index (BKCI).
+
+        Content required: PDF work file
+        Metadata required: CSV containing at minimum (1) titles provided, (2) ISBNs,
+                           (3) file name per title, (4) publication date
+        Naming convention: Not strictly controlled, but use simple/human-readable names e.g. ISBN
+        Upload directory: per-upload subfolder (e.g. datestamped) within `INCOMING-BOOKS` folder
         """
 
         # Check that BKCI credentials have been provided for this publisher
@@ -31,7 +37,7 @@ class BKCIUploader(Uploader):
 
         metadata_csv = self.parse_metadata()
         filename = self.get_isbn('PDF')
-        folder_name = date.today().isoformat().replace('-', '')
+        folder_name = datetime.strftime(datetime.now(UTC), "%Y%m%d%H%M%S")
         pdf = self.get_publication_details('PDF')
 
         try:
@@ -41,7 +47,7 @@ class BKCIUploader(Uploader):
                 passwd=passwd,
             ) as ftp:
                 try:
-                    ftp.cwd('/INCOMING-BOOKS')
+                    ftp.cwd('INCOMING-BOOKS')
                 except FileNotFoundError:
                     logging.error(
                         'Could not find folder "INCOMING-BOOKS" on BKCI FTP server')
@@ -69,6 +75,8 @@ class BKCIUploader(Uploader):
                 except error_perm as error:
                     logging.error(
                         'Error uploading metadata to BKCI FTP server: {}'.format(error))
+                    # Avoid deleting any partially-uploaded items (as is done in other
+                    # workflows) because instructions forbid making changes post-upload
                     sys.exit(1)
         except error_perm as error:
             logging.error(
