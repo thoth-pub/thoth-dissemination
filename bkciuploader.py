@@ -3,12 +3,11 @@
 Retrieve and disseminate files and metadata to Clarivate Web of Science Book Citation Index (BKCI)
 """
 
-import csv
 import logging
 import sys
 from datetime import date
 from ftplib import FTP, error_perm
-from io import BytesIO, StringIO
+from io import BytesIO, TextIOWrapper
 from errors import DisseminationError
 from uploader import Uploader
 
@@ -66,7 +65,7 @@ class BKCIUploader(Uploader):
                         'Error uploading PDF to BKCI FTP server: {}'.format(error))
                     sys.exit(1)
                 try:
-                    ftp.storlines('STOR {}.csv'.format(folder_name), metadata_csv)
+                    ftp.storbinary('STOR {}.csv'.format(folder_name), metadata_csv)
                 except error_perm as error:
                     logging.error(
                         'Error uploading metadata to BKCI FTP server: {}'.format(error))
@@ -84,10 +83,15 @@ class BKCIUploader(Uploader):
         isbn = self.get_isbn('PDF')
         filename = '{}.pdf'.format(isbn)
         pub_date = self.metadata.get('data').get('work').get('publicationDate')
-        metadata_csv = StringIO()
         rows = [
-            ["Title", "ISBN", "Publication date", "Filename"],
-            [title, isbn, pub_date, filename]
+            "Title, ISBN, Publication date, Filename\n",
+            "{}, {}, {}, {}\n".format(title, isbn, pub_date, filename)
         ]
-        csv.writer(metadata_csv).writerows(rows)
-        return metadata_csv
+
+        metadata_bytes = BytesIO()
+        metadata_text = TextIOWrapper(metadata_bytes)
+        metadata_text.writelines(rows)
+        metadata_text.detach()
+        metadata_bytes.seek(0)
+
+        return metadata_bytes
