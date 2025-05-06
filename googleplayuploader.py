@@ -49,13 +49,10 @@ class GooglePlayUploader(Uploader):
         epub_error = None
         try:
             pdf = self.get_publication_details('PDF')
-            try:
-                filename = self.get_isbn('PDF')
-                content_files.append(('{}{}'.format(filename, pdf.file_ext), pdf.bytes))
-            except DisseminationError as error:
-                pdf_error = error + '/n Make sure the PDF Publication in Thoth has a valid ISBN.'
+            filename = self.get_isbn('PDF')
+            content_files.append(('{}{}'.format(filename, pdf.file_ext), pdf.bytes))
         except DisseminationError as error:
-            pdf_error = error
+            pdf_error = f"{error}\nMake sure the PDF Publication in Thoth has a valid ISBN."
         try:
             epub = self.get_publication_details('EPUB')
             if not filename:
