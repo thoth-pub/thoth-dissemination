@@ -49,8 +49,11 @@ class GooglePlayUploader(Uploader):
         epub_error = None
         try:
             pdf = self.get_publication_details('PDF')
-            filename = self.get_isbn('PDF')
-            content_files.append(('{}{}'.format(filename, pdf.file_ext), pdf.bytes))
+            try:
+                filename = self.get_isbn('PDF')
+                content_files.append(('{}{}'.format(filename, pdf.file_ext), pdf.bytes))
+            except DisseminationError as error:
+                pdf_error = error + '/n Make sure the PDF Publication in Thoth has a valid ISBN.'
         except DisseminationError as error:
             pdf_error = error
         try:
@@ -61,6 +64,10 @@ class GooglePlayUploader(Uploader):
         except DisseminationError as error:
             epub_error = error
         if pdf_error and epub_error:
+            logging.error(
+                'Errors occurred with both PDF and EPUB files for Google Play upload. '
+                'Fix either one or both of the errors below:'
+            )
             logging.error(pdf_error)
             logging.error(epub_error)
             sys.exit(1)
