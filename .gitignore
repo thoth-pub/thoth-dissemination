@@ -105,6 +105,7 @@ celerybeat.pid
 config.env
 .env
 .venv
+3_1env/
 env/
 venv/
 ENV/

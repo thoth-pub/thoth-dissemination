@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from iauploader import IAUploader
 from oapenuploader import OAPENUploader
+from oapensworduploader import OAPENSWORDUploader
 from souploader import SOUploader
 from culuploader import CULUploader
 from crossrefuploader import CrossrefUploader
@@ -29,6 +30,7 @@ from googleplayuploader import GooglePlayUploader
 UPLOADERS = {
     "InternetArchive": IAUploader,
     "OAPEN": OAPENUploader,
+    "OAPENSWORD": OAPENSWORDUploader,
     "ScienceOpen": SOUploader,
     "CUL": CULUploader,
     "Crossref": CrossrefUploader,
