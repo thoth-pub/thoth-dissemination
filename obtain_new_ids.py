@@ -27,6 +27,7 @@ class IDFinder():
         self.thoth = ThothClient()
         self.thoth_ids = []
         self.work_statuses = None
+        self.work_types = None
         self.publishers = None
         self.order = None
         self.updated_at_with_relations = None
@@ -95,6 +96,7 @@ class IDFinder():
             # The default limit is 100; publishers' back catalogues may be bigger than that
             limit='9999',
             work_statuses=self.work_statuses,
+            work_types=self.work_types,
             order=self.order,
             publishers=self.publishers,
             updated_at_with_relations=self.updated_at_with_relations,
@@ -292,6 +294,29 @@ class OapenIDFinder(IDFinder):
         self.get_thoth_ids_iteratively(previous_week_start, previous_week_end)
 
 
+class BKCIIDFinder(IDFinder):
+    """Logic for retrieving work IDs which is specific to Clarivate Web of Science Book Citation Index (BKCI) dissemination"""
+
+    def get_query_parameters(self):
+        """Construct Thoth work ID query parameters depending on Internet Archive-specific requirements"""
+        # Target: all active (published) works listed in Thoth (from the selected publishers).
+        self.work_statuses = '[ACTIVE]'
+        # Textbooks not accepted
+        self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, BOOK_SET]'
+        # Start with the earliest, so that the upload is logically ordered
+        self.order = '{field: PUBLICATION_DATE, direction: ASC}'
+        self.updated_at_with_relations = None
+
+    def get_thoth_ids(self):
+        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can remove this overriding method and simply construct a standard query
+        # filtering by publication date
+
+        #     2. Time span: Publication year equal to 2017 through the present.  
+        # 3. Not accepted: textbooks
+
+
 class OapenLocationsIDFinder(IDFinder):
     """
     Helper class for workflow which updates Thoth records with newly-registered
@@ -372,6 +397,8 @@ if __name__ == '__main__':
                 id_finder = OapenIDFinder()
             case 'Figshare' | 'Zenodo' | 'CUL':
                 id_finder = CatchupIDFinder()
+            case 'BKCI':
+                id_finder = BKCIIDFinder()
             case _:
                 logging.error(
                     'Platform must be one of InternetArchive, Crossref, Figshare, '
