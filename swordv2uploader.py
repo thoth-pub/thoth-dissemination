@@ -197,143 +197,94 @@ class SwordV2Uploader(Uploader):
         work_metadata = self.metadata.get('data').get('work')
         logging.info("Creating OAPEN SWORD metadata")
         # logging.info(work_metadata)
-        oapen_metadata = sword2.Entry(
-            # swordv2-server.simpledc.abstract
-            # swordv2-server.atom.summary
-            # dcterms_abstract should be the abstract in English.
+        oapen_metadata = sword2.Entry()
+        oapen_metadata.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
+        # A URL is required here; not sure if the one selected is appropriate
+        oapen_metadata.register_namespace("oapen", "https://oapen.org")
+        oapen_metadata.add_fields(
+            # dc_description_abstract should be the abstract in English.
             # we don't have that metadata currently in Thoth. When multilingualism is
             # implemented, we can revisit this.
-            dcterms_abstract=work_metadata.get('longAbstract'),
-            # swordv2-server.simpledc.description
-            # see note above for dcterms_abstract; same here
-            dcterms_description=work_metadata.get('longAbstract'),
-            # swordv2-server.simpledc.accessRights
-            # swordv2-server.simpledc.rights
-            # swordv2-server.simpledc.rightsHolder
-            # swordv2-server.atom.rights
-            dcterms_rights=work_metadata.get('license'),
-            # Needs to be sent in datetime format (otherwise causes error 500),
-            # but is retrieved as `str` so can just append required elements
-            # swordv2-server.simpledc.created
-            # swordv2-server.atom.published
-            # swordv2-server.atom.updated
-            dcterms_created="{}T00:00:00Z".format(
-                work_metadata.get('publicationDate')),
-            # swordv2-server.simpledc.issued
+            dc_description_abstract=work_metadata.get('longAbstract'),
             # OAPEN needs year only for this field
-            dcterms_issued=work_metadata.get('publicationDate').split('-')[0],
-            # swordv2-server.simpledc.publisher
-            dcterms_publisher=self.get_publisher_name(),
-            # swordv2-server.simpledc.coverage
-            dcterms_coverage='open access',
-            # swordv2-server.simpledc.spatial
-            dcterms_spatial='global',
-            # swordv2-server.simpledc.temporal
-            dcterms_temporal='all time',
-            # swordv2-server.simpledc.title
-            # swordv2-server.atom.title
-            dcterms_title=work_metadata.get('fullTitle'),
-            # swordv2-server.simpledc.type
-            # "Recommended practice is to use a controlled vocabulary such as
-            # the DCMI Type Vocabulary" (see
-            # https://www.dublincore.org/specifications/dublin-core/dcmi-terms/#section-7)
-            dcterms_type='text',
-
-            # Not appropriate as we may be submitting multiple formats
-            # (PDF, XML etc):
-            # # swordv2-server.simpledc.extent
-            # dcterms_format_extent=
-            # # swordv2-server.simpledc.format
-            # dcterms_format=
-            # # swordv2-server.simpledc.medium
-            # dcterms_format_medium=
-
-            # Not supported by Thoth:
-            # # swordv2-server.simpledc.alternative
-            # dcterms_title_alternative=
-            # # swordv2-server.simpledc.bibliographicCitation
-            # dcterms_identifier_citation=
-            # # swordv2-server.simpledc.dateAccepted
-            # dcterms_date_accepted=
-            # # swordv2-server.simpledc.dateSubmitted
-            # dcterms_date_submitted=
-            # # swordv2-server.simpledc.isReferencedBy
-            # dcterms_relation_isreferencedby=
-            # "A related resource that requires the described resource to
-            # support its function, delivery, or coherence"
-            # # swordv2-server.simpledc.isRequiredBy
-            # dcterms_relation_isrequiredby=
-            # # swordv2-server.simpledc.modified
-            # dcterms_date_modified=
-            # # swordv2-server.simpledc.provenance
-            # dcterms_description_provenance=
-            # "A related resource that is required by the described resource to
-            # support its function, delivery, or coherence"
-            # # swordv2-server.simpledc.requires
-            # dcterms_relation_requires=
-            # "A related resource from which the described resource is derived"
-            # (e.g. print version of scan); most cases would be covered by
-            # dc_relation fields
-            # # swordv2-server.simpledc.source
-            # dcterms_source=
+            dc_date_issued=work_metadata.get('publicationDate').split('-')[0],
+            oapen_imprint=self.get_publisher_name(),
+            # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
+            oapen_relation_isPublishedBy=self.get_publisher_name(),
+            dc_title=work_metadata.get('title'),
+            dc_title_alternative=work_metadata.get('subtitle'),
+            # options are "book" or "chapter"
+            dc_type='book',
         )
 
-        for contributor in [n.get('fullName') for n in work_metadata.get(
+        # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
+        # as format, and also states `dc_contributor` in place of `dc_contributor_other`
+        for contributor in [n for n in work_metadata.get(
                 'contributions') if n.get('mainContribution') is True]:
-            # swordv2-server.simpledc.contributor
-            oapen_metadata.add_field("dcterms_contributor", contributor)
-            # swordv2-server.simpledc.creator
-            # swordv2-server.atom.author
-            # Doesn't seem to work; not clear how to represent
-            # "dc.contributor.author" in dcterms
-            oapen_metadata.add_field("dcterms_author", contributor)
-            # swordv2-server.simpledc.identifier
-            oapen_metadata.add_field("dcterms_identifier",
+            match contributor.get('contributionType'):
+                case 'AUTHOR':
+                    oapen_metadata.add_field("dc_contributor_author", contributor.get('fullName'))
+                case 'EDITOR':
+                    oapen_metadata.add_field("dc_contributor_editor", contributor.get('fullName'))
+                case _:
+                    oapen_metadata.add_field("dc_contributor_other", contributor.get('fullName'))
+        oapen_metadata.add_field("oapen_identifier_doi",
                                  work_metadata.get('doi'))
         for isbn in [
             n.get('isbn').replace(
                 '-',
                 '') for n in work_metadata.get('publications') if n.get('isbn')
                 is not None]:
-            oapen_metadata.add_field("dcterms_identifier", isbn)
+            oapen_metadata.add_field("oapen_relation_isbn", isbn)
         for language in [n.get('languageCode')
                          for n in work_metadata.get('languages')]:
-            # swordv2-server.simpledc.language
             # pycountry translates ISO codes to language name in English (e.g. "English" instead of "ENG" )
             # per OAPEN requirements
-            oapen_formatted_language = pycountry.languages.get(alpha_3=language)
-            oapen_metadata.add_field("dcterms_language", oapen_formatted_language.name)
-        for subject in [n.get('subjectCode')
-                        for n in work_metadata.get('subjects')]:
-            # swordv2-server.simpledc.subject
-            oapen_metadata.add_field("dcterms_subject", subject)
-        for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
-                'relatedWork').get('doi'))
-                for n in work_metadata.get('relations')]:
-            if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
-                # swordv2-server.simpledc.isPartOf
-                oapen_metadata.add_field("dcterms_isPartOf", relation_doi)
-            elif relation_type == 'IS_REPLACED_BY':
-                # swordv2-server.simpledc.isReplacedBy
-                oapen_metadata.add_field("dcterms_isReplacedBy", relation_doi)
-            elif relation_type == 'REPLACES':
-                # swordv2-server.simpledc.replaces
-                oapen_metadata.add_field("dcterms_replaces", relation_doi)
-            else:
-                # swordv2-server.simpledc.relation
-                oapen_metadata.add_field("dcterms_relation", relation_doi)
-        for (
-            reference_citation,
-            reference_doi) in [
-            (n.get('unstructuredCitation'),
-             n.get('doi')) for n in work_metadata.get('references')]:
-            # will always have one or the other (if not both)
-            reference = (
-                reference_citation if reference_citation else reference_doi)
-            # swordv2-server.simpledc.references
-            oapen_metadata.add_field("dcterms_references", reference)
-            oapen_metadata.add_field("dcterms_identifier",
+            # (some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the less common
+            # "bibliographic" variant, so check for this variant first to avoid failed lookups)
+            oapen_formatted_language = pycountry.languages.get(bibliographic=language) or pycountry.languages.get(alpha_3=language)
+            oapen_metadata.add_field("dc_language", oapen_formatted_language.name)
+        for subject in work_metadata.get('subjects'):
+            match subject.get('subjectType'):
+                # note "Thema codes used" list supplied by OAPEN:
+                # any further conversion needed?
+                case 'THEMA':
+                    oapen_metadata.add_field("dc_subject_classification", subject.get('subjectCode'))
+                case 'KEYWORD':
+                    oapen_metadata.add_field("dc_subject_other", subject.get('subjectCode'))
+                case _:
+                    pass
+        # TBD if Thoth will be sending chapters (or chapter info?)
+        # for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
+        #         'relatedWork').get('doi'))
+        #         for n in work_metadata.get('relations')]:
+        #     if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
+        #         oapen_metadata.add_field("dc_isPartOf", relation_doi)
+        #     elif relation_type == 'IS_REPLACED_BY':
+        #         oapen_metadata.add_field("dc_isReplacedBy", relation_doi)
+        #     elif relation_type == 'REPLACES':
+        #         oapen_metadata.add_field("dc_replaces", relation_doi)
+        #     else:
+        #         oapen_metadata.add_field("dc_relation", relation_doi)
+
+        oapen_metadata.add_field("dc_identifier",
                                  "thoth-work-id:{}".format(self.work_id))
+
+        for issue in work_metadata.get('issues'):
+            oapen_metadata.add_field("dc_identifier_issn", issue.get('series').get('issnDigital'))
+            oapen_metadata.add_field("dc_relation_ispartofseries", issue.get('series').get('seriesName'))
+            oapen_metadata.add_field("oapen_series_number", str(issue.get('issueOrdinal')))
+
+        for funding in work_metadata.get('fundings'):
+            oapen_metadata.add_field("oapen_grant_number", funding.get('grantNumber'))
+            oapen_metadata.add_field("oapen_grant_program", funding.get('program'))
+            oapen_metadata.add_field("oapen_grant_project", funding.get('projectName'))
+            # appears in spreadsheet twice; second time states OAPEN funder ID list is needed
+            oapen_metadata.add_field("oapen_relation_isFundedBy", funding.get('institution').get('institutionName'))
+        oapen_metadata.add_field("oapen_identifier_ocn", work_metadata.get('oclc'))
+        oapen_metadata.add_field("oapen_pages", str(work_metadata.get('pageCount')))
+        oapen_metadata.add_field("oapen_place_publication", work_metadata.get('place'))
+        oapen_metadata.add_field("dc_description_version", str(work_metadata.get('edition')))
 
         return oapen_metadata
         # return work_metadata
