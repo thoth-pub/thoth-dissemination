@@ -215,6 +215,11 @@ class SwordV2Uploader(Uploader):
             dc_title_alternative=work_metadata.get('subtitle'),
             # options are "book" or "chapter"
             dc_type='book',
+            oapen_identifier_doi=work_metadata.get('doi'),
+            oapen_identifier_ocn=work_metadata.get('oclc'),
+            oapen_pages=str(work_metadata.get('pageCount')),
+            oapen_place_publication=work_metadata.get('place'),
+            dc_description_version=str(work_metadata.get('edition')),
         )
 
         # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
@@ -228,8 +233,6 @@ class SwordV2Uploader(Uploader):
                     oapen_metadata.add_field("dc_contributor_editor", contributor.get('fullName'))
                 case _:
                     oapen_metadata.add_field("dc_contributor_other", contributor.get('fullName'))
-        oapen_metadata.add_field("oapen_identifier_doi",
-                                 work_metadata.get('doi'))
         for isbn in [
             n.get('isbn').replace(
                 '-',
@@ -267,6 +270,7 @@ class SwordV2Uploader(Uploader):
         #     else:
         #         oapen_metadata.add_field("dc_relation", relation_doi)
 
+        # TODO should we retain this?
         oapen_metadata.add_field("dc_identifier",
                                  "thoth-work-id:{}".format(self.work_id))
 
@@ -281,10 +285,6 @@ class SwordV2Uploader(Uploader):
             oapen_metadata.add_field("oapen_grant_project", funding.get('projectName'))
             # appears in spreadsheet twice; second time states OAPEN funder ID list is needed
             oapen_metadata.add_field("oapen_relation_isFundedBy", funding.get('institution').get('institutionName'))
-        oapen_metadata.add_field("oapen_identifier_ocn", work_metadata.get('oclc'))
-        oapen_metadata.add_field("oapen_pages", str(work_metadata.get('pageCount')))
-        oapen_metadata.add_field("oapen_place_publication", work_metadata.get('place'))
-        oapen_metadata.add_field("dc_description_version", str(work_metadata.get('edition')))
 
         return oapen_metadata
         # return work_metadata
