@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """
-Retrieve and disseminate files and metadata to 
-OAPEN Dspace using SWORD protocol
+Retrieve and disseminate files and metadata to
+OAPEN DSpace using SWORD protocol
 """
 
-import logging
-import sys
-from ftplib import FTP, error_perm
-from io import BytesIO
-from errors import DisseminationError
-from uploader import Uploader
 from dspaceuploader import DSpaceUploader, MetadataProfile
 from uploader import Location
 
@@ -18,7 +12,6 @@ class OAPENSWORDUploader(DSpaceUploader):
     """Dissemination logic for OAPEN SWORD"""
 
     def __init__(self, work_id, export_url, client_url, version):
-
         """Set OAPEN-specific parameters and pass them to DSpaceUploader"""
         user_name_string = 'oapen_ftp_user'
         user_pass_string = 'oapen_ftp_pw'
@@ -43,8 +36,7 @@ class OAPENSWORDUploader(DSpaceUploader):
             metadata_profile)
 
     def upload_to_platform(self):
-        """Set OAPEN-specific parameters and pass them to DSpaceUploader"""
-        """Perform standard upload then CUL-specific processing"""
+        """Perform standard upload then OAPEN-specific processing"""
         (publication_id, pdf_upload_receipt,
          deposit_receipt) = super().upload_to_platform()
         # Return details of created upload to be entered as a Thoth Location
