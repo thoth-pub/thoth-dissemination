@@ -150,7 +150,7 @@ class Uploader():
             sys.exit(1)
 
         match cover_ext:
-            case 'jpg':
+            case 'jpg' | 'jpeg':
                 expected_format = 'image/jpeg'
             case 'png':
                 expected_format = 'image/png'
