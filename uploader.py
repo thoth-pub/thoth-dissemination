@@ -145,12 +145,15 @@ class Uploader():
         cover_url = self.get_cover_url()
         cover_ext = cover_url.split('.')[-1].lower()
 
+        if cover_ext == 'jpeg':
+            cover_ext = 'jpg'
+
         if required_format and not required_format == cover_ext:
             logging.error('Work cover image has format "{}" instead of "{}"'.format(cover_ext, required_format))
             sys.exit(1)
 
         match cover_ext:
-            case 'jpg' | 'jpeg':
+            case 'jpg':
                 expected_format = 'image/jpeg'
             case 'png':
                 expected_format = 'image/png'
