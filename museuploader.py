@@ -20,7 +20,7 @@ class MUSEUploader(Uploader):
 
         Content required: PDF and/or EPUB work file plus JPG cover file
         Metadata required: Project MUSE ONIX 3.0 export
-        Naming convention: Use paperback ISBN for all filename roots
+        Naming convention: Use PDF ISBN for all filename roots
         Upload directory: `uploads`
         """
 
