@@ -4,6 +4,7 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 """
 
 import logging
+import pycountry
 import sys
 import sword2
 from enum import Enum
@@ -24,6 +25,7 @@ class MetadataProfile(Enum):
     JISC_ROUTER = 2
     # RIOXX = 3
     CUL_PILOT = 4
+    OAPEN = 5
 
 
 class SwordV2Uploader(Uploader):
@@ -42,21 +44,20 @@ class SwordV2Uploader(Uploader):
             metadata_profile):
         """Create connection to SWORD v2 endpoint"""
         super().__init__(work_id, export_url, client_url, version)
-        try:
-            user_name = self.get_variable_from_env(
-                user_name_string, 'SWORD v2')
-            user_pass = self.get_variable_from_env(
-                user_pass_string, 'SWORD v2')
-        except DisseminationError as error:
-            logging.error(error)
-            sys.exit(1)
-        self.api = SwordV2Api(work_id, user_name, user_pass,
-                              service_document_iri, collection_iri)
+        # try:
+        #     user_name = self.get_variable_from_env(
+        #         user_name_string, 'SWORD v2')
+        #     user_pass = self.get_variable_from_env(
+        #         user_pass_string, 'SWORD v2')
+        # except DisseminationError as error:
+        #     logging.error(error)
+        #     sys.exit(1)
+        # self.api = SwordV2Api(work_id, user_name, user_pass,
+        #                       service_document_iri, collection_iri)
         self.metadata_profile = metadata_profile
 
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
-
         # TODO SWORD2 is designed for deposit rather than retrieval, so there's
         # no easy way to search existing items i.e. check for duplicates.
         # One option would be to 1) call get_resource() on the collection URL,
@@ -79,46 +80,47 @@ class SwordV2Uploader(Uploader):
         # Convert Thoth work metadata into SWORD v2 format
         # (not expected to fail, as "required" metadata is minimal)
         sword_metadata = self.parse_metadata()
+        logging.info(sword_metadata)
 
-        try:
-            create_receipt = self.api.create_item(sword_metadata)
-        except DisseminationError as error:
-            logging.error(error)
-            sys.exit(1)
+        # try:
+        #     create_receipt = self.api.create_item(sword_metadata)
+        # except DisseminationError as error:
+        #     logging.error(error)
+        #     sys.exit(1)
 
-        # Any failure after this point will leave incomplete data in
-        # SWORD v2 server which will need to be removed.
-        try:
-            pdf_upload_receipt = self.api.upload_pdf(
-                create_receipt.edit_media, pdf_bytes)
-            self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
-            deposit_receipt = self.api.complete_deposit(create_receipt.edit)
-        except Exception as error:
-            # In all cases, we need to delete the partially-created item
-            # For expected failures, log before attempting deletion, then exit
-            # For unexpected failures, attempt deletion then let program crash
-            if isinstance(error, DisseminationError):
-                logging.error(error)
-            try:
-                self.api.delete_item(create_receipt.edit)
-            except DisseminationError as deletion_error:
-                logging.error(
-                    'Failed to delete incomplete item: {}'.format(
-                        deletion_error))
-            if isinstance(error, DisseminationError):
-                sys.exit(1)
-            else:
-                raise
+        # # Any failure after this point will leave incomplete data in
+        # # SWORD v2 server which will need to be removed.
+        # try:
+        #     pdf_upload_receipt = self.api.upload_pdf(
+        #         create_receipt.edit_media, pdf_bytes)
+        #     self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
+        #     deposit_receipt = self.api.complete_deposit(create_receipt.edit)
+        # except Exception as error:
+        #     # In all cases, we need to delete the partially-created item
+        #     # For expected failures, log before attempting deletion, then exit
+        #     # For unexpected failures, attempt deletion then let program crash
+        #     if isinstance(error, DisseminationError):
+        #         logging.error(error)
+        #     try:
+        #         self.api.delete_item(create_receipt.edit)
+        #     except DisseminationError as deletion_error:
+        #         logging.error(
+        #             'Failed to delete incomplete item: {}'.format(
+        #                 deletion_error))
+        #     if isinstance(error, DisseminationError):
+        #         sys.exit(1)
+        #     else:
+        #         raise
 
-        logging.info(
-            # If automatic deposit (no curation) is enabled, `alternate`
-            # should show the front-end URL of the upload (alternatively,
-            # use `location` for back-end URL)
-            'Successfully uploaded to SWORD v2 at {}'.format(
-                deposit_receipt.alternate))
+        # logging.info(
+        #     # If automatic deposit (no curation) is enabled, `alternate`
+        #     # should show the front-end URL of the upload (alternatively,
+        #     # use `location` for back-end URL)
+        #     'Successfully uploaded to SWORD v2 at {}'.format(
+        #         deposit_receipt.alternate))
 
-        # Return server responses as caller may want to extract location info
-        return (pdf_publication.id, pdf_upload_receipt, deposit_receipt)
+        # # Return server responses as caller may want to extract location info
+        # return (pdf_publication.id, pdf_upload_receipt, deposit_receipt)
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
@@ -131,6 +133,8 @@ class SwordV2Uploader(Uploader):
             # sword_metadata = self.profile_rioxx()
         elif self.metadata_profile == MetadataProfile.CUL_PILOT:
             sword_metadata = self.profile_cul_pilot()
+        elif self.metadata_profile == MetadataProfile.OAPEN:
+            sword_metadata = self.profile_oapen()
         else:
             raise NotImplementedError
 
@@ -185,6 +189,105 @@ class SwordV2Uploader(Uploader):
             "dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
         return cul_pilot_metadata
+    
+    def profile_oapen(self):
+        """
+        Profile developed in discussion with OAPEN
+        """
+        work_metadata = self.metadata.get('data').get('work')
+        logging.info("Creating OAPEN SWORD metadata")
+        # logging.info(work_metadata)
+        oapen_metadata = sword2.Entry()
+        oapen_metadata.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
+        # A URL is required here; not sure if the one selected is appropriate
+        oapen_metadata.register_namespace("oapen", "https://oapen.org")
+        oapen_metadata.add_fields(
+            # dc_description_abstract should be the abstract in English.
+            # we don't have that metadata currently in Thoth. When multilingualism is
+            # implemented, we can revisit this.
+            dc_description_abstract=work_metadata.get('longAbstract'),
+            # OAPEN needs year only for this field
+            dc_date_issued=work_metadata.get('publicationDate').split('-')[0],
+            oapen_imprint=self.get_publisher_name(),
+            # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
+            oapen_relation_isPublishedBy=self.get_publisher_name(),
+            dc_title=work_metadata.get('title'),
+            dc_title_alternative=work_metadata.get('subtitle'),
+            # options are "book" or "chapter"
+            dc_type='book',
+            oapen_identifier_doi=work_metadata.get('doi'),
+            oapen_identifier_ocn=work_metadata.get('oclc'),
+            oapen_pages=str(work_metadata.get('pageCount')),
+            oapen_place_publication=work_metadata.get('place'),
+            dc_description_version=str(work_metadata.get('edition')),
+        )
+
+        # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
+        # as format, and also states `dc_contributor` in place of `dc_contributor_other`
+        for contributor in [n for n in work_metadata.get(
+                'contributions') if n.get('mainContribution') is True]:
+            match contributor.get('contributionType'):
+                case 'AUTHOR':
+                    oapen_metadata.add_field("dc_contributor_author", contributor.get('fullName'))
+                case 'EDITOR':
+                    oapen_metadata.add_field("dc_contributor_editor", contributor.get('fullName'))
+                case _:
+                    oapen_metadata.add_field("dc_contributor_other", contributor.get('fullName'))
+        for isbn in [
+            n.get('isbn').replace(
+                '-',
+                '') for n in work_metadata.get('publications') if n.get('isbn')
+                is not None]:
+            oapen_metadata.add_field("oapen_relation_isbn", isbn)
+        for language in [n.get('languageCode')
+                         for n in work_metadata.get('languages')]:
+            # pycountry translates ISO codes to language name in English (e.g. "English" instead of "ENG" )
+            # per OAPEN requirements
+            # (some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the less common
+            # "bibliographic" variant, so check for this variant first to avoid failed lookups)
+            oapen_formatted_language = pycountry.languages.get(bibliographic=language) or pycountry.languages.get(alpha_3=language)
+            oapen_metadata.add_field("dc_language", oapen_formatted_language.name)
+        for subject in work_metadata.get('subjects'):
+            match subject.get('subjectType'):
+                # note "Thema codes used" list supplied by OAPEN:
+                # any further conversion needed?
+                case 'THEMA':
+                    oapen_metadata.add_field("dc_subject_classification", subject.get('subjectCode'))
+                case 'KEYWORD':
+                    oapen_metadata.add_field("dc_subject_other", subject.get('subjectCode'))
+                case _:
+                    pass
+        # TBD if Thoth will be sending chapters (or chapter info?)
+        # for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
+        #         'relatedWork').get('doi'))
+        #         for n in work_metadata.get('relations')]:
+        #     if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
+        #         oapen_metadata.add_field("dc_isPartOf", relation_doi)
+        #     elif relation_type == 'IS_REPLACED_BY':
+        #         oapen_metadata.add_field("dc_isReplacedBy", relation_doi)
+        #     elif relation_type == 'REPLACES':
+        #         oapen_metadata.add_field("dc_replaces", relation_doi)
+        #     else:
+        #         oapen_metadata.add_field("dc_relation", relation_doi)
+
+        # TODO should we retain this?
+        oapen_metadata.add_field("dc_identifier",
+                                 "thoth-work-id:{}".format(self.work_id))
+
+        for issue in work_metadata.get('issues'):
+            oapen_metadata.add_field("dc_identifier_issn", issue.get('series').get('issnDigital'))
+            oapen_metadata.add_field("dc_relation_ispartofseries", issue.get('series').get('seriesName'))
+            oapen_metadata.add_field("oapen_series_number", str(issue.get('issueOrdinal')))
+
+        for funding in work_metadata.get('fundings'):
+            oapen_metadata.add_field("oapen_grant_number", funding.get('grantNumber'))
+            oapen_metadata.add_field("oapen_grant_program", funding.get('program'))
+            oapen_metadata.add_field("oapen_grant_project", funding.get('projectName'))
+            # appears in spreadsheet twice; second time states OAPEN funder ID list is needed
+            oapen_metadata.add_field("oapen_relation_isFundedBy", funding.get('institution').get('institutionName'))
+
+        return oapen_metadata
+        # return work_metadata
 
     def profile_basic(self):
         """
@@ -444,21 +547,22 @@ class SwordV2Api:
         )
 
     def create_item(self, metadata_entry):
+        return
         """Create an item with the specified metadata."""
-        return self.handle_request(
-            request_type=RequestType.CREATE_ITEM,
-            expected_status=201,
-            # Hacky workaround for an issue with mishandling of encodings
-            # within sword2 library, which meant metadata containing special
-            # characters could not be submitted. Although the `metadata_entry`
-            # parameter ought to be of type `Entry`, sending a `str` as below
-            # triggers no errors. Ultimately it's passed to
-            # `http/client.py/_encode()`, which defaults to encoding it as
-            # 'latin-1'. Pre-emptively encoding/decoding it here seems to mean
-            # that the string sent to the server is in correct utf-8 format.
-            metadata_entry=str(metadata_entry).encode(
-                'utf-8').decode('latin-1'),
-        )
+        # return self.handle_request(
+        #     request_type=RequestType.CREATE_ITEM,
+        #     expected_status=201,
+        #     # Hacky workaround for an issue with mishandling of encodings
+        #     # within sword2 library, which meant metadata containing special
+        #     # characters could not be submitted. Although the `metadata_entry`
+        #     # parameter ought to be of type `Entry`, sending a `str` as below
+        #     # triggers no errors. Ultimately it's passed to
+        #     # `http/client.py/_encode()`, which defaults to encoding it as
+        #     # 'latin-1'. Pre-emptively encoding/decoding it here seems to mean
+        #     # that the string sent to the server is in correct utf-8 format.
+        #     metadata_entry=str(metadata_entry).encode(
+        #         'utf-8').decode('latin-1'),
+        # )
 
     def delete_item(self, resource_iri):
         """Delete the specified item."""
