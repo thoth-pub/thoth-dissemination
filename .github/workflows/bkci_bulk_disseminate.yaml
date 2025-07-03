@@ -1,0 +1,32 @@
+# Purpose: upload work in required format to Clarivate Web of Science Book Citation Index (BKCI).
+# Uploads all active Thoth works with a publication date within the previous week.
+
+# Credentials must be present as repository secrets named 
+# BKCI_FTP_USER_[publisher_id] and BKCI_FTP_PW_[publisher_id]
+
+# Content required: PDF work file
+# Metadata required: CSV containing at minimum (1) titles provided, (2) ISBNs,
+# (3) file name per title, (4) publication date
+# Naming convention: Not strictly controlled, but use simple/human-readable names e.g. ISBN
+# Upload directory: per-upload subfolder (e.g. datestamped) within `INCOMING-BOOKS` folder
+
+name: bkci-bulk-disseminate
+
+on:
+  #TODO: is the cron scheduling significant? Do we want to have this on a different day of the week?
+  schedule:
+    # 'at 02:20 every Monday'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '20 2 * * 1'
+  workflow_dispatch:
+
+jobs:
+  bkci-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'BKCI'
+      # TODO: create variables for this on GitHub
+      env_publishers: ${{ vars.BKCI_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.BKCI_ENV_EXCEPTIONS }}
+    secrets: inherit
