@@ -27,7 +27,7 @@ class IDFinder():
         self.thoth = ThothClient()
         self.thoth_ids = []
         self.work_statuses = None
-        self.work_types = None
+        # self.work_types = None
         self.publishers = None
         self.order = None
         self.updated_at_with_relations = None
@@ -83,6 +83,8 @@ class IDFinder():
         """
         # Default: all active (published) works listed in Thoth (from the selected publishers).
         self.work_statuses = '[ACTIVE]'
+        # Default: all work types included (from the selected publishers).
+        # self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, TEXTBOOK, BOOK_SET]'
         # Start with the most recent, so that we can disregard everything else
         # as soon as we hit the first work published earlier than the desired date range.
         self.order = '{field: PUBLICATION_DATE, direction: DESC}'
@@ -96,7 +98,7 @@ class IDFinder():
             # The default limit is 100; publishers' back catalogues may be bigger than that
             limit='9999',
             work_statuses=self.work_statuses,
-            work_types=self.work_types,
+            # work_types=self.work_types,
             order=self.order,
             publishers=self.publishers,
             updated_at_with_relations=self.updated_at_with_relations,
@@ -113,6 +115,11 @@ class IDFinder():
         # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
         # we can simply construct a standard query filtering by publication date
         offset = 0
+        logging.info("running get_thoth_ids_iteratively")
+        logging.info(self.order)
+        logging.info(self.work_statuses)
+        logging.info(self.publishers)
+        logging.info(self.updated_at_with_relations)
         while True:
             next_batch = self.thoth.books(
                 limit=1,
@@ -133,6 +140,7 @@ class IDFinder():
                 continue
             elif next_work_pub_date >= start_date:
                 # This work was published in the target period - include it
+                logging.info(next_work.workId)
                 self.thoth_ids.append(next_work.workId)
             else:
                 # We've reached the first work in the list which was published
@@ -194,6 +202,7 @@ class CrossrefIDFinder(IDFinder):
             last_deposit_time, "%Y-%m-%dT%H:%M:%SZ")
 
         self.work_statuses = '[ACTIVE]'
+        # self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, TEXTBOOK, BOOK_SET]'
         # Start with the most recently updated
         self.order = '{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}'
         self.updated_at_with_relations = '{{timestamp: "{}", expression: GREATER_THAN}}'.format(
@@ -207,6 +216,7 @@ class InternetArchiveIDFinder(IDFinder):
         """Construct Thoth work ID query parameters depending on Internet Archive-specific requirements"""
         # Target: all active (published) works listed in Thoth (from the selected publishers).
         self.work_statuses = '[ACTIVE]'
+        # self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, TEXTBOOK, BOOK_SET]'
         # Start with the earliest, so that the upload is logically ordered
         self.order = '{field: PUBLICATION_DATE, direction: ASC}'
         self.updated_at_with_relations = None
@@ -297,25 +307,49 @@ class OapenIDFinder(IDFinder):
 class BKCIIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Clarivate Web of Science Book Citation Index (BKCI) dissemination"""
 
+    def get_publishers(self):
+        self.publishers = json.dumps(["85fd969a-a16c-480b-b641-cb9adf979c3b"])
+
     def get_query_parameters(self):
         """Construct Thoth work ID query parameters depending on Internet Archive-specific requirements"""
+        # TODO: publication year equal to 2017 through the present.  
         # Target: all active (published) works listed in Thoth (from the selected publishers).
         self.work_statuses = '[ACTIVE]'
         # Textbooks not accepted
-        self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, BOOK_SET]'
+        # self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, BOOK_SET]'
         # Start with the earliest, so that the upload is logically ordered
         self.order = '{field: PUBLICATION_DATE, direction: ASC}'
         self.updated_at_with_relations = None
 
     def get_thoth_ids(self):
         """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
-        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
-        # we can remove this overriding method and simply construct a standard query
-        # filtering by publication date
+        # Get works published in the previous calendar year
+        current_date = datetime.now(UTC).date()
+        previous_year_end = current_date.replace(month=1, day=1) - timedelta(days=1)
+        previous_year_start = previous_year_end.replace(month=1, day=1)
+        logging.info(f"previous_year_start is {previous_year_start}")
+        logging.info(f"previous_year_end is {previous_year_end}")
+    
+        self.get_thoth_ids_iteratively(previous_year_start, previous_year_end)
 
-        #     2. Time span: Publication year equal to 2017 through the present.  
-        # 3. Not accepted: textbooks
+    # def get_thoth_ids(self):
+    #     """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+    #     # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+    #     # we can remove this overriding method and simply construct a standard query
+    #     # filtering by publication date
 
+    #     # In addition to the conditions of the query parameters, we need to filter the results
+    #     # to obtain only works with a publication date within the previous calendar month.
+    #     # The schedule for finding and depositing newly published works is once monthly
+    #     # (a few days after the start of the month, to allow for delays in updating records).
+    #     current_date = datetime.now(UTC).date()
+    #     current_month_start = current_date.replace(day=1)
+    #     previous_month_end = current_month_start - timedelta(days=1)
+    #     logging.info(f"previous_month_end is {previous_month_end}")
+    #     previous_month_start = previous_month_end.replace(day=1)
+    #     logging.info(f"previous_month_start is {previous_month_start}")
+
+    #     self.get_thoth_ids_iteratively(previous_month_start, previous_month_end)
 
 class OapenLocationsIDFinder(IDFinder):
     """
