@@ -1,5 +1,5 @@
 # Purpose: upload work in required format to Clarivate Web of Science Book Citation Index (BKCI).
-# Uploads all active Thoth works with a publication date within the previous week.
+# Uploads all active Thoth works with a publication date within the previous month.
 
 # Credentials must be present as repository secrets named 
 # BKCI_FTP_USER_[publisher_id] and BKCI_FTP_PW_[publisher_id]
@@ -13,12 +13,14 @@
 name: bkci-bulk-disseminate
 
 on:
-  #TODO: is the cron scheduling significant? Do we want to have this on a different day of the week?
   schedule:
-    # 'at 02:20 every Monday'
-    # (scheduling is not guaranteed; runs at the start of the hour
-    # are more likely to be delayed)
-    - cron: '20 2 * * 1'
+    # 'at 06:40 on day-of-month 6'
+    # There might be a delay between a book being published and the publisher
+    # correctly setting its publication date and Active status in Thoth.
+    # Therefore, this action is run a few days after the start of the month,
+    # to minimise situations where e.g. a book which was published on the 31st, but
+    # whose record was not updated until the 1st, is missed out of both months' runs.
+    - cron: '40 6 6 * *'
   workflow_dispatch:
 
 jobs:
