@@ -196,7 +196,6 @@ class CrossrefIDFinder(IDFinder):
             last_deposit_time, "%Y-%m-%dT%H:%M:%SZ")
 
         self.work_statuses = '[ACTIVE]'
-        # self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, TEXTBOOK, BOOK_SET]'
         # Start with the most recently updated
         self.order = '{field: UPDATED_AT_WITH_RELATIONS, direction: DESC}'
         self.updated_at_with_relations = '{{timestamp: "{}", expression: GREATER_THAN}}'.format(
@@ -210,7 +209,6 @@ class InternetArchiveIDFinder(IDFinder):
         """Construct Thoth work ID query parameters depending on Internet Archive-specific requirements"""
         # Target: all active (published) works listed in Thoth (from the selected publishers).
         self.work_statuses = '[ACTIVE]'
-        # self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, TEXTBOOK, BOOK_SET]'
         # Start with the earliest, so that the upload is logically ordered
         self.order = '{field: PUBLICATION_DATE, direction: ASC}'
         self.updated_at_with_relations = None
@@ -301,12 +299,8 @@ class OapenIDFinder(IDFinder):
 class BKCIIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Clarivate Web of Science Book Citation Index (BKCI) dissemination"""
 
-    def get_publishers(self):
-        self.publishers = json.dumps(["85fd969a-a16c-480b-b641-cb9adf979c3b"])
-
     def get_query_parameters(self):
-        """Construct Thoth work ID query parameters depending on Internet Archive-specific requirements"""
-        # TODO: publication year equal to 2017 through the present.  
+        """Construct Thoth work ID query parameters depending on Clarivate BKCI-specific requirements"""
         # Target: all active (published) works listed in Thoth (from the selected publishers).
         self.work_statuses = '[ACTIVE]'
         # Textbooks not accepted
