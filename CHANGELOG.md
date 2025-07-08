@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-  - Dissemination worfklow for Web of Science Book Citation Index
+  - Dissemination workflow for Clarivate Web of Science Book Citation Index (BKCI)
 
 ## [[0.1.24]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.24) - 2025-07-02
 ### Changed

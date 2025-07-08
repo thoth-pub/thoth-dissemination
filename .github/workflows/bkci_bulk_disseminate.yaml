@@ -1,20 +1,15 @@
-# Purpose: upload work in required format to Clarivate Web of Science Book Citation Index (BKCI).
-# Uploads all active Thoth works with a publication date within the previous month.
-
-# Credentials must be present as repository secrets named 
-# BKCI_FTP_USER_[publisher_id] and BKCI_FTP_PW_[publisher_id]
-
-# Content required: PDF work file
-# Metadata required: CSV containing at minimum (1) titles provided, (2) ISBNs,
-# (3) file name per title, (4) publication date
-# Naming convention: Not strictly controlled, but use simple/human-readable names e.g. ISBN
-# Upload directory: per-upload subfolder (e.g. datestamped) within `INCOMING-BOOKS` folder
+# Purpose: upload works from Thoth to Clarivate Web of Science Book Citation Index (BKCI) FTP server.
+# Uploads all active Thoth works except for textbooks with a publication date within the previous month.
+# Work must have a PDF Publication with an ISBN.
+# PDF Publication must have a Canonical Location with valid Full Text URL.
+# Clarivate credentials for each relevant publisher must be present as repository secrets
+# named BKCI_FTP_USER_[publisher_id] and BKCI_FTP_PW_[publisher_id].
 
 name: bkci-bulk-disseminate
 
 on:
   schedule:
-    # 'at 06:40 on day-of-month 6'
+    # 'Runs at 06:40, on day 6 of the month'
     # There might be a delay between a book being published and the publisher
     # correctly setting its publication date and Active status in Thoth.
     # Therefore, this action is run a few days after the start of the month,

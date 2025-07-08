@@ -301,11 +301,10 @@ class BKCIIDFinder(IDFinder):
 
     def get_query_parameters(self):
         """Construct Thoth work ID query parameters depending on Clarivate BKCI-specific requirements"""
-        # Target: all active (published) works listed in Thoth (from the selected publishers).
+        # Target: all active (published) works listed in Thoth (from the selected publishers), except for textbooks
         self.work_statuses = '[ACTIVE]'
-        # Textbooks not accepted
         self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, BOOK_SET]'
-        # Start with the earliest, so that the upload is logically ordered
+        # Start with the most recent, so that the upload is logically ordered
         self.order = '{field: PUBLICATION_DATE, direction: DESC}'
         self.updated_at_with_relations = None
 
@@ -411,7 +410,7 @@ if __name__ == '__main__':
             case _:
                 logging.error(
                     'Platform must be one of InternetArchive, Crossref, Figshare, '
-                    'Zenodo, CUL, GooglePlay or OAPEN')
+                    'Zenodo, CUL, GooglePlay, BKCI or OAPEN')
                 sys.exit(1)
 
     id_finder.run()
