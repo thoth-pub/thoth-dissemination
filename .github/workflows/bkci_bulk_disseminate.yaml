@@ -28,7 +28,6 @@ jobs:
     uses: ./.github/workflows/bulk_disseminate.yml
     with:
       platform: 'BKCI'
-      # TODO: create variables for this on GitHub
       env_publishers: ${{ vars.BKCI_ENV_PUBLISHERS }}
       env_exceptions: ${{ vars.BKCI_ENV_EXCEPTIONS }}
     secrets: inherit
