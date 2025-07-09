@@ -24,6 +24,7 @@ class EBSCOUploader(Uploader):
         Naming convention: Use "corresponding eISBN" for content filename roots
                            (can be either PDF or EPUB as long as both are in ONIX)
                            Metadata filename not strictly controlled; date recommended
+        Upload directory: TBC # TODO
         """
 
         # Check that EBSCOHost credentials have been provided
