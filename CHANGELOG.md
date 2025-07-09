@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+  - Dissemination workflow for Clarivate Web of Science Book Citation Index (BKCI)
+
+## [[0.1.24]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.24) - 2025-07-02
+### Changed
+  - Changed Project MUSE filename root for upload from Paperback to PDF ISBN
+
+## [[0.1.23]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.23) - 2025-07-01
+### Changed
+  - Fixed logic for jpeg file extension for cover image
+
+## [[0.1.22]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.22) - 2025-06-27
+### Changed
+  - Added support for .jpeg file extension for cover image to avoid error
+
+## [[0.1.21]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.21) - 2025-05-06
+### Changed
+  - Improved error messages for lack of PDF ISBN in GoogleBooks uploader
 
 ## [[0.1.20]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.20) - 2025-03-03
 ### Added

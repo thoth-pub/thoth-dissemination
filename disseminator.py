@@ -6,7 +6,7 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '0.1.20'
+__version__ = '0.1.24'
 
 import argparse
 import logging
@@ -25,6 +25,7 @@ from jstoruploader import JSTORUploader
 from ebscouploader import EBSCOUploader
 from proquestuploader import ProquestUploader
 from googleplayuploader import GooglePlayUploader
+from bkciuploader import BKCIUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
@@ -39,6 +40,7 @@ UPLOADERS = {
     "EBSCOHost": EBSCOUploader,
     "ProQuest": ProquestUploader,
     "GooglePlay": GooglePlayUploader,
+    "BKCI": BKCIUploader,
 }
 
 UPLOADERS_STR = ', '.join("%s" % (key) for (key, _) in UPLOADERS.items())
