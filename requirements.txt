@@ -2,6 +2,6 @@ google-cloud-storage==2.18.2
 internetarchive==4.1.0
 pysftp==0.2.9
 python-dotenv==0.19.2
-requests==2.32.3
+requests==2.32.4
 sword2==0.3.0
-thothlibrary==0.26.2
+thothlibrary==0.30.0
