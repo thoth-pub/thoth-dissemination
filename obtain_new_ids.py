@@ -304,7 +304,8 @@ class BKCIIDFinder(IDFinder):
         # Target: all active (published) works listed in Thoth (from the selected publishers), except for textbooks
         self.work_statuses = '[ACTIVE]'
         self.work_types = '[MONOGRAPH, EDITED_BOOK, JOURNAL_ISSUE, BOOK_SET]'
-        # Start with the most recent, so that the upload is logically ordered
+        # Start with the most recent, so that we can disregard everything else
+        # as soon as we hit the first work published earlier than the desired date range.
         self.order = '{field: PUBLICATION_DATE, direction: DESC}'
         self.updated_at_with_relations = None
 
