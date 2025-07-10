@@ -5,7 +5,7 @@ Retrieve and disseminate files and metadata to Clarivate Web of Science Book Cit
 
 import logging
 import sys
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from ftplib import FTP, error_perm
 from io import BytesIO, TextIOWrapper
 from errors import DisseminationError
@@ -37,7 +37,7 @@ class BKCIUploader(Uploader):
 
         metadata_csv = self.parse_metadata()
         filename = self.get_isbn('PDF')
-        folder_name = datetime.strftime(datetime.now(UTC), "%Y%m%d%H%M%S")
+        folder_name = datetime.strftime(datetime.now(timezone.utc), "%Y%m%d%H%M%S")
         pdf = self.get_publication_details('PDF')
 
         try:
