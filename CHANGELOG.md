@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [[0.1.27]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.27) - 2025-07-10
+### Fixed
+  - Removed Python import for compatibility with Python 3.10
+
+## [[0.1.26]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.26) - 2025-07-09
+### Changed
+  - Downgraded `requests` to `2.32.3` to maintain compatibility with `thothlibrary`
+
+## [[0.1.25]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.25) - 2025-07-09
 ### Added
   - Dissemination workflow for Clarivate Web of Science Book Citation Index (BKCI)
 
