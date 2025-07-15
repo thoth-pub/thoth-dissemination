@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+  - Improved error messages for Crossref bulk dissemination automated workflow
 
 ## [[0.1.27]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.27) - 2025-07-10
 ### Fixed
