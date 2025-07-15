@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-  - Improved error messages for Crossref bulk dissemination automated workflow
+  - Write error logging messages from dissemination workflows to GitHub Actions Job Summary section so they are easier to read
 
 ## [[0.1.27]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.27) - 2025-07-10
 ### Fixed
