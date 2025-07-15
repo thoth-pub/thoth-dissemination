@@ -10,20 +10,6 @@ import requests
 from errors import DisseminationError
 from uploader import Uploader
 
-# StreamHandler for all messages (INFO and above)
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.INFO)
-stream_handler.setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
-
-# FileHandler for only ERROR messages
-error_file_handler = logging.FileHandler("error.log")
-error_file_handler.setLevel(logging.ERROR)
-error_file_handler.setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
-
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[stream_handler, error_file_handler]
-)
 
 class CrossrefUploader(Uploader):
     """Dissemination logic for Crossref"""

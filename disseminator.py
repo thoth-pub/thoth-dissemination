@@ -103,6 +103,11 @@ def get_arguments():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO,
                         format='%(levelname)s:%(asctime)s: %(message)s')
+    # Write ERROR level logs to file error.log
+    error_file_handler = logging.FileHandler("error.log")
+    error_file_handler.setLevel(logging.ERROR)
+    error_file_handler.setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
+    logging.getLogger().addHandler(error_file_handler)
     # DEBUG level urllib3 logs may contain sensitive information
     # such as passwords (where sent as URL query parameters)
     # and should never be output publicly (e.g. in GitHub Actions)
