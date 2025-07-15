@@ -46,6 +46,13 @@ jobs:
             --work ${{ inputs.work-id }} \
             --platform ${{ inputs.platform }} \
             > ${{ inputs.work-id }}
+          if [ -s error.log ]; then
+            {
+              echo '```'
+              cat error.log
+              echo '```'
+            } >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
