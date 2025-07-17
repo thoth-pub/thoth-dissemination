@@ -21,12 +21,6 @@ jobs:
       id-token: write
     
     steps:
-      - name: Test Job summary output
-        run: |
-          echo "### Dissemination Output" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-      
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -65,13 +59,15 @@ jobs:
 
       - name: Run disseminator and save summary
         run: |
+          set -o pipefail
           OUTPUT=$(python disseminator.py \
             --work ${{ inputs.work-id }} \
-            --platform ${{ inputs.platform }})
+            --platform ${{ inputs.platform }} 2>&1) || STATUS=$?
           echo "### Dissemination Output" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          exit ${STATUS:-0}
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
