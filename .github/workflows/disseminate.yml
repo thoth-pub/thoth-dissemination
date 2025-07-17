@@ -40,12 +40,20 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
-      - name: Output test message to Job Summary
+      # - name: Output test message to Job Summary
+      #   run: |
+      #     echo '```'
+      #     echo 'This is a test message for the Job Summary.'
+      #     echo '```'
+      #     >> $GITHUB_STEP_SUMMARY
+
+
+      - name: Run test message
         run: |
-          echo '```'
-          echo 'This is a test message for the Job Summary.'
-          echo '```'
-          >> $GITHUB_STEP_SUMMARY
+          echo "Test Message" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "Test message" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Run disseminator using Dockerhub image
         run: |
