@@ -49,7 +49,7 @@ jobs:
 
       - name: Output error log to Job Summary
         run: |
-          ERROR_LOG=$(awk '/ERROR_LOG_START/,/ERROR_LOG_END/' ${{ inputs.work-id }} | grep -v 'ERROR_LOG_START\|ERROR_LOG_END')
+          ERROR_LOG=$(grep '^ERROR:' ${{ inputs.work-id }})
           if [ -n "$ERROR_LOG" ]; then
             {
               echo '```'

@@ -11,7 +11,6 @@ __version__ = '0.1.27'
 import argparse
 import logging
 import sys
-import io
 from dotenv import load_dotenv
 from pathlib import Path
 from iauploader import IAUploader
@@ -102,21 +101,8 @@ def get_arguments():
 
 
 if __name__ == '__main__':
-
-    error_buffer = io.StringIO()
-
-    class ErrorBufferHandler(logging.Handler):
-        def emit(self, record):
-            if record.levelno == logging.ERROR:
-                error_buffer.write(self.format(record) + '\n')
-
     logging.basicConfig(level=logging.INFO,
                         format='%(levelname)s:%(asctime)s: %(message)s')
-
-    error_handler = ErrorBufferHandler()
-    error_handler.setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
-    logging.getLogger().addHandler(error_handler)
-
     # DEBUG level urllib3 logs may contain sensitive information
     # such as passwords (where sent as URL query parameters)
     # and should never be output publicly (e.g. in GitHub Actions)
@@ -128,8 +114,3 @@ if __name__ == '__main__':
     ARGUMENTS = get_arguments()
     run(ARGUMENTS.work_id, ARGUMENTS.platform,
         ARGUMENTS.export_url, ARGUMENTS.client_url)
-
-    if error_buffer.getvalue():
-        print("ERROR_LOG_START")
-        print(error_buffer.getvalue())
-        print("ERROR_LOG_END")
