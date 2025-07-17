@@ -40,13 +40,15 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
-      - name: Run disseminator using Dockerhub image
-        
+      - name: Output test message to Job Summary
         run: |
           echo '```'
           echo 'This is a test message for the Job Summary.'
           echo '```'
           >> $GITHUB_STEP_SUMMARY
+
+      - name: Run disseminator using Dockerhub image
+        run: |
           /disseminator.py \
             --work ${{ inputs.work-id }} \
             --platform ${{ inputs.platform }} \
