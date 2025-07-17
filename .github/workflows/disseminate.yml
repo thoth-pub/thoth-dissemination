@@ -13,24 +13,27 @@ on:
         type: string
 
 jobs:
-  pre-container:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Output test message to Job Summary
-        run: |
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo 'This is a test message for the Job Summary.' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
   disseminate:
     runs-on: ubuntu-latest
-    container:
-      image: openbookpublishers/thoth-dissemination:latest
     permissions:
       # Required for Google Play workflow
       contents: read
       id-token: write
+    
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Make all platform credentials available to later steps (with names lowercased)
         uses: oNaiPs/secrets-to-env-action@v1.5
         with:
@@ -49,38 +52,15 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
-      # - name: Output test message to Job Summary
-      #   run: |
-      #     echo '```'
-      #     echo 'This is a test message for the Job Summary.'
-      #     echo '```'
-      #     >> $GITHUB_STEP_SUMMARY
-
-
-      # - name: Run test message
-      #   run: |
-      #     echo "Test Message" >> $GITHUB_STEP_SUMMARY
-      #     echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-      #     echo "Test message" >> $GITHUB_STEP_SUMMARY
-      #     echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
-      - name: Run disseminator using Dockerhub image
+      - name: Run disseminator and save summary
         run: |
-          /disseminator.py \
+          OUTPUT=$(python disseminator.py \
             --work ${{ inputs.work-id }} \
-            --platform ${{ inputs.platform }} \
-            > ${{ inputs.work-id }}
-
-      # - name: Output error log to Job Summary
-      #   run: |
-      #     ERROR_LOG=$(grep '^ERROR:' ${{ inputs.work-id }})
-      #     if [ -n "$ERROR_LOG" ]; then
-      #       {
-      #         echo '```'
-      #         echo "$ERROR_LOG"
-      #         echo '```'
-      #       } >> $GITHUB_STEP_SUMMARY
-      #     fi
+            --platform ${{ inputs.platform }})
+          echo "### Dissemination Output" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
