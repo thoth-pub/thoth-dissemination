@@ -13,6 +13,15 @@ on:
         type: string
 
 jobs:
+  pre-container:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Output test message to Job Summary
+        run: |
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo 'This is a test message for the Job Summary.' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
   disseminate:
     runs-on: ubuntu-latest
     container:
@@ -48,12 +57,12 @@ jobs:
       #     >> $GITHUB_STEP_SUMMARY
 
 
-      - name: Run test message
-        run: |
-          echo "Test Message" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "Test message" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      # - name: Run test message
+      #   run: |
+      #     echo "Test Message" >> $GITHUB_STEP_SUMMARY
+      #     echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      #     echo "Test message" >> $GITHUB_STEP_SUMMARY
+      #     echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Run disseminator using Dockerhub image
         run: |
