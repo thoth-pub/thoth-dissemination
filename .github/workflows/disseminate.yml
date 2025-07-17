@@ -46,10 +46,14 @@ jobs:
             --work ${{ inputs.work-id }} \
             --platform ${{ inputs.platform }} \
             > ${{ inputs.work-id }}
-          if [ -s error.log ]; then
+
+      - name: Output error log to Job Summary
+        run: |
+          ERROR_LOG=$(awk '/ERROR_LOG_START/,/ERROR_LOG_END/' ${{ inputs.work-id }} | grep -v 'ERROR_LOG_START\|ERROR_LOG_END')
+          if [ -n "$ERROR_LOG" ]; then
             {
               echo '```'
-              cat error.log
+              echo "$ERROR_LOG"
               echo '```'
             } >> $GITHUB_STEP_SUMMARY
           fi
