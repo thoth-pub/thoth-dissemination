@@ -47,16 +47,23 @@ jobs:
             --platform ${{ inputs.platform }} \
             > ${{ inputs.work-id }}
 
-      - name: Output error log to Job Summary
+      # - name: Output error log to Job Summary
+      #   run: |
+      #     ERROR_LOG=$(grep '^ERROR:' ${{ inputs.work-id }})
+      #     if [ -n "$ERROR_LOG" ]; then
+      #       {
+      #         echo '```'
+      #         echo "$ERROR_LOG"
+      #         echo '```'
+      #       } >> $GITHUB_STEP_SUMMARY
+      #     fi
+
+      - name: Output test message to Job Summary
         run: |
-          ERROR_LOG=$(grep '^ERROR:' ${{ inputs.work-id }})
-          if [ -n "$ERROR_LOG" ]; then
-            {
-              echo '```'
-              echo "$ERROR_LOG"
-              echo '```'
-            } >> $GITHUB_STEP_SUMMARY
-          fi
+          echo '```'
+          echo 'This is a test message for the Job Summary.'
+          echo '```'
+          >> $GITHUB_STEP_SUMMARY
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
