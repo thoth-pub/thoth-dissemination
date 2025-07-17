@@ -59,13 +59,12 @@ jobs:
 
       - name: Run disseminator and save outputs
         run: |
-          set -o pipefail
           python disseminator.py \
             --work ${{ inputs.work-id }} \
             --platform ${{ inputs.platform }} > ${{ inputs.work-id }} 2> /tmp/error.log || STATUS=$?
-          ERROR_LOG=$(grep '^ERROR:' /tmp/error.log)
+          ERROR_LOG=$(cat /tmp/error.log)
           if [ -n "$ERROR_LOG" ]; then
-            echo "### Dissemination Errors" >> $GITHUB_STEP_SUMMARY
+            echo "### Dissemination Error" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
