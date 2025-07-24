@@ -13,16 +13,10 @@ class OAPENSWORDUploader(DSpaceUploader):
 
     def __init__(self, work_id, export_url, client_url, version):
         """Set OAPEN-specific parameters and pass them to DSpaceUploader"""
-        user_name_string = 'oapen_ftp_user'
-        user_pass_string = 'oapen_ftp_pw'
-        service_document_iri = (
-            'https://fakeapi.com'
-            'servicedocument'
-        )
-        collection_iri = (
-            'https://fakeapi.com'
-            '1811/2'
-        )
+        user_name_string = 'oapen_sword_user'
+        user_pass_string = 'oapen_sword_pw'
+        service_document_iri = ("https://admin.oapen-dev.siscern.org/swordv2/servicedocument")
+        collection_iri = ("https://admin.oapen-dev.siscern.org/swordv2/collection/20.500.12657/97099")
         metadata_profile = MetadataProfile.OAPEN
         super().__init__(
             work_id,
