@@ -29,14 +29,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies for lxml
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxml2-dev libxslt1-dev
-
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Make all platform credentials available to later steps (with names lowercased)
@@ -59,13 +53,17 @@ jobs:
 
       - name: Run disseminator, save outputs, output errors to job summary
         run: |
-          python disseminator.py \
-            --work ${{ inputs.work-id }} \
-            --platform ${{ inputs.platform }} > ${{ inputs.work-id }} 2> /tmp/error.log || STATUS=$?
-          ERROR_LOG=$(grep '^ERROR:' /tmp/error.log)
-          if [ -n "$ERROR_LOG" ]; then
-            echo "### Dissemination error for work ID ${{ inputs.work-id }} " >> $GITHUB_STEP_SUMMARY
-            echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
+          STDOUT="${{ inputs.work-id }}"
+          STDERR=$(mktemp)
+          /disseminator.py \
+            --work "${{ inputs.work-id }}" \
+            --platform "${{ inputs.platform }}" \
+            > "$STDOUT" 2> "$STDERR"
+          if [ -s "$STDERR" ]; then
+            echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat "$STDERR" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
           fi
           exit ${STATUS:-0}
 
