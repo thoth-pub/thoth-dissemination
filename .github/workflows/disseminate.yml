@@ -55,7 +55,7 @@ jobs:
         run: |
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
-          ./disseminator.py \
+          python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
             > "$STDOUT" 2> "$STDERR"
