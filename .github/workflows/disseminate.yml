@@ -51,7 +51,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
-      - name: Run disseminator, save outputs, output errors to job summary
+      - name: Run disseminator using Dockerhub image
         run: |
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
