@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+  - Write error logging messages from dissemination workflows to GitHub Actions Job Summary section so they are easier to read
   - Added Forthcoming works with DOI and publication date to automatic Crossref DOI deposit
 
 ## [[0.1.27]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.27) - 2025-07-10
