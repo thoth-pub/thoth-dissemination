@@ -15,13 +15,24 @@ on:
 jobs:
   disseminate:
     runs-on: ubuntu-latest
-    container:
-      image: openbookpublishers/thoth-dissemination:latest
     permissions:
       # Required for Google Play workflow
       contents: read
       id-token: write
+    
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
       - name: Make all platform credentials available to later steps (with names lowercased)
         uses: oNaiPs/secrets-to-env-action@v1.5
         with:
@@ -42,10 +53,19 @@ jobs:
 
       - name: Run disseminator using Dockerhub image
         run: |
-          /disseminator.py \
-            --work ${{ inputs.work-id }} \
-            --platform ${{ inputs.platform }} \
-            > ${{ inputs.work-id }}
+          STDOUT="${{ inputs.work-id }}"
+          STDERR=$(mktemp)
+          python disseminator.py \
+            --work "${{ inputs.work-id }}" \
+            --platform "${{ inputs.platform }}" \
+            > "$STDOUT" 2> "$STDERR" || STATUS=$?
+          if [ -s "$STDERR" ]; then
+            echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat "$STDERR" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+          exit ${STATUS:-0}
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
