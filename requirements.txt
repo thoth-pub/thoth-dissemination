@@ -1,5 +1,6 @@
 google-cloud-storage==2.18.2
 internetarchive==4.1.0
+paramiko==3.5.1
 pysftp==0.2.9
 python-dotenv==0.19.2
 requests==2.32.3
