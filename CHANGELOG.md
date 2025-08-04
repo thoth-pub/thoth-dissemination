@@ -4,6 +4,10 @@ All notable changes to thoth-dissemination will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [[0.1.29]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.29) - 2025-08-04
+### Fixed
+  - Added explicit import of downgraded version of `paramiko`, as workaround for import error caused by deprecated module in v4.0
+
 ## [[0.1.28]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.28) - 2025-08-04
 ### Changed
   - Write error logging messages from dissemination workflows to GitHub Actions Job Summary section so they are easier to read
