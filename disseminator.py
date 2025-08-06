@@ -6,7 +6,7 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '0.1.29'
+__version__ = '0.1.30'
 
 import argparse
 import logging
@@ -107,6 +107,8 @@ if __name__ == '__main__':
     # such as passwords (where sent as URL query parameters)
     # and should never be output publicly (e.g. in GitHub Actions)
     logging.getLogger("urllib3").setLevel(logging.INFO)
+    # paramiko INFO logs are verbose
+    logging.getLogger("paramiko").setLevel(logging.ERROR)
     # dotenv only required for running locally - when running
     # with Docker, --env-file option could be used instead
     dotenv_path = Path('./config.env')
