@@ -5,11 +5,11 @@ Retrieve and disseminate files and metadata to ScienceOpen
 
 import logging
 import sys
-import pysftp
 import zipfile
 from datetime import date
 from io import BytesIO
 from errors import DisseminationError
+from sftpclient import SFTPClient, SFTPAuthError
 from uploader import Uploader
 
 
@@ -74,13 +74,10 @@ class SOUploader(Uploader):
         zipped_files.seek(0)
 
         try:
-            cnopts = pysftp.CnOpts()
-            cnopts.hostkeys = None
-            with pysftp.Connection(
+            with SFTPClient(
                 host='ftp.scienceopen.com',
                 username=username,
                 password=password,
-                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)
@@ -109,7 +106,7 @@ class SOUploader(Uploader):
                     logging.error(
                         'Error uploading to ScienceOpen SFTP server: {}'.format(error))
                     sys.exit(1)
-        except pysftp.AuthenticationException as error:
+        except SFTPAuthError as error:
             logging.error(
                 'Could not connect to ScienceOpen SFTP server: {}'.format(error))
             sys.exit(1)
