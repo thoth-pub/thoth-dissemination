@@ -5,11 +5,11 @@ Retrieve and disseminate files and metadata to ScienceOpen
 
 import logging
 import sys
-import pysftp
 import zipfile
 from datetime import date
 from io import BytesIO
 from errors import DisseminationError
+from paramiko import ssh_exception, AutoAddPolicy, SSHClient
 from uploader import Uploader
 
 
@@ -74,42 +74,42 @@ class SOUploader(Uploader):
         zipped_files.seek(0)
 
         try:
-            cnopts = pysftp.CnOpts()
-            cnopts.hostkeys = None
-            with pysftp.Connection(
-                host='ftp.scienceopen.com',
+            client = SSHClient()
+            client.set_missing_host_key_policy(AutoAddPolicy)
+            client.connect(
+                hostname='ftp.scienceopen.com',
                 username=username,
                 password=password,
-                cnopts=cnopts,
-            ) as sftp:
+            )
+            with client.open_sftp() as sftp:
                 try:
-                    sftp.cwd(root_dir)
+                    sftp.chdir(root_dir)
                 except FileNotFoundError:
                     logging.error(
                         'Could not find folder "UPLOAD_TO_THIS_DIRECTORY" on ScienceOpen SFTP server')
                     sys.exit(1)
                 try:
-                    sftp.cwd(collection_dir)
+                    sftp.chdir(collection_dir)
                 except FileNotFoundError:
                     logging.error(
                         'Could not find collection folder "books" on ScienceOpen SFTP server')
                     sys.exit(1)
                 try:
-                    sftp.cwd(publisher)
+                    sftp.chdir(publisher)
                 except FileNotFoundError:
                     logging.error(
                         'Could not find folder for publisher "{}" on ScienceOpen SFTP server'.format(publisher))
                     sys.exit(1)
                 sftp.mkdir(new_dir)
-                sftp.cwd(new_dir)
+                sftp.chdir(new_dir)
                 try:
-                    sftp.putfo(flo=zipped_files,
+                    sftp.putfo(fl=zipped_files,
                                remotepath='{}.zip'.format(filename))
                 except TypeError as error:
                     logging.error(
                         'Error uploading to ScienceOpen SFTP server: {}'.format(error))
                     sys.exit(1)
-        except pysftp.AuthenticationException as error:
+        except ssh_exception.AuthenticationException as error:
             logging.error(
                 'Could not connect to ScienceOpen SFTP server: {}'.format(error))
             sys.exit(1)
