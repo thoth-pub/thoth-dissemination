@@ -5,9 +5,9 @@ Retrieve and disseminate files and metadata to Project MUSE
 
 import logging
 import sys
-import pysftp
 from io import BytesIO
 from errors import DisseminationError
+from sftpclient import SFTPClient, SFTPAuthError
 from uploader import Uploader
 
 
@@ -65,13 +65,10 @@ class MUSEUploader(Uploader):
             sys.exit(1)
 
         try:
-            cnopts = pysftp.CnOpts()
-            cnopts.hostkeys = None
-            with pysftp.Connection(
+            with SFTPClient(
                 host='ftp.press.jhu.edu',
                 username=username,
                 password=password,
-                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)
@@ -94,7 +91,7 @@ class MUSEUploader(Uploader):
                             except FileNotFoundError:
                                 pass
                         sys.exit(1)
-        except pysftp.AuthenticationException as error:
+        except SFTPAuthError as error:
             logging.error(
                 'Could not connect to Project MUSE SFTP server: {}'.format(error))
             sys.exit(1)
