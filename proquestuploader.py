@@ -105,7 +105,7 @@ class ProquestUploader(Uploader):
                             except FileNotFoundError:
                                 pass
                         sys.exit(1)
-        except SFTPClient as error:
+        except SFTPAuthError as error:
             logging.error(
                 'Could not connect to ProQuest Ebook Central SFTP server: {}'.format(error))
             sys.exit(1)
