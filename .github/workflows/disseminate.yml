@@ -58,12 +58,15 @@ jobs:
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
-            > "$STDOUT" 2> "$STDERR" || STATUS=$?
+            > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2) || STATUS=$?
           if [ -s "$STDERR" ]; then
-            echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat "$STDERR" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            ERROR_LOG=$(grep '^ERROR:' "$STDERR")
+            if [ -n "$ERROR_LOG" ]; then
+              echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           exit ${STATUS:-0}
 
