@@ -63,13 +63,14 @@ jobs:
           echo "Python script finished with exit code: ${STATUS:-0}"
           echo "Contents of stdout file:"
           cat "$STDOUT"
-          ERROR_LOG=$(grep '^ERROR:' "$STDERR")
-          if [ -n "$ERROR_LOG" ]; then
-            echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
+          if [ -s "$STDERR" ]; then
+            ERROR_LOG=$(grep '^ERROR:' "$STDERR")
+            if [ -n "$ERROR_LOG" ]; then
+              echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "STDERR file is empty or doesn't exist"
           fi
