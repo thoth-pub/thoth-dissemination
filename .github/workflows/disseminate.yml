@@ -60,6 +60,8 @@ jobs:
             --platform "${{ inputs.platform }}" \
             > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2) || STATUS=$?
           if [ -s "$STDERR" ]; then
+            echo "Full stderr content:"
+            cat "$STDERR"
             ERROR_LOG=$(grep '^ERROR:' "$STDERR")
             if [ -n "$ERROR_LOG" ]; then
               echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
@@ -68,6 +70,7 @@ jobs:
               echo '```' >> $GITHUB_STEP_SUMMARY
             fi
           fi
+          echo "Exit status: ${STATUS:-0}"
           exit ${STATUS:-0}
 
       - name: Upload output to artifact
