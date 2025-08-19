@@ -54,7 +54,6 @@ jobs:
       - name: Run disseminator using Dockerhub image
         run: |
           STDOUT="${{ inputs.work-id }}"
-          STDERR=$(mktemp)
           
           # Enable pipefail to get exit status from python, not tee
           set -o pipefail
@@ -67,7 +66,7 @@ jobs:
           set -e  # Re-enable exit on error
           
           # Extract just stderr from the combined output for error processing
-          if [ -f "$STDOUT" ] && [ -s "$STDOUT" ]; then
+          if [ -s "$STDOUT" ]; then
             ERROR_LOG=$(grep '^ERROR:' "$STDOUT" || true)
             if [ -n "$ERROR_LOG" ]; then
               echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
