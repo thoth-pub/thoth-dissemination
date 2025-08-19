@@ -51,20 +51,18 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
-      - name: Run disseminator using Dockerhub image
-        run: |
-          STDOUT="${{ inputs.work-id }}"
-          STDERR=$(mktemp)
-          echo "STDERR file: $STDERR"
-          python disseminator.py \
-            --work "${{ inputs.work-id }}" \
-            --platform "${{ inputs.platform }}" \
-            > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2) || STATUS=$?
-          echo "STDERR file size: $(wc -c < "$STDERR")"
-          echo "STDERR file exists: $(test -f "$STDERR" && echo "yes" || echo "no")"
-          if [ -s "$STDERR" ]; then
-            echo "Full stderr content:"
-            cat "$STDERR"
+        - name: Run disseminator using Dockerhub image
+          run: |
+            STDOUT="${{ inputs.work-id }}"
+            STDERR=$(mktemp)
+            echo "About to run Python script..."
+            python disseminator.py \
+              --work "${{ inputs.work-id }}" \
+              --platform "${{ inputs.platform }}" \
+              > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2) || STATUS=$?
+            echo "Python script finished with exit code: ${STATUS:-0}"
+            echo "Contents of stdout file:"
+            cat "$STDOUT"
             ERROR_LOG=$(grep '^ERROR:' "$STDERR")
             if [ -n "$ERROR_LOG" ]; then
               echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
