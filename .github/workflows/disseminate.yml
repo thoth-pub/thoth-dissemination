@@ -55,10 +55,13 @@ jobs:
         run: |
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
+          echo "STDERR file: $STDERR"
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
             > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2) || STATUS=$?
+          echo "STDERR file size: $(wc -c < "$STDERR")"
+          echo "STDERR file exists: $(test -f "$STDERR" && echo "yes" || echo "no")"
           if [ -s "$STDERR" ]; then
             echo "Full stderr content:"
             cat "$STDERR"
@@ -69,6 +72,8 @@ jobs:
               echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
             fi
+          else
+            echo "STDERR file is empty or doesn't exist"
           fi
           echo "Exit status: ${STATUS:-0}"
           exit ${STATUS:-0}
