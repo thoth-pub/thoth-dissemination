@@ -56,7 +56,8 @@ jobs:
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
           
-          # Run the script and capture exit code, while showing output in job log
+          # Enable pipefail to get exit status from python, not tee
+          set -o pipefail
           set +e  # Don't exit on error yet
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
