@@ -56,16 +56,17 @@ jobs:
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
           
-          # Disable exit on error temporarily to allow processing of failures
-          set +e
+          # # Disable exit on error temporarily to allow processing of failures
+          # set +e
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
-            > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
+            # > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
+            > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2) || STATUS=$?
           # Capture exit code  
-          STATUS=$?  
+          # STATUS=$?  
           # Re-enable exit on error for following step
-          set -e
+          # set -e
 
           if [ -s "$STDERR" ]; then
             ERROR_LOG=$(grep '^ERROR:' "$STDERR" || true)
@@ -76,9 +77,10 @@ jobs:
               echo '```' >> $GITHUB_STEP_SUMMARY
             fi
           fi
+          exit ${STATUS:-0}
           
           # Exit with actual exit code from disseminator.py
-          exit $STATUS
+          # exit $STATUS
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
