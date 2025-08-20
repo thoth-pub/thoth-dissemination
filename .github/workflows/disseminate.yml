@@ -55,10 +55,13 @@ jobs:
         run: |
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
+          HAS_ERRORS=false
+          
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
             > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
+          
           if [ -s "$STDERR" ]; then
             ERROR_LOG=$(grep '^ERROR:' "$STDERR")
             if [ -n "$ERROR_LOG" ]; then
@@ -66,7 +69,12 @@ jobs:
               echo '```' >> $GITHUB_STEP_SUMMARY
               echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
+              HAS_ERRORS=true
             fi
+          fi
+          
+          # Exit after Job Summary has been written
+          if [ "$HAS_ERRORS" = "true" ]; then
             exit 1
           fi
 
