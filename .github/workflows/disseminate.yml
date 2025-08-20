@@ -75,7 +75,7 @@ jobs:
           
           # Exit after Job Summary has been written
           if [ "$HAS_ERRORS" = "true" ]; then
-            sleep 10
+            sleep 100
             exit 1
           fi
 
