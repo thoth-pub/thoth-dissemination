@@ -51,60 +51,88 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
+      # - name: Run disseminator using Dockerhub image
+      #   run: |
+      #     echo "DEBUG: Starting disseminator step"
+      #     STDOUT="${{ inputs.work-id }}"
+      #     STDERR=$(mktemp)
+      #     HAS_ERRORS=false
+          
+      #     echo "DEBUG: About to run Python script"
+      #     echo "DEBUG: STDOUT file: $STDOUT"
+      #     echo "DEBUG: STDERR file: $STDERR"
+          
+      #     # Disable exit on error temporarily
+      #     set +e
+      #     python disseminator.py \
+      #       --work "${{ inputs.work-id }}" \
+      #       --platform "${{ inputs.platform }}" \
+      #       > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
+      #     PYTHON_EXIT_CODE=$?
+      #     set -e  # Re-enable exit on error
+          
+      #     echo "DEBUG: Python script completed with exit code: $PYTHON_EXIT_CODE"
+      #     echo "DEBUG: Checking if STDERR file exists and has content"
+          
+      #     if [ -s "$STDERR" ]; then
+      #       echo "DEBUG: STDERR file has content, processing errors"
+      #       ERROR_LOG=$(grep '^ERROR:' "$STDERR" || true)
+      #       echo "DEBUG: ERROR_LOG content: $ERROR_LOG"
+            
+      #       if [ -n "$ERROR_LOG" ]; then
+      #         echo "DEBUG: Found error messages, writing to Job Summary"
+      #         echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
+      #         echo '```' >> $GITHUB_STEP_SUMMARY
+      #         echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
+      #         echo '```' >> $GITHUB_STEP_SUMMARY
+      #         HAS_ERRORS=true
+      #         echo "DEBUG: Job Summary written, HAS_ERRORS set to true"
+      #       else
+      #         echo "DEBUG: No error messages found in stderr"
+      #       fi
+      #     else
+      #       echo "DEBUG: STDERR file is empty or doesn't exist"
+      #     fi
+          
+      #     echo "DEBUG: About to check HAS_ERRORS flag or Python exit code"
+      #     # Exit after Job Summary has been written
+      #     if [ "$HAS_ERRORS" = "true" ] || [ $PYTHON_EXIT_CODE -ne 0 ]; then
+      #       echo "DEBUG: Errors found or Python script failed, sleeping then exiting"
+      #       sleep 2
+      #       exit 1
+      #     else
+      #       echo "DEBUG: No errors found, step should succeed"
+      #     fi
+          
+      #     echo "DEBUG: Step completed successfully"
+
       - name: Run disseminator using Dockerhub image
         run: |
-          echo "DEBUG: Starting disseminator step"
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
-          HAS_ERRORS=false
           
-          echo "DEBUG: About to run Python script"
-          echo "DEBUG: STDOUT file: $STDOUT"
-          echo "DEBUG: STDERR file: $STDERR"
-          
-          # Disable exit on error temporarily
+          # Disable exit on error temporarily to allow processing of failures
           set +e
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
             > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
-          PYTHON_EXIT_CODE=$?
+          STATUS=$?  # Capture exit code directly (no ||)
           set -e  # Re-enable exit on error
           
-          echo "DEBUG: Python script completed with exit code: $PYTHON_EXIT_CODE"
-          echo "DEBUG: Checking if STDERR file exists and has content"
-          
+          # Process errors if stderr has content
           if [ -s "$STDERR" ]; then
-            echo "DEBUG: STDERR file has content, processing errors"
             ERROR_LOG=$(grep '^ERROR:' "$STDERR" || true)
-            echo "DEBUG: ERROR_LOG content: $ERROR_LOG"
-            
             if [ -n "$ERROR_LOG" ]; then
-              echo "DEBUG: Found error messages, writing to Job Summary"
               echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
               echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
-              HAS_ERRORS=true
-              echo "DEBUG: Job Summary written, HAS_ERRORS set to true"
-            else
-              echo "DEBUG: No error messages found in stderr"
             fi
-          else
-            echo "DEBUG: STDERR file is empty or doesn't exist"
           fi
           
-          echo "DEBUG: About to check HAS_ERRORS flag or Python exit code"
-          # Exit after Job Summary has been written
-          if [ "$HAS_ERRORS" = "true" ] || [ $PYTHON_EXIT_CODE -ne 0 ]; then
-            echo "DEBUG: Errors found or Python script failed, sleeping then exiting"
-            sleep 2
-            exit 1
-          else
-            echo "DEBUG: No errors found, step should succeed"
-          fi
-          
-          echo "DEBUG: Step completed successfully"
+          # Exit with the actual Python script's exit code
+          exit $STATUS
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
