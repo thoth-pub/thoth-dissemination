@@ -66,8 +66,8 @@ jobs:
               echo '```' >> $GITHUB_STEP_SUMMARY
               echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
-              exit 1
             fi
+            exit 1
           fi
 
       - name: Upload output to artifact
