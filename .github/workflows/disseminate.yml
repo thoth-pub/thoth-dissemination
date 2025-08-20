@@ -62,17 +62,21 @@ jobs:
           echo "DEBUG: STDOUT file: $STDOUT"
           echo "DEBUG: STDERR file: $STDERR"
           
+          # Disable exit on error temporarily
+          set +e
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
             > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
+          PYTHON_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
           
-          echo "DEBUG: Python script completed"
+          echo "DEBUG: Python script completed with exit code: $PYTHON_EXIT_CODE"
           echo "DEBUG: Checking if STDERR file exists and has content"
           
           if [ -s "$STDERR" ]; then
             echo "DEBUG: STDERR file has content, processing errors"
-            ERROR_LOG=$(grep '^ERROR:' "$STDERR")
+            ERROR_LOG=$(grep '^ERROR:' "$STDERR" || true)
             echo "DEBUG: ERROR_LOG content: $ERROR_LOG"
             
             if [ -n "$ERROR_LOG" ]; then
@@ -90,14 +94,14 @@ jobs:
             echo "DEBUG: STDERR file is empty or doesn't exist"
           fi
           
-          echo "DEBUG: About to check HAS_ERRORS flag"
+          echo "DEBUG: About to check HAS_ERRORS flag or Python exit code"
           # Exit after Job Summary has been written
-          if [ "$HAS_ERRORS" = "true" ]; then
-            echo "DEBUG: HAS_ERRORS is true, sleeping then exiting"
-            sleep 100
+          if [ "$HAS_ERRORS" = "true" ] || [ $PYTHON_EXIT_CODE -ne 0 ]; then
+            echo "DEBUG: Errors found or Python script failed, sleeping then exiting"
+            sleep 2
             exit 1
           else
-            echo "DEBUG: HAS_ERRORS is false, step should succeed"
+            echo "DEBUG: No errors found, step should succeed"
           fi
           
           echo "DEBUG: Step completed successfully"
