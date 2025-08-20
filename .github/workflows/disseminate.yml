@@ -54,31 +54,21 @@ jobs:
       - name: Run disseminator using Dockerhub image
         run: |
           STDOUT="${{ inputs.work-id }}"
-          
-          # Enable pipefail to get exit status from python, not tee
-          set -o pipefail
-          set +e  # Don't exit on error yet
+          STDERR=$(mktemp)
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
-            2>&1 | tee "$STDOUT"  # Send both stdout and stderr to tee
-          STATUS=$?
-          set -e  # Re-enable exit on error
-          
-          # Extract just stderr from the combined output for error processing
-          if [ -s "$STDOUT" ]; then
-            ERROR_LOG=$(grep '^ERROR:' "$STDOUT" || true)
+            > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
+          if [ -s "$STDERR" ]; then
+            ERROR_LOG=$(grep '^ERROR:' "$STDERR")
             if [ -n "$ERROR_LOG" ]; then
               echo "### Dissemination error for work ID ${{ inputs.work-id }}" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
               echo "$ERROR_LOG" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
+              exit 1
             fi
           fi
-          
-          exit $STATUS
-
-
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
