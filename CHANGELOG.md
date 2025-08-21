@@ -4,6 +4,10 @@ All notable changes to thoth-dissemination will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+### Changed
+  - Fixed a bug with GitHub Actions where all ```manual-disseminate``` jobs were returning exit code 1 (failure), whether they actually succeeded or not.
+
 ## [[0.1.31]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.31) - 2025-08-13
 ### Changed
   - Only write `ERROR` logging messages to the GitHub Actions Job Summary, removing `INFO` messages so the Job Summaries are easier to read for batch runs of the `manual-disseminate` workflow.
