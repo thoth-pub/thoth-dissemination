@@ -5,10 +5,10 @@ Retrieve and disseminate files and metadata to EBSCOHost
 
 import logging
 import sys
-import pysftp
 from datetime import date
 from io import BytesIO
 from errors import DisseminationError
+from sftpclient import SFTPClient, SFTPAuthError
 from uploader import Uploader
 
 
@@ -24,7 +24,6 @@ class EBSCOUploader(Uploader):
         Naming convention: Use "corresponding eISBN" for content filename roots
                            (can be either PDF or EPUB as long as both are in ONIX)
                            Metadata filename not strictly controlled; date recommended
-        Upload directory: TBC # TODO
         """
 
         # Check that EBSCOHost credentials have been provided
@@ -65,13 +64,10 @@ class EBSCOUploader(Uploader):
                       BytesIO(metadata_bytes)))
 
         try:
-            cnopts = pysftp.CnOpts()
-            cnopts.hostkeys = None
-            with pysftp.Connection(
+            with SFTPClient(
                 host='sftp.epnet.com',
                 username=username,
                 password=password,
-                cnopts=cnopts,
             ) as sftp:
                 for file in files:
                     try:
@@ -88,7 +84,7 @@ class EBSCOUploader(Uploader):
                             except FileNotFoundError:
                                 pass
                         sys.exit(1)
-        except pysftp.AuthenticationException as error:
+        except SFTPAuthError as error:
             logging.error(
                 'Could not connect to EBSCOHost SFTP server: {}'.format(error))
             sys.exit(1)

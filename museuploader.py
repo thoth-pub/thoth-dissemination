@@ -5,9 +5,9 @@ Retrieve and disseminate files and metadata to Project MUSE
 
 import logging
 import sys
-import pysftp
 from io import BytesIO
 from errors import DisseminationError
+from sftpclient import SFTPClient, SFTPAuthError
 from uploader import Uploader
 
 
@@ -20,7 +20,7 @@ class MUSEUploader(Uploader):
 
         Content required: PDF and/or EPUB work file plus JPG cover file
         Metadata required: Project MUSE ONIX 3.0 export
-        Naming convention: Use paperback ISBN for all filename roots
+        Naming convention: Use PDF ISBN for all filename roots
         Upload directory: `uploads`
         """
 
@@ -35,7 +35,7 @@ class MUSEUploader(Uploader):
             logging.error(error)
             sys.exit(1)
 
-        filename = self.get_isbn('PAPERBACK')
+        filename = self.get_isbn('PDF')
         root_dir = 'uploads'
 
         metadata_bytes = self.get_formatted_metadata('onix_3.0::project_muse')
@@ -65,13 +65,10 @@ class MUSEUploader(Uploader):
             sys.exit(1)
 
         try:
-            cnopts = pysftp.CnOpts()
-            cnopts.hostkeys = None
-            with pysftp.Connection(
+            with SFTPClient(
                 host='ftp.press.jhu.edu',
                 username=username,
                 password=password,
-                cnopts=cnopts,
             ) as sftp:
                 try:
                     sftp.cwd(root_dir)
@@ -94,7 +91,7 @@ class MUSEUploader(Uploader):
                             except FileNotFoundError:
                                 pass
                         sys.exit(1)
-        except pysftp.AuthenticationException as error:
+        except SFTPAuthError as error:
             logging.error(
                 'Could not connect to Project MUSE SFTP server: {}'.format(error))
             sys.exit(1)

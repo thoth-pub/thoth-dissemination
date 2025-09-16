@@ -1,8 +1,8 @@
 google-cloud-storage==2.18.2
 internetarchive==4.1.0
-pycountry==24.6.1 
-pysftp==0.2.9
+paramiko==4.0.0
+pycountry==24.6.1
 python-dotenv==0.19.2
 requests==2.32.3
 sword2==0.3.0
-thothlibrary==0.26.2
+thothlibrary==0.30.0
