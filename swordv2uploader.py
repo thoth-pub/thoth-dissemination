@@ -198,27 +198,26 @@ class SwordV2Uploader(Uploader):
         logging.info("Creating OAPEN SWORD metadata")
         # logging.info(work_metadata)
         oapen_metadata = sword2.Entry()
-        oapen_metadata.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
-        # A URL is required here; not sure if the one selected is appropriate
-        oapen_metadata.register_namespace("oapen", "https://oapen.org")
         oapen_metadata.add_fields(
-            # dc_description_abstract should be the abstract in English.
+            # dcterms_abstract should be the abstract in English.
             # we don't have that metadata currently in Thoth. When multilingualism is
             # implemented, we can revisit this.
-            dc_description_abstract=work_metadata.get('longAbstract'),
+            # (oapen_abstract_otherlanguage should be used for other versions)
+            dcterms_abstract=work_metadata.get('longAbstract'),
             # OAPEN needs year only for this field
-            dc_date_issued=work_metadata.get('publicationDate').split('-')[0],
-            oapen_imprint=self.get_publisher_name(),
+            dcterms_issued=work_metadata.get('publicationDate').split('-')[0],
+            dcterms_publisherId=self.get_publisher_name(),
             # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
-            oapen_relation_isPublishedBy=self.get_publisher_name(),
-            dc_title=work_metadata.get('title'),
-            dc_title_alternative=work_metadata.get('subtitle'),
+            dcterms_imprintId=self.get_publisher_name(),
+            dcterms_title=work_metadata.get('title'),
+            dcterms_alternative=work_metadata.get('subtitle'),
             # options are "book" or "chapter"
-            dc_type='book',
-            oapen_identifier_doi=work_metadata.get('doi'),
-            oapen_identifier_ocn=work_metadata.get('oclc'),
-            oapen_pages=str(work_metadata.get('pageCount')),
-            oapen_place_publication=work_metadata.get('place'),
+            # OAPEN say this is autofilled to "book"
+            # dc_type='book',
+            dcterms_doi=work_metadata.get('doi'),
+            dcterms_ocn=work_metadata.get('oclc'),
+            dcterms_pageCount=str(work_metadata.get('pageCount')),
+            dcterms_place=work_metadata.get('place'),
             dc_description_version=str(work_metadata.get('edition')),
         )
 
@@ -228,17 +227,17 @@ class SwordV2Uploader(Uploader):
                 'contributions') if n.get('mainContribution') is True]:
             match contributor.get('contributionType'):
                 case 'AUTHOR':
-                    oapen_metadata.add_field("dc_contributor_author", contributor.get('fullName'))
+                    oapen_metadata.add_field("dcterms_creator", contributor.get('fullName'))
                 case 'EDITOR':
-                    oapen_metadata.add_field("dc_contributor_editor", contributor.get('fullName'))
+                    oapen_metadata.add_field("dcterms_editor", contributor.get('fullName'))
                 case _:
-                    oapen_metadata.add_field("dc_contributor_other", contributor.get('fullName'))
+                    oapen_metadata.add_field("dcterms_contributionsBy", contributor.get('fullName'))
         for isbn in [
             n.get('isbn').replace(
                 '-',
                 '') for n in work_metadata.get('publications') if n.get('isbn')
                 is not None]:
-            oapen_metadata.add_field("oapen_relation_isbn", isbn)
+            oapen_metadata.add_field("dcterms_isbn", isbn)
         for language in [n.get('languageCode')
                          for n in work_metadata.get('languages')]:
             # pycountry translates ISO codes to language name in English (e.g. "English" instead of "ENG" )
@@ -246,15 +245,15 @@ class SwordV2Uploader(Uploader):
             # (some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the less common
             # "bibliographic" variant, so check for this variant first to avoid failed lookups)
             oapen_formatted_language = pycountry.languages.get(bibliographic=language) or pycountry.languages.get(alpha_3=language)
-            oapen_metadata.add_field("dc_language", oapen_formatted_language.name)
+            oapen_metadata.add_field("dcterms_language", oapen_formatted_language.name)
         for subject in work_metadata.get('subjects'):
             match subject.get('subjectType'):
                 # note "Thema codes used" list supplied by OAPEN:
                 # any further conversion needed?
                 case 'THEMA':
-                    oapen_metadata.add_field("dc_subject_classification", subject.get('subjectCode'))
+                    oapen_metadata.add_field("dcterms_classification", subject.get('subjectCode'))
                 case 'KEYWORD':
-                    oapen_metadata.add_field("dc_subject_other", subject.get('subjectCode'))
+                    oapen_metadata.add_field("dcterms_other", subject.get('subjectCode'))
                 case _:
                     pass
         # TBD if Thoth will be sending chapters (or chapter info?)
@@ -275,16 +274,16 @@ class SwordV2Uploader(Uploader):
                                  "thoth-work-id:{}".format(self.work_id))
 
         for issue in work_metadata.get('issues'):
-            oapen_metadata.add_field("dc_identifier_issn", issue.get('series').get('issnDigital'))
-            oapen_metadata.add_field("dc_relation_ispartofseries", issue.get('series').get('seriesName'))
+            oapen_metadata.add_field("dcterms_issn", issue.get('series').get('issnDigital'))
+            oapen_metadata.add_field("dcterms_seriesId", issue.get('series').get('seriesName'))
             oapen_metadata.add_field("oapen_series_number", str(issue.get('issueOrdinal')))
 
         for funding in work_metadata.get('fundings'):
-            oapen_metadata.add_field("oapen_grant_number", funding.get('grantNumber'))
-            oapen_metadata.add_field("oapen_grant_program", funding.get('program'))
-            oapen_metadata.add_field("oapen_grant_project", funding.get('projectName'))
+            oapen_metadata.add_field("dcterms_grantNumber", funding.get('grantNumber'))
+            oapen_metadata.add_field("dcterms_program", funding.get('program'))
+            oapen_metadata.add_field("dcterms_projectName", funding.get('projectName'))
             # appears in spreadsheet twice; second time states OAPEN funder ID list is needed
-            oapen_metadata.add_field("oapen_relation_isFundedBy", funding.get('institution').get('institutionName'))
+            oapen_metadata.add_field("dcterms_institutionId", funding.get('institution').get('institutionName'))
 
         return oapen_metadata
         # return work_metadata
