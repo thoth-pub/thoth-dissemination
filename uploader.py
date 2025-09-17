@@ -90,7 +90,6 @@ class Uploader():
         self.work_id = work_id
         self.export_url = export_url
         self.metadata = self.get_thoth_metadata(client_url)
-        # logging.info(f"self.metadata is {self.metadata}")
         self.version = version
 
     def run(self):

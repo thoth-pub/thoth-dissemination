@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [[0.1.21]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.21) - 2025-05-06
 ### Changed
-  - Improved error message for lack of PDF ISBN in GoogleBooks uploader
+  - Improved error messages for lack of PDF ISBN in GoogleBooks uploader
 
 ## [[0.1.20]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.20) - 2025-03-03
 ### Added

@@ -44,20 +44,21 @@ class SwordV2Uploader(Uploader):
             metadata_profile):
         """Create connection to SWORD v2 endpoint"""
         super().__init__(work_id, export_url, client_url, version)
-        # try:
-        #     user_name = self.get_variable_from_env(
-        #         user_name_string, 'SWORD v2')
-        #     user_pass = self.get_variable_from_env(
-        #         user_pass_string, 'SWORD v2')
-        # except DisseminationError as error:
-        #     logging.error(error)
-        #     sys.exit(1)
-        # self.api = SwordV2Api(work_id, user_name, user_pass,
-        #                       service_document_iri, collection_iri)
+        try:
+            user_name = self.get_variable_from_env(
+                user_name_string, 'SWORD v2')
+            user_pass = self.get_variable_from_env(
+                user_pass_string, 'SWORD v2')
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
+        self.api = SwordV2Api(work_id, user_name, user_pass,
+                              service_document_iri, collection_iri)
         self.metadata_profile = metadata_profile
 
     def upload_to_platform(self):
         """Upload work in required format to SWORD v2"""
+
         # TODO SWORD2 is designed for deposit rather than retrieval, so there's
         # no easy way to search existing items i.e. check for duplicates.
         # One option would be to 1) call get_resource() on the collection URL,
@@ -80,47 +81,46 @@ class SwordV2Uploader(Uploader):
         # Convert Thoth work metadata into SWORD v2 format
         # (not expected to fail, as "required" metadata is minimal)
         sword_metadata = self.parse_metadata()
-        logging.info(sword_metadata)
 
-        # try:
-        #     create_receipt = self.api.create_item(sword_metadata)
-        # except DisseminationError as error:
-        #     logging.error(error)
-        #     sys.exit(1)
+        try:
+            create_receipt = self.api.create_item(sword_metadata)
+        except DisseminationError as error:
+            logging.error(error)
+            sys.exit(1)
 
-        # # Any failure after this point will leave incomplete data in
-        # # SWORD v2 server which will need to be removed.
-        # try:
-        #     pdf_upload_receipt = self.api.upload_pdf(
-        #         create_receipt.edit_media, pdf_bytes)
-        #     self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
-        #     deposit_receipt = self.api.complete_deposit(create_receipt.edit)
-        # except Exception as error:
-        #     # In all cases, we need to delete the partially-created item
-        #     # For expected failures, log before attempting deletion, then exit
-        #     # For unexpected failures, attempt deletion then let program crash
-        #     if isinstance(error, DisseminationError):
-        #         logging.error(error)
-        #     try:
-        #         self.api.delete_item(create_receipt.edit)
-        #     except DisseminationError as deletion_error:
-        #         logging.error(
-        #             'Failed to delete incomplete item: {}'.format(
-        #                 deletion_error))
-        #     if isinstance(error, DisseminationError):
-        #         sys.exit(1)
-        #     else:
-        #         raise
+        # Any failure after this point will leave incomplete data in
+        # SWORD v2 server which will need to be removed.
+        try:
+            pdf_upload_receipt = self.api.upload_pdf(
+                create_receipt.edit_media, pdf_bytes)
+            self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
+            deposit_receipt = self.api.complete_deposit(create_receipt.edit)
+        except Exception as error:
+            # In all cases, we need to delete the partially-created item
+            # For expected failures, log before attempting deletion, then exit
+            # For unexpected failures, attempt deletion then let program crash
+            if isinstance(error, DisseminationError):
+                logging.error(error)
+            try:
+                self.api.delete_item(create_receipt.edit)
+            except DisseminationError as deletion_error:
+                logging.error(
+                    'Failed to delete incomplete item: {}'.format(
+                        deletion_error))
+            if isinstance(error, DisseminationError):
+                sys.exit(1)
+            else:
+                raise
 
-        # logging.info(
-        #     # If automatic deposit (no curation) is enabled, `alternate`
-        #     # should show the front-end URL of the upload (alternatively,
-        #     # use `location` for back-end URL)
-        #     'Successfully uploaded to SWORD v2 at {}'.format(
-        #         deposit_receipt.alternate))
+        logging.info(
+            # If automatic deposit (no curation) is enabled, `alternate`
+            # should show the front-end URL of the upload (alternatively,
+            # use `location` for back-end URL)
+            'Successfully uploaded to SWORD v2 at {}'.format(
+                deposit_receipt.alternate))
 
-        # # Return server responses as caller may want to extract location info
-        # return (pdf_publication.id, pdf_upload_receipt, deposit_receipt)
+        # Return server responses as caller may want to extract location info
+        return (pdf_publication.id, pdf_upload_receipt, deposit_receipt)
 
     def parse_metadata(self):
         """Convert work metadata into SWORD v2 format"""
@@ -189,14 +189,12 @@ class SwordV2Uploader(Uploader):
             "dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
         return cul_pilot_metadata
-    
+
     def profile_oapen(self):
         """
         Profile developed in discussion with OAPEN
         """
         work_metadata = self.metadata.get('data').get('work')
-        logging.info("Creating OAPEN SWORD metadata")
-        # logging.info(work_metadata)
         oapen_metadata = sword2.Entry()
         oapen_metadata.add_fields(
             # dcterms_abstract should be the abstract in English.
@@ -218,6 +216,7 @@ class SwordV2Uploader(Uploader):
             dcterms_ocn=work_metadata.get('oclc'),
             dcterms_pageCount=str(work_metadata.get('pageCount')),
             dcterms_place=work_metadata.get('place'),
+            # TODO No dcterms mapping provided by OAPEN for this: awaiting update
             dc_description_version=str(work_metadata.get('edition')),
         )
 
@@ -269,24 +268,25 @@ class SwordV2Uploader(Uploader):
         #     else:
         #         oapen_metadata.add_field("dc_relation", relation_doi)
 
-        # TODO should we retain this?
+        # TODO should we retain this? No mapping provided
         oapen_metadata.add_field("dc_identifier",
                                  "thoth-work-id:{}".format(self.work_id))
 
         for issue in work_metadata.get('issues'):
             oapen_metadata.add_field("dcterms_issn", issue.get('series').get('issnDigital'))
             oapen_metadata.add_field("dcterms_seriesId", issue.get('series').get('seriesName'))
+            # TODO No dcterms mapping provided by OAPEN for this: awaiting update
             oapen_metadata.add_field("oapen_series_number", str(issue.get('issueOrdinal')))
 
         for funding in work_metadata.get('fundings'):
             oapen_metadata.add_field("dcterms_grantNumber", funding.get('grantNumber'))
+            # TODO These two fields are not currently retrieved by thoth-client; version update will be required
             oapen_metadata.add_field("dcterms_program", funding.get('program'))
             oapen_metadata.add_field("dcterms_projectName", funding.get('projectName'))
             # appears in spreadsheet twice; second time states OAPEN funder ID list is needed
             oapen_metadata.add_field("dcterms_institutionId", funding.get('institution').get('institutionName'))
 
         return oapen_metadata
-        # return work_metadata
 
     def profile_basic(self):
         """
@@ -546,22 +546,21 @@ class SwordV2Api:
         )
 
     def create_item(self, metadata_entry):
-        return
         """Create an item with the specified metadata."""
-        # return self.handle_request(
-        #     request_type=RequestType.CREATE_ITEM,
-        #     expected_status=201,
-        #     # Hacky workaround for an issue with mishandling of encodings
-        #     # within sword2 library, which meant metadata containing special
-        #     # characters could not be submitted. Although the `metadata_entry`
-        #     # parameter ought to be of type `Entry`, sending a `str` as below
-        #     # triggers no errors. Ultimately it's passed to
-        #     # `http/client.py/_encode()`, which defaults to encoding it as
-        #     # 'latin-1'. Pre-emptively encoding/decoding it here seems to mean
-        #     # that the string sent to the server is in correct utf-8 format.
-        #     metadata_entry=str(metadata_entry).encode(
-        #         'utf-8').decode('latin-1'),
-        # )
+        return self.handle_request(
+            request_type=RequestType.CREATE_ITEM,
+            expected_status=201,
+            # Hacky workaround for an issue with mishandling of encodings
+            # within sword2 library, which meant metadata containing special
+            # characters could not be submitted. Although the `metadata_entry`
+            # parameter ought to be of type `Entry`, sending a `str` as below
+            # triggers no errors. Ultimately it's passed to
+            # `http/client.py/_encode()`, which defaults to encoding it as
+            # 'latin-1'. Pre-emptively encoding/decoding it here seems to mean
+            # that the string sent to the server is in correct utf-8 format.
+            metadata_entry=str(metadata_entry).encode(
+                'utf-8').decode('latin-1'),
+        )
 
     def delete_item(self, resource_iri):
         """Delete the specified item."""
