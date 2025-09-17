@@ -31,21 +31,12 @@ class OAPENSWORDUploader(DSpaceUploader):
 
     def upload_to_platform(self):
         """Perform standard upload then OAPEN-specific processing"""
-        (publication_id, pdf_upload_receipt,
-         deposit_receipt) = super().upload_to_platform()
+        (publication_id, _, deposit_receipt) = super().upload_to_platform()
         # Return details of created upload to be entered as a Thoth Location
         landing_page = deposit_receipt.alternate
         # Receipt only contains SWORDv2 server URL - translate to frontend URL
-        # bitstream_id = pdf_upload_receipt.location.partition(
-        #     '/bitstream/')[2].partition('/')[0]
-        # if len(bitstream_id) > 0:
-        #     full_text_url = ('https://thoth-arch.lib.cam.ac.uk/bitstreams/{}/'
-        #                      'download'.format(bitstream_id))
-        # else:
-        #     full_text_url = None
-        # location_platform = 'OTHER'
-        full_text_url = None
-        location_platform = 'OTHER'
+        bitstream_root = landing_page.replace('/handle', '/bitstream/handle')
+        full_text_url = ('{}/{}.pdf?sequence=2&isAllowed=y').format(bitstream_root, self.api.work_id)
+        location_platform = 'OAPEN'
         return [Location(publication_id, location_platform, landing_page,
                          full_text_url)]
-        # pass
