@@ -268,15 +268,13 @@ class SwordV2Uploader(Uploader):
         #     else:
         #         oapen_metadata.add_field("dc_relation", relation_doi)
 
-        # TODO should we retain this? No mapping provided
-        oapen_metadata.add_field("dc_identifier",
+        oapen_metadata.add_field("dcterms_identifier",
                                  "thoth-work-id:{}".format(self.work_id))
 
         for issue in work_metadata.get('issues'):
             oapen_metadata.add_field("dcterms_issn", issue.get('series').get('issnDigital'))
             oapen_metadata.add_field("dcterms_seriesId", issue.get('series').get('seriesName'))
-            # TODO No dcterms mapping provided by OAPEN for this: awaiting update
-            oapen_metadata.add_field("oapen_series_number", str(issue.get('issueOrdinal')))
+            oapen_metadata.add_field("dcterms_seriesNumber", str(issue.get('issueOrdinal')))
 
         for funding in work_metadata.get('fundings'):
             oapen_metadata.add_field("dcterms_grantNumber", funding.get('grantNumber'))
