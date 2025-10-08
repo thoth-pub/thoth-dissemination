@@ -268,7 +268,7 @@ class SwordV2Uploader(Uploader):
         #     else:
         #         oapen_metadata.add_field("dc_relation", relation_doi)
 
-        oapen_metadata.add_field("dcterms_identifier",
+        oapen_metadata.add_field("dcterms_oapenIdentifier",
                                  "thoth-work-id:{}".format(self.work_id))
 
         for issue in work_metadata.get('issues'):
