@@ -19,8 +19,6 @@ jobs:
       # Required for Google Play workflow
       contents: read
       id-token: write
-    outputs:
-      publisher-name: ${{ steps.get-publisher.outputs.publisher-name }}
     
     steps:
       - name: Checkout code
@@ -81,19 +79,6 @@ jobs:
           
           # Exit with actual exit code from disseminator.py
           exit $STATUS
-      
-      - name: Get publisher name for email
-        id: get-publisher
-        if: contains(fromJSON('["OAPEN", "EBSCOHost", "BKCI"]'), inputs.platform)
-        run: |
-          PUBLISHER_NAME=$(python -c "
-          import sys
-          sys.path.append('.')
-          from disseminator import Disseminator
-          d = Disseminator('${{ inputs.work-id }}', '${{ inputs.platform }}')
-          print(d.get_publisher_name())
-          ")
-          echo "publisher-name=$PUBLISHER_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
@@ -138,13 +123,22 @@ jobs:
     needs: disseminate
     if: contains(fromJSON('["OAPEN", "EBSCOHost", "BKCI"]'), inputs.platform)
     steps:
+      - name: Get publisher name
+        id: get-publisher
+        run: |
+          PUBLISHER_NAME=$(curl -s -X POST https://api.thoth.pub/graphql \
+            -H "Content-Type: application/json" \
+            -d '{
+              "query": "query { work(workId: \"${{ inputs.work-id }}\") { imprint { publisher { publisherName } } } }"
+            }' | jq -r '.data.work.imprint.publisher.publisherName // "Unknown Publisher"')
+          echo "publisher-name=$PUBLISHER_NAME" >> $GITHUB_OUTPUT
       - name: Send notification email
         uses: dawidd6/action-send-mail@v3
         with:
           connection_url: ${{ secrets.THOTH_SMTP }}
-          subject: New book submitted to ${{ inputs.platform }} via Thoth (${{ inputs.work-id }})
+          subject: New book submitted from ${{ steps.get-publisher.outputs.publisher-name }} to ${{ inputs.platform }} via Thoth (${{ inputs.work-id }})
           # NB: Actions secrets names are case-insensitive, so no need to check/change casing of platform name
           to: ${{ secrets[format('{0}_NOTIF_EMAIL', inputs.platform)] }}
           from: Thoth Open Metadata <distribution@thoth.pub>
-          body: Please find the metadata submission for https://thoth.pub/books/${{ inputs.work-id }} for publisher ${{ needs.disseminate.outputs.publisher-name }} in your upload folder. We look forward to receiving the file location once registered. Thank you!
+          body: Please find the metadata submission for https://thoth.pub/books/${{ inputs.work-id }} for publisher ${{ steps.get-publisher.outputs.publisher-name }} in your upload folder. We look forward to receiving the file location once registered. Thank you!
           cc: info@thoth.pub
