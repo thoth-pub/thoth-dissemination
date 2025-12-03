@@ -4,6 +4,10 @@ All notable changes to thoth-dissemination will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+  - [56](https://github.com/thoth-pub/thoth-dissemination/issues/56) - Created an OAPEN profile for SWORD v2 Uploader, to facilitate automatic dissemination of works from Thoth to OAPEN.
+
 ## [[0.1.33]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.33) - 2025-11-20
 ### Changed
   - Added publisher name to subject line and body of automated emails sent to platforms.

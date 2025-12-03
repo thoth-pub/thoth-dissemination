@@ -4,6 +4,7 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 """
 
 import logging
+import pycountry
 import sys
 import sword2
 from enum import Enum
@@ -24,6 +25,7 @@ class MetadataProfile(Enum):
     JISC_ROUTER = 2
     # RIOXX = 3
     CUL_PILOT = 4
+    OAPEN = 5
 
 
 class SwordV2Uploader(Uploader):
@@ -89,9 +91,9 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
+            self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             pdf_upload_receipt = self.api.upload_pdf(
                 create_receipt.edit_media, pdf_bytes)
-            self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             deposit_receipt = self.api.complete_deposit(create_receipt.edit)
         except Exception as error:
             # In all cases, we need to delete the partially-created item
@@ -131,6 +133,8 @@ class SwordV2Uploader(Uploader):
             # sword_metadata = self.profile_rioxx()
         elif self.metadata_profile == MetadataProfile.CUL_PILOT:
             sword_metadata = self.profile_cul_pilot()
+        elif self.metadata_profile == MetadataProfile.OAPEN:
+            sword_metadata = self.profile_oapen()
         else:
             raise NotImplementedError
 
@@ -185,6 +189,102 @@ class SwordV2Uploader(Uploader):
             "dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
         return cul_pilot_metadata
+
+    def profile_oapen(self):
+        """
+        Profile developed in discussion with OAPEN
+        """
+        work_metadata = self.metadata.get('data').get('work')
+        oapen_metadata = sword2.Entry()
+        oapen_metadata.add_fields(
+            # dcterms_abstract should be the abstract in English.
+            # we don't have that metadata currently in Thoth. When multilingualism is
+            # implemented, we can revisit this.
+            # (oapen_abstract_otherlanguage should be used for other versions)
+            dcterms_abstract=work_metadata.get('longAbstract'),
+            # OAPEN needs year only for this field
+            dcterms_issued=work_metadata.get('publicationDate').split('-')[0],
+            dcterms_publisherId=self.get_publisher_name(),
+            # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
+            dcterms_imprintId=self.get_publisher_name(),
+            dcterms_title=work_metadata.get('title'),
+            dcterms_alternative=work_metadata.get('subtitle'),
+            # options are "book" or "chapter"
+            # OAPEN say this is autofilled to "book"
+            # dc_type='book',
+            dcterms_doi=work_metadata.get('doi'),
+            dcterms_ocn=work_metadata.get('oclc'),
+            dcterms_pageCount=str(work_metadata.get('pageCount')),
+            dcterms_place=work_metadata.get('place'),
+            # TODO No dcterms mapping provided by OAPEN for this: awaiting update
+            dc_description_version=str(work_metadata.get('edition')),
+        )
+
+        # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
+        # as format, and also states `dc_contributor` in place of `dc_contributor_other`
+        for contributor in [n for n in work_metadata.get(
+                'contributions') if n.get('mainContribution') is True]:
+            match contributor.get('contributionType'):
+                case 'AUTHOR':
+                    oapen_metadata.add_field("dcterms_creator", contributor.get('fullName'))
+                case 'EDITOR':
+                    oapen_metadata.add_field("dcterms_editor", contributor.get('fullName'))
+                case _:
+                    oapen_metadata.add_field("dcterms_contributionsBy", contributor.get('fullName'))
+        for isbn in [
+            n.get('isbn').replace(
+                '-',
+                '') for n in work_metadata.get('publications') if n.get('isbn')
+                is not None]:
+            oapen_metadata.add_field("dcterms_isbn", isbn)
+        for language in [n.get('languageCode')
+                         for n in work_metadata.get('languages')]:
+            # pycountry translates ISO codes to language name in English (e.g. "English" instead of "ENG" )
+            # per OAPEN requirements
+            # (some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the less common
+            # "bibliographic" variant, so check for this variant first to avoid failed lookups)
+            oapen_formatted_language = pycountry.languages.get(bibliographic=language) or pycountry.languages.get(alpha_3=language)
+            oapen_metadata.add_field("dcterms_language", oapen_formatted_language.name)
+        for subject in work_metadata.get('subjects'):
+            match subject.get('subjectType'):
+                # note "Thema codes used" list supplied by OAPEN:
+                # any further conversion needed?
+                case 'THEMA':
+                    oapen_metadata.add_field("dcterms_classification", subject.get('subjectCode'))
+                case 'KEYWORD':
+                    oapen_metadata.add_field("dcterms_other", subject.get('subjectCode'))
+                case _:
+                    pass
+        # TBD if Thoth will be sending chapters (or chapter info?)
+        # for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
+        #         'relatedWork').get('doi'))
+        #         for n in work_metadata.get('relations')]:
+        #     if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
+        #         oapen_metadata.add_field("dc_isPartOf", relation_doi)
+        #     elif relation_type == 'IS_REPLACED_BY':
+        #         oapen_metadata.add_field("dc_isReplacedBy", relation_doi)
+        #     elif relation_type == 'REPLACES':
+        #         oapen_metadata.add_field("dc_replaces", relation_doi)
+        #     else:
+        #         oapen_metadata.add_field("dc_relation", relation_doi)
+
+        oapen_metadata.add_field("dcterms_oapenIdentifier",
+                                 "thoth-work-id:{}".format(self.work_id))
+
+        for issue in work_metadata.get('issues'):
+            oapen_metadata.add_field("dcterms_issn", issue.get('series').get('issnDigital'))
+            oapen_metadata.add_field("dcterms_seriesId", issue.get('series').get('seriesName'))
+            oapen_metadata.add_field("dcterms_seriesNumber", str(issue.get('issueOrdinal')))
+
+        for funding in work_metadata.get('fundings'):
+            oapen_metadata.add_field("dcterms_grantNumber", funding.get('grantNumber'))
+            # TODO These two fields are not currently retrieved by thoth-client; version update will be required
+            oapen_metadata.add_field("dcterms_program", funding.get('program'))
+            oapen_metadata.add_field("dcterms_projectName", funding.get('projectName'))
+            # appears in spreadsheet twice; second time states OAPEN funder ID list is needed
+            oapen_metadata.add_field("dcterms_institutionId", funding.get('institution').get('institutionName'))
+
+        return oapen_metadata
 
     def profile_basic(self):
         """
