@@ -19,7 +19,7 @@ jobs:
       # Required for Google Play workflow
       contents: read
       id-token: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,15 +55,15 @@ jobs:
         run: |
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
-          
+
           # Disable exit on error temporarily to allow processing of failures
           set +e
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
             > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
-          # Capture exit code  
-          STATUS=$?  
+          # Capture exit code
+          STATUS=$?
           # Re-enable exit on error for following step
           set -e
 
@@ -76,7 +76,7 @@ jobs:
               echo '```' >> $GITHUB_STEP_SUMMARY
             fi
           fi
-          
+
           # Exit with actual exit code from disseminator.py
           exit $STATUS
 
@@ -141,4 +141,4 @@ jobs:
           to: ${{ secrets[format('{0}_NOTIF_EMAIL', inputs.platform)] }}
           from: Thoth Open Metadata <distribution@thoth.pub>
           body: Please find the metadata submission for https://thoth.pub/books/${{ inputs.work-id }} for publisher ${{ steps.get-publisher.outputs.publisher-name }} in your upload folder. We look forward to receiving the file location once registered. Thank you!
-          cc: info@thoth.pub
+          cc: distribution@thoth.pub
