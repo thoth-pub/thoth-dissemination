@@ -212,7 +212,7 @@ class SwordV2Uploader(Uploader):
             # options are "book" or "chapter"
             # OAPEN say this is autofilled to "book"
             # dc_type='book',
-            dcterms_doi=work_metadata.get('doi'),
+            dcterms_doi=work_metadata.get('doi').replace('https://doi.org/', ''),
             dcterms_ocn=work_metadata.get('oclc'),
             dcterms_pageCount=str(work_metadata.get('pageCount')),
             dcterms_place=work_metadata.get('place'),
