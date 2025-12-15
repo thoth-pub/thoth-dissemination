@@ -171,46 +171,6 @@ class IDFinder():
         pass
 
 
-class MonthlyIDFinder(IDFinder):
-    """Logic for retrieving work IDs for monthly catchup dissemination"""
-
-    def get_thoth_ids(self):
-        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
-        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
-        # we can remove this overriding method and simply construct a standard query
-        # filtering by publication date
-
-        # In addition to the conditions of the query parameters, we need to filter the results
-        # to obtain only works with a publication date within the previous calendar month.
-        # The schedule for finding and depositing newly published works is once monthly
-        # (a few days after the start of the month, to allow for delays in updating records).
-        current_date = datetime.now(UTC).date()
-        current_month_start = current_date.replace(day=1)
-        previous_month_end = current_month_start - timedelta(days=1)
-        previous_month_start = previous_month_end.replace(day=1)
-
-        self.get_thoth_ids_iteratively(previous_month_start, previous_month_end)
-
-
-class WeeklyIDFinder(IDFinder):
-    """Logic for retrieving work IDs for weekly catchup dissemination"""
-
-    def get_thoth_ids(self):
-        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
-        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
-        # we can remove this overriding method and simply construct a standard query
-        # filtering by publication date
-
-        # In addition to the conditions of the query parameters, we need to filter the results
-        # to obtain only works with a publication date within the previous week.
-        # The schedule for finding and depositing newly published works is once weekly.
-        current_date = datetime.now(UTC).date()
-        previous_week_end = current_date - timedelta(days=1)
-        previous_week_start = previous_week_end - timedelta(days=6)
-
-        self.get_thoth_ids_iteratively(previous_week_start, previous_week_end)
-
-
 class CrossrefIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Crossref dissemination"""
 
@@ -284,6 +244,32 @@ class InternetArchiveIDFinder(IDFinder):
         self.thoth_ids = list(set(self.thoth_ids).difference(ia_ids))
 
 
+class CatchupIDFinder(IDFinder):
+    """
+    Logic for retrieving work IDs which is specific to recurring 'catchup'
+    dissemination of recent publications to various archiving platforms.
+    Currently used for (Loughborough) Figshare, CUL and Zenodo. Internet Archive
+    is handled separately, as its API allows a simpler workflow.
+    """
+
+    def get_thoth_ids(self):
+        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can remove this overriding method and simply construct a standard query
+        # filtering by publication date
+
+        # In addition to the conditions of the query parameters, we need to filter the results
+        # to obtain only works with a publication date within the previous calendar month.
+        # The schedule for finding and depositing newly published works is once monthly
+        # (a few days after the start of the month, to allow for delays in updating records).
+        current_date = datetime.now(UTC).date()
+        current_month_start = current_date.replace(day=1)
+        previous_month_end = current_month_start - timedelta(days=1)
+        previous_month_start = previous_month_end.replace(day=1)
+
+        self.get_thoth_ids_iteratively(previous_month_start, previous_month_end)
+
+
 class GooglePlayIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Google Play dissemination"""
 
@@ -300,6 +286,25 @@ class GooglePlayIDFinder(IDFinder):
         previous_day = current_date - timedelta(days=1)
 
         self.get_thoth_ids_iteratively(previous_day, previous_day)
+
+
+class OapenIDFinder(IDFinder):
+    """Logic for retrieving work IDs which is specific to OAPEN dissemination"""
+
+    def get_thoth_ids(self):
+        """Query Thoth GraphQL API with relevant parameters to retrieve required work IDs"""
+        # TODO Once https://github.com/thoth-pub/thoth/issues/486 is completed,
+        # we can remove this overriding method and simply construct a standard query
+        # filtering by publication date
+
+        # In addition to the conditions of the query parameters, we need to filter the results
+        # to obtain only works with a publication date within the previous week.
+        # The schedule for finding and depositing newly published works is once weekly.
+        current_date = datetime.now(UTC).date()
+        previous_week_end = current_date - timedelta(days=1)
+        previous_week_start = previous_week_end - timedelta(days=6)
+
+        self.get_thoth_ids_iteratively(previous_week_start, previous_week_end)
 
 
 class BKCIIDFinder(IDFinder):
@@ -331,7 +336,6 @@ class BKCIIDFinder(IDFinder):
         previous_month_start = previous_month_end.replace(day=1)
 
         self.get_thoth_ids_iteratively(previous_month_start, previous_month_end)
-
 
 class OapenLocationsIDFinder(IDFinder):
     """
@@ -409,17 +413,16 @@ if __name__ == '__main__':
                 id_finder = CrossrefIDFinder()
             case 'GooglePlay':
                 id_finder = GooglePlayIDFinder()
-            case 'OAPEN', 'EBSCOHost', 'JSTOR', 'ProjectMUSE', 'ProQuest':
-                id_finder = WeeklyIDFinder()
+            case 'OAPEN':
+                id_finder = OapenIDFinder()
             case 'Figshare' | 'Zenodo' | 'CUL':
-                id_finder = MonthlyIDFinder()
+                id_finder = CatchupIDFinder()
             case 'BKCI':
                 id_finder = BKCIIDFinder()
             case _:
                 logging.error(
                     'Platform must be one of InternetArchive, Crossref, Figshare, '
-                    'Zenodo, CUL, GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, '
-                    'ProjectMUSE or ProQuest')
+                    'Zenodo, CUL, GooglePlay, BKCI or OAPEN')
                 sys.exit(1)
 
     id_finder.run()

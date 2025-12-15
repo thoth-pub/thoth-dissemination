@@ -10,7 +10,6 @@ will also lack DOAB location.
 import ast
 import logging
 import json
-from time import sleep
 import requests
 import sys
 
@@ -28,9 +27,7 @@ for (publication_id, doi) in works_to_search:
         headers={'Accept': 'application/json'},
     )
     if oapen_rsp.status_code != 200:
-        logging.error('OAPEN API request failed for {} (status code {})'.format(doi, oapen_rsp.status_code))
-        # Sleep in case the issue is too many requests
-        sleep(1)
+        logging.error('OAPEN API request failed for {}'.format(doi))
         continue
     try:
         oapen_rsp_json = json.loads(oapen_rsp.content)
@@ -57,9 +54,7 @@ for (publication_id, doi) in works_to_search:
         headers={'Accept': 'application/json'},
     )
     if doab_rsp.status_code != 200:
-        logging.error('DOAB API request failed for {} (status code {})'.format(doi, doab_rsp.status_code))
-        # Sleep in case the issue is too many requests
-        sleep(1)
+        logging.error('DOAB API request failed for {}'.format(doi))
         continue
     try:
         doab_rsp_json = json.loads(doab_rsp.content)
