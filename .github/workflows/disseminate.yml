@@ -15,6 +15,7 @@ on:
 jobs:
   disseminate:
     runs-on: ubuntu-latest
+    environment: disseminate
     permissions:
       # Required for Google Play workflow
       contents: read
@@ -51,7 +52,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
-      - name: Run disseminator using Dockerhub image
+      - name: Run disseminator using Python script
         run: |
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
@@ -121,7 +122,7 @@ jobs:
   send-email:
     runs-on: ubuntu-latest
     needs: disseminate
-    if: contains(fromJSON('["OAPEN", "EBSCOHost", "BKCI"]'), inputs.platform)
+    if: contains(fromJSON('["OAPEN", "EBSCOHost", "BKCI", "JSTOR", "ProjectMUSE", "ProQuest"]'), inputs.platform)
     steps:
       - name: Get publisher name
         id: get-publisher

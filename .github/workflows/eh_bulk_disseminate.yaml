@@ -1,0 +1,22 @@
+# Purpose: upload newly-published works from Thoth to EBSCOHost FTP server.
+# Uploads all active Thoth works with a publication date within the previous week.
+# Work must have a valid URL supplied as the PDF or EPUB Publication Canonical Location.
+# Credentials must be present as repository secrets named EBSCO_FTP_USER and EBSCO_FTP_PW.
+name: ebscohost-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 02:20 every Tuesday'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '20 2 * * 2'
+  workflow_dispatch:
+
+jobs:
+  ebscohost-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'EBSCOHost'
+      env_publishers: ${{ vars.EH_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.EH_ENV_EXCEPTIONS }}
+    secrets: inherit

@@ -1,0 +1,25 @@
+# Purpose: upload newly-published works from Thoth to JSTOR FTP server.
+# Uploads all active Thoth works with a publication date within the previous week.
+# Work must have a valid URL supplied as the PDF Publication Canonical Location
+# and a valid link to a .jpg file supplied as the Cover URL.
+# Credentials must be present as repository secrets named JSTOR_FTP_USER and JSTOR_FTP_PW.
+# The FTP folder name for each relevant publisher must also be present as a repository
+# secret named JSTOR_FTP_FOLDER_[publisher_id].
+name: jstor-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 02:20 every Wednesday'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '20 2 * * 3'
+  workflow_dispatch:
+
+jobs:
+  jstor-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'JSTOR'
+      env_publishers: ${{ vars.JSTOR_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.JSTOR_ENV_EXCEPTIONS }}
+    secrets: inherit

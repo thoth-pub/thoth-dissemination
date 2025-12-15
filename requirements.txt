@@ -1,5 +1,5 @@
 google-cloud-storage==2.18.2
-internetarchive==4.1.0
+internetarchive==5.7.1
 paramiko==4.0.0
 python-dotenv==0.19.2
 requests==2.32.3

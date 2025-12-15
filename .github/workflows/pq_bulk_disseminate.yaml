@@ -1,0 +1,23 @@
+# Purpose: upload newly-published works from Thoth to ProQuest FTP server.
+# Uploads all active Thoth works with a publication date within the previous week.
+# Work must have a valid URL supplied as the PDF or EPUB Publication Canonical Location.
+# and a valid link to a .jpg file supplied as the Cover URL.
+# Credentials must be present as repository secrets named PROQUEST_FTP_USER and PROQUEST_FTP_PW.
+name: proquest-bulk-disseminate
+
+on:
+  schedule:
+    # 'at 02:20 every Friday'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '20 2 * * 5'
+  workflow_dispatch:
+
+jobs:
+  proquest-bulk-disseminate:
+    uses: ./.github/workflows/bulk_disseminate.yml
+    with:
+      platform: 'ProQuest'
+      env_publishers: ${{ vars.PQ_ENV_PUBLISHERS }}
+      env_exceptions: ${{ vars.PQ_ENV_EXCEPTIONS }}
+    secrets: inherit
