@@ -4,6 +4,10 @@ All notable changes to thoth-dissemination will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [[0.1.38]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.38) - 2026-01-09
+### Fixed
+  - Correct metadata field formatting to comply with changed `internetarchive` dependency behaviour under v5.7.1
+
 ## [[0.1.37]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.37) - 2026-01-09
 ### Fixed
   - Prevent failures to download publisher content files due to firewalls blocking scripts
@@ -17,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - GitHub Actions for recurring automatic uploads of newly published works to EBSCOHost, JSTOR, Project MUSE and ProQuest.
 ### Fixed
   - Added support for using environment secrets as workaround for exceeding repository secrets limit.
+### Changed
+  - Upgraded `internetarchive` dependency to v5.7.1
 
 ## [[0.1.34]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.34) - 2025-12-03
 ### Changed
