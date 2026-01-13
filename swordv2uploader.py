@@ -218,6 +218,7 @@ class SwordV2Uploader(Uploader):
             dcterms_place=work_metadata.get('place'),
             # TODO No dcterms mapping provided by OAPEN for this: awaiting update
             dc_description_version=str(work_metadata.get('edition')),
+            dcterms_rights=work_metadata.get('license'),
         )
 
         # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
