@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
   - [56](https://github.com/thoth-pub/thoth-dissemination/issues/56) - Created an OAPEN profile for SWORD v2 Uploader, to facilitate automatic dissemination of works from Thoth to OAPEN.
 
+## [[0.1.38]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.38) - 2026-01-09
+### Fixed
+  - Correct metadata field formatting to comply with changed `internetarchive` dependency behaviour under v5.7.1
+
+## [[0.1.37]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.37) - 2026-01-09
+### Fixed
+  - Prevent failures to download publisher content files due to firewalls blocking scripts
+
+## [[0.1.36]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.36) - 2026-01-05
+### Fixed
+  - Minor bugfixes (incomplete environment secret retrieval, incorrect case matching syntax)
+
+## [[0.1.35]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.35) - 2025-12-15
+### Added
+  - GitHub Actions for recurring automatic uploads of newly published works to EBSCOHost, JSTOR, Project MUSE and ProQuest.
+### Fixed
+  - Added support for using environment secrets as workaround for exceeding repository secrets limit.
+### Changed
+  - Upgraded `internetarchive` dependency to v5.7.1
+
+## [[0.1.34]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.34) - 2025-12-03
+### Changed
+  - Updated Thoth email address used in cc of automated emails.
+
 ## [[0.1.33]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.33) - 2025-11-20
 ### Changed
   - Added publisher name to subject line and body of automated emails sent to platforms.

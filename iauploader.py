@@ -139,7 +139,7 @@ class IAUploader(Uploader):
             'date': work_metadata.get('publicationDate'),
             'description': work_metadata.get('longAbstract'),
             # Field name is misleading; displayed in IA as 'Pages'
-            'imagecount': work_metadata.get('pageCount'),
+            'imagecount': str(work_metadata.get('pageCount')),
             'isbn': isbns,
             'lccn': work_metadata.get('lccn'),
             'licenseurl': work_metadata.get('license'),

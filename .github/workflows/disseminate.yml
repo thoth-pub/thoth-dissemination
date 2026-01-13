@@ -15,11 +15,12 @@ on:
 jobs:
   disseminate:
     runs-on: ubuntu-latest
+    environment: disseminate
     permissions:
       # Required for Google Play workflow
       contents: read
       id-token: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -51,19 +52,19 @@ jobs:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
           service_account: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
-      - name: Run disseminator using Dockerhub image
+      - name: Run disseminator using Python script
         run: |
           STDOUT="${{ inputs.work-id }}"
           STDERR=$(mktemp)
-          
+
           # Disable exit on error temporarily to allow processing of failures
           set +e
           python disseminator.py \
             --work "${{ inputs.work-id }}" \
             --platform "${{ inputs.platform }}" \
             > >(tee "$STDOUT") 2> >(tee "$STDERR" >&2)
-          # Capture exit code  
-          STATUS=$?  
+          # Capture exit code
+          STATUS=$?
           # Re-enable exit on error for following step
           set -e
 
@@ -76,7 +77,7 @@ jobs:
               echo '```' >> $GITHUB_STEP_SUMMARY
             fi
           fi
-          
+
           # Exit with actual exit code from disseminator.py
           exit $STATUS
 
@@ -92,6 +93,7 @@ jobs:
 
   write-locations:
     runs-on: ubuntu-latest
+    environment: disseminate
     needs: disseminate
     if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo"]'), inputs.platform)
     steps:
@@ -120,8 +122,9 @@ jobs:
 
   send-email:
     runs-on: ubuntu-latest
+    environment: disseminate
     needs: disseminate
-    if: contains(fromJSON('["OAPEN", "EBSCOHost", "BKCI"]'), inputs.platform)
+    if: contains(fromJSON('["OAPEN", "EBSCOHost", "BKCI", "JSTOR", "ProjectMUSE", "ProQuest"]'), inputs.platform)
     steps:
       - name: Get publisher name
         id: get-publisher
@@ -141,4 +144,4 @@ jobs:
           to: ${{ secrets[format('{0}_NOTIF_EMAIL', inputs.platform)] }}
           from: Thoth Open Metadata <distribution@thoth.pub>
           body: Please find the metadata submission for https://thoth.pub/books/${{ inputs.work-id }} for publisher ${{ steps.get-publisher.outputs.publisher-name }} in your upload folder. We look forward to receiving the file location once registered. Thank you!
-          cc: info@thoth.pub
+          cc: distribution@thoth.pub
