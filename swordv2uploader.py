@@ -9,6 +9,7 @@ import sys
 import sword2
 from enum import Enum
 from errors import DisseminationError
+from oapenthema import THEMACODES
 from uploader import Uploader
 
 
@@ -253,10 +254,15 @@ class SwordV2Uploader(Uploader):
             oapen_metadata.add_field("dcterms_language", oapen_formatted_language.name)
         for subject in work_metadata.get('subjects'):
             match subject.get('subjectType'):
-                # note "Thema codes used" list supplied by OAPEN:
-                # any further conversion needed?
                 case 'THEMA':
-                    oapen_metadata.add_field("dcterms_classification", subject.get('subjectCode'))
+                    thema_code = subject.get('subjectCode')
+                    try:
+                        thema_code = THEMACODES[thema_code]
+                    except KeyError:
+                        # Thema code not found in list of string mappings provided by OAPEN
+                        # Default to submitting the raw Thema code
+                        pass
+                    oapen_metadata.add_field("dcterms_classification", thema_code)
                 case 'KEYWORD':
                     oapen_metadata.add_field("dcterms_other", subject.get('subjectCode'))
                 case _:
