@@ -211,7 +211,7 @@ class SwordV2Uploader(Uploader):
             dcterms_issued=work_metadata.get('publicationDate').split('-')[0],
             dcterms_publisherId=self.get_publisher_name(),
             # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
-            dcterms_imprintId=self.get_publisher_name(),
+            dcterms_imprintId=work_metadata.get('imprint').get('imprintName'),
             dcterms_title=work_metadata.get('title'),
             dcterms_alternative=work_metadata.get('subtitle'),
             # options are "book" or "chapter"
@@ -290,7 +290,6 @@ class SwordV2Uploader(Uploader):
 
         for funding in work_metadata.get('fundings'):
             oapen_metadata.add_field("dcterms_grantNumber", funding.get('grantNumber'))
-            # TODO These two fields are not currently retrieved by thoth-client; version update will be required
             oapen_metadata.add_field("dcterms_program", funding.get('program'))
             oapen_metadata.add_field("dcterms_projectName", funding.get('projectName'))
             # appears in spreadsheet twice; second time states OAPEN funder ID list is needed

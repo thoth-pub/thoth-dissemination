@@ -5,4 +5,4 @@ pycountry==24.6.1
 python-dotenv==0.19.2
 requests==2.32.3
 sword2==0.3.0
-thothlibrary==0.30.0
+thothlibrary==0.31.0
