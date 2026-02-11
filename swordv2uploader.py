@@ -55,10 +55,13 @@ class SwordV2Uploader(Uploader):
             logging.error(error)
             sys.exit(1)
         # OAPEN prefer files to be named under the PDF ISBN
-        # For other platforms, default to Thoth Work ID
+        # For other platforms (or if ISBN fetch fails), default to Thoth Work ID
         filename_root = work_id
         if metadata_profile == MetadataProfile.OAPEN:
-            filename_root = self.get_isbn('PDF')
+            try:
+                filename_root = self.get_isbn('PDF')
+            except:
+                pass
         self.api = SwordV2Api(user_name, user_pass, filename_root,
                               service_document_iri, collection_iri)
         self.metadata_profile = metadata_profile
@@ -95,12 +98,17 @@ class SwordV2Uploader(Uploader):
             logging.error(error)
             sys.exit(1)
 
+        if self.metadata_profile == MetadataProfile.OAPEN:
+            try:
+                cover_image_bytes = self.get_cover_image()
+                self.api.upload_cover_image(create_receipt.edit_media, cover_image_bytes)
+            except:
+                # Continue with upload and hope that cover thumbnail can be extracted from PDF
+                pass
+
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
-            if self.metadata_profile == MetadataProfile.OAPEN:
-                cover_image_bytes = self.get_cover_image('jpg')
-                self.api.upload_cover_image(create_receipt.edit_media, cover_image_bytes)
             self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             pdf_upload_receipt = self.api.upload_pdf(
                 create_receipt.edit_media, pdf_bytes)
@@ -222,7 +230,6 @@ class SwordV2Uploader(Uploader):
             # options are "book" or "chapter"
             # OAPEN say this is autofilled to "book"
             # dc_type='book',
-            dcterms_doi=work_metadata.get('doi').replace('https://doi.org/', ''),
             dcterms_ocn=work_metadata.get('oclc'),
             dcterms_pageCount=str(work_metadata.get('pageCount')),
             dcterms_place=work_metadata.get('place'),
@@ -231,6 +238,10 @@ class SwordV2Uploader(Uploader):
             dcterms_rights=work_metadata.get('license'),
             dcterms_peerreviewTitle=work_metadata.get('landingPage'),
         )
+
+        doi = work_metadata.get('doi')
+        if doi:
+            oapen_metadata.add_field("dcterms_doi", doi.replace('https://doi.org/', ''))
 
         # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
         # as format, and also states `dc_contributor` in place of `dc_contributor_other`
