@@ -36,7 +36,7 @@ class OAPENSWORDUploader(DSpaceUploader):
         landing_page = deposit_receipt.alternate
         # Receipt only contains SWORDv2 server URL - translate to frontend URL
         bitstream_root = landing_page.replace('/handle', '/bitstream/handle')
-        full_text_url = ('{}/{}.pdf?sequence=2&isAllowed=y').format(bitstream_root, self.api.work_id)
+        full_text_url = ('{}/{}.pdf?sequence=2&isAllowed=y').format(bitstream_root, self.work_id)
         location_platform = 'OAPEN'
         return [Location(publication_id, location_platform, landing_page,
                          full_text_url)]

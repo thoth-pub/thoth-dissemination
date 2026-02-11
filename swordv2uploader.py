@@ -54,7 +54,12 @@ class SwordV2Uploader(Uploader):
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
-        self.api = SwordV2Api(work_id, user_name, user_pass,
+        # OAPEN prefer files to be named under the PDF ISBN
+        # For other platforms, default to Thoth Work ID
+        filename_root = work_id
+        if metadata_profile == MetadataProfile.OAPEN:
+            filename_root = self.get_isbn('PDF')
+        self.api = SwordV2Api(user_name, user_pass, filename_root,
                               service_document_iri, collection_iri)
         self.metadata_profile = metadata_profile
 
@@ -535,10 +540,10 @@ class SwordV2Uploader(Uploader):
 
 class SwordV2Api:
 
-    def __init__(self, work_id, user_name, user_pass,
+    def __init__(self, user_name, user_pass, filename_root,
                  service_document_iri, collection_iri):
         """Set up connection to API."""
-        self.work_id = work_id
+        self.filename_root = filename_root
         self.collection_iri = collection_iri
         self.conn = sword2.Connection(
             service_document_iri=service_document_iri,
@@ -661,15 +666,12 @@ class SwordV2Api:
             request_receipt = self.conn.create(
                 col_iri=self.collection_iri,
                 in_progress=True,
-                # This sets `dc.identifier.slug` i.e. suggested URI -
-                # but not supported in DSpace by default.
-                # suggested_identifier=self.work_id,
                 # Required kwargs: metadata_entry
                 **kwargs,
             )
         elif request_type == RequestType.UPLOAD_PDF:
             request_receipt = self.conn.add_file_to_resource(
-                filename='{}.pdf'.format(self.work_id),
+                filename='{}.pdf'.format(self.filename_root),
                 mimetype='application/pdf',
                 in_progress=True,
                 # Required kwargs: edit_media_iri, payload
@@ -677,7 +679,7 @@ class SwordV2Api:
             )
         elif request_type == RequestType.UPLOAD_METADATA:
             request_receipt = self.conn.add_file_to_resource(
-                filename='{}.json'.format(self.work_id),
+                filename='{}.json'.format(self.filename_root),
                 mimetype='application/json',
                 in_progress=True,
                 # Required kwargs: edit_media_iri, payload
@@ -685,7 +687,7 @@ class SwordV2Api:
             )
         elif request_type == RequestType.UPLOAD_COVER_IMAGE:
             request_receipt = self.conn.add_file_to_resource(
-                filename='{}.jpg'.format(self.work_id),
+                filename='{}.jpg'.format(self.filename_root),
                 mimetype='image/jpeg',
                 in_progress=True,
                 # Required kwargs: edit_media_iri, payload
