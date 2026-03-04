@@ -238,13 +238,14 @@ class SwordV2Uploader(Uploader):
         # as format, and also states `dc_contributor` in place of `dc_contributor_other`
         for contributor in [n for n in work_metadata.get(
                 'contributions') if n.get('mainContribution') is True]:
+            contributor_string = '{}, {}'.format(contributor.get('lastName'), contributor.get('firstName'))
             match contributor.get('contributionType'):
                 case 'AUTHOR':
-                    oapen_metadata.add_field("dcterms_creator", contributor.get('fullName'))
+                    oapen_metadata.add_field("dcterms_creator", contributor_string)
                 case 'EDITOR':
-                    oapen_metadata.add_field("dcterms_editor", contributor.get('fullName'))
+                    oapen_metadata.add_field("dcterms_editor", contributor_string)
                 case _:
-                    oapen_metadata.add_field("dcterms_contributionsBy", contributor.get('fullName'))
+                    oapen_metadata.add_field("dcterms_contributionsBy", contributor_string)
         for isbn in [
             n.get('isbn').replace(
                 '-',
