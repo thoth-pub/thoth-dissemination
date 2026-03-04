@@ -17,9 +17,8 @@ class RequestType(Enum):
     CREATE_ITEM = 1
     UPLOAD_PDF = 2
     UPLOAD_METADATA = 3
-    UPLOAD_COVER_IMAGE = 4
-    COMPLETE_DEPOSIT = 5
-    DELETE_ITEM = 6
+    COMPLETE_DEPOSIT = 4
+    DELETE_ITEM = 5
 
 
 class MetadataProfile(Enum):
@@ -97,14 +96,6 @@ class SwordV2Uploader(Uploader):
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
-
-        if self.metadata_profile == MetadataProfile.OAPEN:
-            try:
-                cover_image_bytes = self.get_cover_image()
-                self.api.upload_cover_image(create_receipt.edit_media, cover_image_bytes)
-            except:
-                # Continue with upload and hope that cover thumbnail can be extracted from PDF
-                pass
 
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
@@ -616,17 +607,6 @@ class SwordV2Api:
             payload=payload,
         )
 
-    def upload_cover_image(self, edit_media_iri, payload):
-        """
-        Upload the supplied cover image (as bytes) under the specified item.
-        """
-        return self.handle_request(
-            request_type=RequestType.UPLOAD_COVER_IMAGE,
-            expected_status=201,
-            edit_media_iri=edit_media_iri,
-            payload=payload,
-        )
-
     def complete_deposit(self, se_iri):
         """Publish the specified item."""
         return self.handle_request(
@@ -660,8 +640,6 @@ class SwordV2Api:
             elif request_type == RequestType.UPLOAD_METADATA:
                 raise DisseminationError(
                     'Error uploading metadata file to SWORD v2')
-            elif request_type == RequestType.UPLOAD_COVER_IMAGE:
-                raise DisseminationError('Error uploading cover image file to SWORD v2')
             elif request_type == RequestType.COMPLETE_DEPOSIT:
                 raise DisseminationError('Error publishing item to SWORD v2')
             elif request_type == RequestType.DELETE_ITEM:
@@ -692,14 +670,6 @@ class SwordV2Api:
             request_receipt = self.conn.add_file_to_resource(
                 filename='{}.json'.format(self.filename_root),
                 mimetype='application/json',
-                in_progress=True,
-                # Required kwargs: edit_media_iri, payload
-                **kwargs,
-            )
-        elif request_type == RequestType.UPLOAD_COVER_IMAGE:
-            request_receipt = self.conn.add_file_to_resource(
-                filename='{}.jpg'.format(self.filename_root),
-                mimetype='image/jpeg',
                 in_progress=True,
                 # Required kwargs: edit_media_iri, payload
                 **kwargs,
