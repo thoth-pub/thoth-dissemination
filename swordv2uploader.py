@@ -236,7 +236,7 @@ class SwordV2Uploader(Uploader):
             # TODO No dcterms mapping provided by OAPEN for this: awaiting update
             dc_description_version=str(work_metadata.get('edition')),
             dcterms_rights=work_metadata.get('license'),
-            dcterms_peerreviewTitle=work_metadata.get('landingPage'),
+            dcterms_urlwebshop=work_metadata.get('landingPage'),
         )
 
         doi = work_metadata.get('doi')
