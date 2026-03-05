@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from dotenv import load_dotenv
+import csv
 import logging
 import requests
-import pandas as pd
 from io import StringIO
 from thothlibrary import ThothClient, ThothError
 
@@ -18,14 +18,14 @@ MUSE_API_URL = 'https://about.muse.jhu.edu/lib/metadata?no_auth=1&format=kbart&c
 file = requests.get(MUSE_API_URL).text
 
 try:
-    data = pd.read_table(StringIO(file))
+    data = csv.DictReader(StringIO(file), delimiter="\t")
 except (ValueError, NameError):
     raise ValueError('Project MUSE data not found, or not in expected tab-separated string format')
 
 locations = []
-for row in data.index:
+for row in data:
     try:
-        isbn = str(data.at[row, 'online_identifier']).strip()
+        isbn = str(row['online_identifier']).strip()
         publications = thoth.publications(search=isbn)
         if len(publications) == 0:
             raise ValueError(f"No publications found for ISBN {isbn}")
@@ -39,7 +39,7 @@ for row in data.index:
                 raise ValueError(f"No PDF or EPUB publications found for {isbn}")
             elif len(pdfs) > 1 or len(epubs) > 1:
                 raise ValueError(f"Multiple publications of same type found for {isbn}")
-        landing_page = data.at[row, 'title_url']
+        landing_page = row['title_url'].strip()
     except KeyError:
         raise ValueError('Project MUSE data missing expected column header')
     except ThothError as e:
