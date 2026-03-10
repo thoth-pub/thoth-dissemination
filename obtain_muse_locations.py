@@ -2,6 +2,7 @@
 from dotenv import load_dotenv
 import csv
 import logging
+import sys
 import requests
 from io import StringIO
 from thothlibrary import ThothClient, ThothError
@@ -17,6 +18,8 @@ MUSE_API_URL = 'https://about.muse.jhu.edu/lib/metadata?no_auth=1&format=kbart&c
 
 file = requests.get(MUSE_API_URL).text
 
+success = True
+
 try:
     data = csv.DictReader(StringIO(file), delimiter="\t")
 except (ValueError, NameError):
@@ -28,7 +31,9 @@ for row in data:
         isbn = str(row['online_identifier']).strip()
         publications = thoth.publications(search=isbn)
         if len(publications) == 0:
-            raise ValueError(f"No publications found for ISBN {isbn}")
+            logging.error(f"No publications found for ISBN {isbn}")
+            success = False
+            continue
         # We may have submitted either PDF or EPUB or both - no way to check
         # Assume that the set of publications remains unchanged since submission
         # and add locations to all relevant publications accordingly
@@ -36,9 +41,13 @@ for row in data:
             pdfs = [n for n in publications if n.publicationType == 'PDF']
             epubs = [n for n in publications if n.publicationType == 'EPUB']
             if not pdfs and not epubs:
-                raise ValueError(f"No PDF or EPUB publications found for {isbn}")
+                logging.error(f"No PDF or EPUB publications found for {isbn}")
+                success = False
+                continue
             elif len(pdfs) > 1 or len(epubs) > 1:
-                raise ValueError(f"Multiple publications of same type found for {isbn}")
+                logging.error(f"Multiple publications of same type found for {isbn}")
+                success = False
+                continue
         landing_page = row['title_url'].strip()
     except KeyError:
         raise ValueError('Project MUSE data missing expected column header')
@@ -57,8 +66,11 @@ for row in data:
             existing_landing_page = [n.landingPage for n in publication.locations
                                      if n.locationPlatform == 'PROJECT_MUSE' and n.landingPage.strip()][0]
             if existing_landing_page != landing_page:
-                raise ValueError(f"Landing page {landing_page} given in data for {isbn}, but record already has " +
-                                 f"landing page {existing_landing_page}")
+                logging.error(f"Landing page {landing_page} given in data for {isbn}, but record already has " +
+                              f"landing page {existing_landing_page}")
+            else:
+                logging.info(f"Landing page {landing_page} already present in record for {isbn} - skipping")
+            continue
         except IndexError:
             pass
         location = {
@@ -71,3 +83,7 @@ for row in data:
         locations.append(location)
 
 print(locations)
+
+if not success:
+    logging.warning("Not all data could be processed. Please review errors logged above.")
+    sys.exit(1)
