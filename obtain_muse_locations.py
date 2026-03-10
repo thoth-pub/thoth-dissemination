@@ -52,6 +52,15 @@ for row in data:
             full_text_url = '{}/epub'.format(landing_page),
         else:
             continue
+        try:
+            # Check for any existing MUSE location, to detect inconsistencies
+            existing_landing_page = [n.landingPage for n in publication.locations
+                                     if n.locationPlatform == 'PROJECT_MUSE' and n.landingPage.strip()][0]
+            if existing_landing_page != landing_page:
+                raise ValueError(f"Landing page {landing_page} given in data for {isbn}, but record already has " +
+                                 f"landing page {existing_landing_page}")
+        except IndexError:
+            pass
         location = {
             'publicationId': publication.publicationId,
             'landingPage': landing_page,
