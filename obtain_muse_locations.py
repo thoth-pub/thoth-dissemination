@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-from dotenv import load_dotenv
 import csv
 import logging
+import json
 import sys
 import requests
 from io import StringIO
@@ -73,16 +73,9 @@ for row in data:
             continue
         except IndexError:
             pass
-        location = {
-            'publicationId': publication.publicationId,
-            'landingPage': landing_page,
-            'fullTextUrl': full_text_url,
-            'locationPlatform': 'PROJECT_MUSE',
-            'canonical': 'false'
-        }
-        locations.append(location)
+        locations.append('{} PROJECT_MUSE {} {}'.format(publication.publicationId, landing_page, full_text_url))
 
-print(locations)
+print(json.dumps(locations))
 
 if not success:
     logging.warning("Not all data could be processed. Please review errors logged above.")
