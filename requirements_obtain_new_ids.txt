@@ -1,2 +1,2 @@
 internetarchive==5.7.1
-thothlibrary==0.30.0
+thothlibrary==1.0.0
