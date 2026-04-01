@@ -8,8 +8,8 @@ import sys
 import json
 import requests
 from errors import DisseminationError
-from os import environ
-from thothlibrary import ThothClient, ThothError
+from thothapi import get_thoth_client
+from thothlibrary import ThothError
 
 
 PUB_FORMATS = {
@@ -102,12 +102,12 @@ class Uploader():
 
     def get_thoth_metadata(self, client_url):
         """Retrieve JSON-formatted work metadata from Thoth GraphQL API via Thoth Client"""
-        if client_url:
-            thoth = ThothClient(client_url)
-        else:
-            thoth = ThothClient()
+        thoth = get_thoth_client(client_url)
         try:
-            metadata_string = thoth.work_by_id(self.work_id, raw=True)
+            metadata_string = thoth.work_by_id(
+                work_id=self.work_id,
+                raw=True
+            )
         except ThothError:
             logging.error(
                 # Don't include full error text as it's lengthy (contains full query/response)
@@ -122,7 +122,76 @@ class Uploader():
                 'Error converting GraphQL metadata to JSON: {}'.format(error))
             sys.exit(1)
 
+        self.normalise_work_metadata(metadata_json)
         return metadata_json
+
+    @staticmethod
+    def get_canonical_metadata_entry(entries, entry_type=None):
+        """Return the canonical entry from a list of metadata dictionaries."""
+        if not isinstance(entries, list):
+            return None
+
+        matching_entries = entries
+        if entry_type is not None:
+            matching_entries = [
+                entry for entry in entries
+                if entry.get('abstractType') == entry_type
+            ]
+
+        if len(matching_entries) < 1:
+            return None
+
+        try:
+            return [entry for entry in matching_entries if entry.get('canonical')][0]
+        except IndexError:
+            return matching_entries[0]
+
+    @classmethod
+    def normalise_work_metadata(cls, metadata_json):
+        """
+        Backfill legacy top-level work fields from the newer multilingual
+        schema response so existing uploaders can keep reading the same keys.
+        """
+        try:
+            work = metadata_json['data']['work']
+        except (KeyError, TypeError):
+            return
+
+        canonical_title = cls.get_canonical_metadata_entry(work.get('titles'))
+        if canonical_title is not None:
+            title = canonical_title.get('title')
+            subtitle = canonical_title.get('subtitle')
+            full_title = canonical_title.get('fullTitle')
+
+            if full_title is None and title is not None:
+                full_title = title if subtitle is None else '{}: {}'.format(
+                    title, subtitle)
+
+            work.setdefault('title', title if title is not None else full_title)
+            work.setdefault('subtitle', subtitle)
+            work.setdefault('fullTitle', full_title)
+
+        long_abstract = cls.get_canonical_metadata_entry(
+            work.get('abstracts'),
+            entry_type='LONG'
+        )
+        short_abstract = cls.get_canonical_metadata_entry(
+            work.get('abstracts'),
+            entry_type='SHORT'
+        )
+        fallback_abstract = cls.get_canonical_metadata_entry(work.get('abstracts'))
+
+        work.setdefault(
+            'shortAbstract',
+            None if short_abstract is None else short_abstract.get('content')
+        )
+        work.setdefault(
+            'longAbstract',
+            None if long_abstract is None else long_abstract.get('content')
+        )
+
+        if work.get('longAbstract') is None and fallback_abstract is not None:
+            work['longAbstract'] = fallback_abstract.get('content')
 
     def get_formatted_metadata(self, format):
         """Retrieve work metadata from Thoth Export API in specified format"""
@@ -242,7 +311,8 @@ class Uploader():
 
     def get_title(self):
         """Extract work title from work metadata"""
-        return self.metadata.get('data').get('work').get('title')
+        work = self.metadata.get('data').get('work')
+        return work.get('title') or work.get('fullTitle')
 
     @staticmethod
     def get_data_from_url(url, expected_format=None):

@@ -10,13 +10,14 @@ Based on `iabulkupload/obtain_work_ids.py`.
 
 # Both third-party packages already included in thoth-dissemination/requirements.txt
 from internetarchive import search_items
-from thothlibrary import errors, ThothClient
+from thothlibrary import errors
 import argparse
 import json
 import logging
 from datetime import datetime, timedelta, UTC
 from os import environ
 import sys
+from thothapi import get_thoth_client
 
 
 class IDFinder():
@@ -24,7 +25,7 @@ class IDFinder():
 
     def __init__(self):
         """Set up Thoth client instance and variables for use in other methods"""
-        self.thoth = ThothClient()
+        self.thoth = get_thoth_client()
         self.thoth_ids = []
         self.work_statuses = None
         self.work_types = None
@@ -67,7 +68,7 @@ class IDFinder():
         # client call, it would behave the same as a valid ID for which no relevant works exist
         for publisher in publishers_env:
             try:
-                self.thoth.publisher(publisher)
+                self.thoth.publisher(publisher_id=publisher)
             except errors.ThothError:
                 # Don't include full error text as it's lengthy (contains full query/response)
                 logging.error('No record found for publisher {}: ID may be incorrect'.format(
@@ -247,7 +248,7 @@ class CrossrefIDFinder(IDFinder):
         both a DOI and publication date.
         """
         for id in reversed(self.thoth_ids):
-            work = self.thoth.work_by_id(id)
+            work = self.thoth.work_by_id(work_id=id)
             if work.workStatus == 'FORTHCOMING':
                 if not work.doi or not work.publicationDate:
                     self.thoth_ids.remove(id)
@@ -355,7 +356,7 @@ class OapenLocationsIDFinder(IDFinder):
         """
         oapen_location_required = []
         for id in self.thoth_ids:
-            work = self.thoth.work_by_id(id)
+            work = self.thoth.work_by_id(work_id=id)
             try:
                 pdf_publication = [pub for pub in work.publications
                                    if pub.publicationType == 'PDF'][0]
