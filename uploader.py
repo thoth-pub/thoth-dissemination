@@ -8,6 +8,7 @@ import sys
 import json
 import requests
 from errors import DisseminationError
+from os import environ
 from thothapi import get_thoth_client
 from thothlibrary import ThothError
 
