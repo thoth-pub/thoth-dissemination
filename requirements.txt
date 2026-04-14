@@ -4,4 +4,4 @@ paramiko==4.0.0
 python-dotenv==0.19.2
 requests==2.32.5
 sword2==0.3.0
-thothlibrary==1.0.0
+thothlibrary==1.0.1

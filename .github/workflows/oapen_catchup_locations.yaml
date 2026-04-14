@@ -68,4 +68,4 @@ jobs:
       - name: Write location to Thoth using Python script
         run: python write_locations.py location.txt
         env:
-          THOTH_EMAIL: ${{ secrets.THOTH_PAT }}
+          THOTH_PAT: ${{ secrets.THOTH_PAT }}
