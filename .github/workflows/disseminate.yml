@@ -117,7 +117,7 @@ jobs:
       - name: Write locations to Thoth using Python script
         run: python write_locations.py ${{ inputs.work-id }}
         env:
-          THOTH_EMAIL: ${{ secrets.THOTH_PAT }}
+          THOTH_PAT: ${{ secrets.THOTH_PAT }}
 
   send-email:
     runs-on: ubuntu-latest
