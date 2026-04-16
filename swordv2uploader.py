@@ -239,6 +239,9 @@ class SwordV2Uploader(Uploader):
         for contributor in [n for n in work_metadata.get(
                 'contributions') if n.get('mainContribution') is True]:
             contributor_string = '{}, {}'.format(contributor.get('lastName'), contributor.get('firstName'))
+            orcid = contributor.get('contributor').get('orcid')
+            if orcid:
+                contributor_string = '{} | {}'.format(contributor_string, orcid)
             match contributor.get('contributionType'):
                 case 'AUTHOR':
                     oapen_metadata.add_field("dcterms_creator", contributor_string)
