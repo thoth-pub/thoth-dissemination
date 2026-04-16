@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
   - [56](https://github.com/thoth-pub/thoth-dissemination/issues/56) - Created an OAPEN profile for SWORD v2 Uploader, to facilitate automatic dissemination of works from Thoth to OAPEN.
 
+## [[1.0.3]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.0.3) - 2026-04-14
+### Fixed
+  - Corrected naming of updated credentials
+
+## [[1.0.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.0.2) - 2026-04-01
+### Fixed
+  - Reinstate accidentally deleted import
+
+## [[1.0.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.0.1) - 2026-04-01
+### Fixed
+  - Updated remaining references to deprecated credentials
+
+## [[1.0.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.0.0) - 2026-04-01
+### Changed
+  - Updated for compatibility with Thoth v1.0.0
+
 ## [[0.1.38]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v0.1.38) - 2026-01-09
 ### Fixed
   - Correct metadata field formatting to comply with changed `internetarchive` dependency behaviour under v5.7.1
