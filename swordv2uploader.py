@@ -76,6 +76,9 @@ class SwordV2Uploader(Uploader):
         # of the atom-xml responses contained the relevant `thoth-work-id`,
         # but this would be cumbersome.
 
+        # Convert Thoth work metadata into SWORD v2 format
+        sword_metadata = self.parse_metadata()
+
         # Include full work metadata file in JSON format,
         # as a supplement to filling out SWORD2 metadata fields.
         metadata_bytes = self.get_formatted_metadata('json::thoth')
@@ -86,10 +89,6 @@ class SwordV2Uploader(Uploader):
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
-
-        # Convert Thoth work metadata into SWORD v2 format
-        # (not expected to fail, as "required" metadata is minimal)
-        sword_metadata = self.parse_metadata()
 
         try:
             create_receipt = self.api.create_item(sword_metadata)
@@ -204,21 +203,56 @@ class SwordV2Uploader(Uploader):
         Profile developed in discussion with OAPEN
         """
         work_metadata = self.metadata.get('data').get('work')
+
+        # Mandatory fields that are non-mandatory in Thoth
+        long_abstract = work_metadata.get('longAbstract')
+        if long_abstract is None:
+            logging.error('Cannot upload to OAPEN: Work must have a Long Abstract')
+            sys.exit(1)
+        licence = work_metadata.get('license')
+        if licence is None:
+            logging.error('Cannot upload to OAPEN: Work must have a Licence')
+            sys.exit(1)
+        landing_page = work_metadata.get('landingPage')
+        if landing_page is None:
+            logging.error('Cannot upload to OAPEN: Work must have a Landing Page')
+            sys.exit(1)
+        isbns = [n.get('isbn').replace('-', '') for n in work_metadata.get('publications') if n.get('isbn')
+                 is not None]
+        if len(isbns) < 1:
+            logging.error('Cannot upload to OAPEN: no ISBNs found')
+            sys.exit(1)
+        languages = [n.get('languageCode') for n in work_metadata.get('languages')]
+        if len(languages) < 1:
+            logging.error('Cannot upload to OAPEN: no languages found')
+            sys.exit(1)
+        thema_codes = [n.get('subjectCode') for n in work_metadata.get('subjects') if n.get('subjectType') == 'THEMA']
+        if len(thema_codes) < 1:
+            logging.error('Cannot upload to OAPEN: no THEMA Subject Codes found')
+            sys.exit(1)
+        keywords = [n.get('subjectCode') for n in work_metadata.get('subjects') if n.get('subjectType') == 'KEYWORD']
+        if len(keywords) < 1:
+            logging.error('Cannot upload to OAPEN: no Subject Keywords found')
+            sys.exit(1)
+
         oapen_metadata = sword2.Entry()
         oapen_metadata.add_fields(
             # dcterms_abstract should be the abstract in English.
             # we don't have that metadata currently in Thoth. When multilingualism is
             # implemented, we can revisit this.
             # (oapen_abstract_otherlanguage should be used for other versions)
-            dcterms_abstract=work_metadata.get('longAbstract'),
+            dcterms_abstract=long_abstract,
             # OAPEN needs year only for this field
-            dcterms_issued=work_metadata.get('publicationDate').split('-')[0],
+            # Mandatory in OAPEN, and mandatory in Thoth for ACTIVE works
+            dcterms_issued=work_metadata['publicationDate'].split('-')[0],
+            # Mandatory in both OAPEN and Thoth
             dcterms_publisherId=self.get_publisher_name(),
             # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
             dcterms_imprintId=work_metadata.get('imprint').get('imprintName'),
-            dcterms_title=work_metadata.get('title'),
+            # Mandatory in both OAPEN and Thoth
+            dcterms_title=work_metadata['title'],
             dcterms_alternative=work_metadata.get('subtitle'),
-            # options are "book" or "chapter"
+            # Mandatory in OAPEN: options are "book" or "chapter"
             # OAPEN say this is autofilled to "book"
             # dc_type='book',
             dcterms_ocn=work_metadata.get('oclc'),
@@ -226,8 +260,8 @@ class SwordV2Uploader(Uploader):
             dcterms_place=work_metadata.get('place'),
             # TODO No dcterms mapping provided by OAPEN for this: awaiting update
             dc_description_version=str(work_metadata.get('edition')),
-            dcterms_rights=work_metadata.get('license'),
-            dcterms_urlwebshop=work_metadata.get('landingPage'),
+            dcterms_rights=licence,
+            dcterms_urlwebshop=landing_page,
         )
 
         doi = work_metadata.get('doi')
@@ -249,35 +283,25 @@ class SwordV2Uploader(Uploader):
                     oapen_metadata.add_field("dcterms_editor", contributor_string)
                 case _:
                     oapen_metadata.add_field("dcterms_contributionsBy", contributor_string)
-        for isbn in [
-            n.get('isbn').replace(
-                '-',
-                '') for n in work_metadata.get('publications') if n.get('isbn')
-                is not None]:
+        for isbn in isbns:
             oapen_metadata.add_field("dcterms_isbn", isbn)
-        for language in [n.get('languageCode')
-                         for n in work_metadata.get('languages')]:
+        for language in languages:
             # pycountry translates ISO codes to language name in English (e.g. "English" instead of "ENG" )
             # per OAPEN requirements
             # (some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the less common
             # "bibliographic" variant, so check for this variant first to avoid failed lookups)
             oapen_formatted_language = pycountry.languages.get(bibliographic=language) or pycountry.languages.get(alpha_3=language)
             oapen_metadata.add_field("dcterms_language", oapen_formatted_language.name)
-        for subject in work_metadata.get('subjects'):
-            match subject.get('subjectType'):
-                case 'THEMA':
-                    thema_code = subject.get('subjectCode')
-                    try:
-                        thema_code = THEMACODES[thema_code]
-                    except KeyError:
-                        # Thema code not found in list of string mappings provided by OAPEN
-                        # Default to submitting the raw Thema code
-                        pass
-                    oapen_metadata.add_field("dcterms_classification", thema_code)
-                case 'KEYWORD':
-                    oapen_metadata.add_field("dcterms_other", subject.get('subjectCode'))
-                case _:
-                    pass
+        for thema_code in thema_codes:
+            try:
+                thema_code = THEMACODES[thema_code]
+            except KeyError:
+                # Thema code not found in list of string mappings provided by OAPEN
+                # Default to submitting the raw Thema code
+                pass
+            oapen_metadata.add_field("dcterms_classification", thema_code)
+        for keyword in keywords:
+            oapen_metadata.add_field("dcterms_other", keyword)
         # TBD if Thoth will be sending chapters (or chapter info?)
         # for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
         #         'relatedWork').get('doi'))
