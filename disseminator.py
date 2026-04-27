@@ -14,7 +14,6 @@ import sys
 from dotenv import load_dotenv
 from pathlib import Path
 from iauploader import IAUploader
-from oapenuploader import OAPENUploader
 from oapensworduploader import OAPENSWORDUploader
 from souploader import SOUploader
 from culuploader import CULUploader
@@ -30,8 +29,7 @@ from bkciuploader import BKCIUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
-    "OAPEN": OAPENUploader,
-    "OAPENSWORD": OAPENSWORDUploader,
+    "OAPEN": OAPENSWORDUploader,
     "ScienceOpen": SOUploader,
     "CUL": CULUploader,
     "Crossref": CrossrefUploader,
