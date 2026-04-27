@@ -4,6 +4,7 @@ Retrieve and disseminate files and metadata to Zenodo
 """
 
 import logging
+from pycountry import languages
 import sys
 import re
 import requests
@@ -166,6 +167,11 @@ class ZenodoUploader(Uploader):
         language = next((n['languageCode']
                         for n in work_metadata.get('languages')), None)
         if language is not None:
+            # Some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the
+            # "bibliographic" variant, but Zenodo wants the more common "terminological" (default) variant
+            language_variant = languages.get(bibliographic=language)
+            if language_variant is not None:
+                language = language_variant.alpha_3
             zenodo_metadata['metadata'].update({'language': language.lower()})
 
         return zenodo_metadata
