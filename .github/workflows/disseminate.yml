@@ -83,7 +83,7 @@ jobs:
 
       - name: Upload output to artifact
         uses: actions/upload-artifact@v4
-        if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo"]'), inputs.platform)
+        if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo", "OAPEN"]'), inputs.platform)
         with:
           name: ${{ inputs.work-id }}
           path: ${{ inputs.work-id }}
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: disseminate
     needs: disseminate
-    if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo"]'), inputs.platform)
+    if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo", "OAPEN"]'), inputs.platform)
     steps:
       - name: Checkout
         # This step deletes existing directory contents, so must be done before artifact download
@@ -123,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: disseminate
     needs: disseminate
-    if: contains(fromJSON('["OAPEN", "EBSCOHost", "BKCI", "JSTOR", "ProjectMUSE", "ProQuest"]'), inputs.platform)
+    if: contains(fromJSON('["EBSCOHost", "BKCI", "JSTOR", "ProjectMUSE", "ProQuest"]'), inputs.platform)
     steps:
       - name: Get publisher name
         id: get-publisher

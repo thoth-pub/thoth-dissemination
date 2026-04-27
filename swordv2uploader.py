@@ -4,10 +4,13 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 """
 
 import logging
+import pycountry
+import re
 import sys
 import sword2
 from enum import Enum
 from errors import DisseminationError
+from oapenthema import THEMACODES
 from uploader import Uploader
 
 
@@ -24,6 +27,7 @@ class MetadataProfile(Enum):
     JISC_ROUTER = 2
     # RIOXX = 3
     CUL_PILOT = 4
+    OAPEN = 5
 
 
 class SwordV2Uploader(Uploader):
@@ -50,7 +54,15 @@ class SwordV2Uploader(Uploader):
         except DisseminationError as error:
             logging.error(error)
             sys.exit(1)
-        self.api = SwordV2Api(work_id, user_name, user_pass,
+        # OAPEN prefer files to be named under the PDF ISBN
+        # For other platforms (or if ISBN fetch fails), default to Thoth Work ID
+        filename_root = work_id
+        if metadata_profile == MetadataProfile.OAPEN:
+            try:
+                filename_root = self.get_isbn('PDF')
+            except:
+                pass
+        self.api = SwordV2Api(user_name, user_pass, filename_root,
                               service_document_iri, collection_iri)
         self.metadata_profile = metadata_profile
 
@@ -65,6 +77,9 @@ class SwordV2Uploader(Uploader):
         # of the atom-xml responses contained the relevant `thoth-work-id`,
         # but this would be cumbersome.
 
+        # Convert Thoth work metadata into SWORD v2 format
+        sword_metadata = self.parse_metadata()
+
         # Include full work metadata file in JSON format,
         # as a supplement to filling out SWORD2 metadata fields.
         metadata_bytes = self.get_formatted_metadata('json::thoth')
@@ -76,10 +91,6 @@ class SwordV2Uploader(Uploader):
             logging.error(error)
             sys.exit(1)
 
-        # Convert Thoth work metadata into SWORD v2 format
-        # (not expected to fail, as "required" metadata is minimal)
-        sword_metadata = self.parse_metadata()
-
         try:
             create_receipt = self.api.create_item(sword_metadata)
         except DisseminationError as error:
@@ -89,9 +100,9 @@ class SwordV2Uploader(Uploader):
         # Any failure after this point will leave incomplete data in
         # SWORD v2 server which will need to be removed.
         try:
+            self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             pdf_upload_receipt = self.api.upload_pdf(
                 create_receipt.edit_media, pdf_bytes)
-            self.api.upload_metadata(create_receipt.edit_media, metadata_bytes)
             deposit_receipt = self.api.complete_deposit(create_receipt.edit)
         except Exception as error:
             # In all cases, we need to delete the partially-created item
@@ -131,6 +142,8 @@ class SwordV2Uploader(Uploader):
             # sword_metadata = self.profile_rioxx()
         elif self.metadata_profile == MetadataProfile.CUL_PILOT:
             sword_metadata = self.profile_cul_pilot()
+        elif self.metadata_profile == MetadataProfile.OAPEN:
+            sword_metadata = self.profile_oapen()
         else:
             raise NotImplementedError
 
@@ -185,6 +198,143 @@ class SwordV2Uploader(Uploader):
             "dcterms_identifier", "thoth-work-id:{}".format(self.work_id))
 
         return cul_pilot_metadata
+
+    def profile_oapen(self):
+        """
+        Profile developed in discussion with OAPEN
+        """
+        STRIP_TAGS = re.compile('<.*?>')
+        work_metadata = self.metadata.get('data').get('work')
+
+        # Mandatory fields that are non-mandatory in Thoth
+        long_abstract = work_metadata.get('longAbstract')
+        if long_abstract is None:
+            logging.error('Cannot upload to OAPEN: Work must have a Long Abstract')
+            sys.exit(1)
+        licence = work_metadata.get('license')
+        if licence is None:
+            logging.error('Cannot upload to OAPEN: Work must have a Licence')
+            sys.exit(1)
+        landing_page = work_metadata.get('landingPage')
+        if landing_page is None:
+            logging.error('Cannot upload to OAPEN: Work must have a Landing Page')
+            sys.exit(1)
+        isbns = [n.get('isbn').replace('-', '') for n in work_metadata.get('publications') if n.get('isbn')
+                 is not None]
+        if len(isbns) < 1:
+            logging.error('Cannot upload to OAPEN: no ISBNs found')
+            sys.exit(1)
+        languages = [n.get('languageCode') for n in work_metadata.get('languages')]
+        if len(languages) < 1:
+            logging.error('Cannot upload to OAPEN: no languages found')
+            sys.exit(1)
+        thema_codes = [n.get('subjectCode') for n in work_metadata.get('subjects') if n.get('subjectType') == 'THEMA']
+        if len(thema_codes) < 1:
+            logging.error('Cannot upload to OAPEN: no THEMA Subject Codes found')
+            sys.exit(1)
+        keywords = [n.get('subjectCode') for n in work_metadata.get('subjects') if n.get('subjectType') == 'KEYWORD']
+        if len(keywords) < 1:
+            logging.error('Cannot upload to OAPEN: no Subject Keywords found')
+            sys.exit(1)
+
+        oapen_metadata = sword2.Entry()
+        oapen_metadata.add_fields(
+            # dcterms_abstract should be the abstract in English.
+            # we don't have that metadata currently in Thoth. When multilingualism is
+            # implemented, we can revisit this.
+            # (oapen_abstract_otherlanguage should be used for other versions)
+            # OAPEN cannot currently support rich text, so remove XML tags
+            dcterms_abstract=re.sub(STRIP_TAGS, '', long_abstract),
+            # OAPEN needs year only for this field
+            # Mandatory in OAPEN, and mandatory in Thoth for ACTIVE works
+            dcterms_issued=work_metadata['publicationDate'].split('-')[0],
+            # Mandatory in both OAPEN and Thoth
+            dcterms_publisherId=self.get_publisher_name(),
+            # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
+            dcterms_imprintId=work_metadata.get('imprint').get('imprintName'),
+            # Mandatory in both OAPEN and Thoth
+            # OAPEN cannot currently support rich text, so remove XML tags
+            dcterms_title=re.sub(STRIP_TAGS, '', work_metadata['title']),
+            dcterms_alternative=work_metadata.get('subtitle'),
+            # Mandatory in OAPEN: options are "book" or "chapter"
+            # OAPEN say this is autofilled to "book"
+            # dc_type='book',
+            dcterms_ocn=work_metadata.get('oclc'),
+            dcterms_pageCount=str(work_metadata.get('pageCount')),
+            dcterms_place=work_metadata.get('place'),
+            # TODO No dcterms mapping provided by OAPEN for this: awaiting update
+            dc_description_version=str(work_metadata.get('edition')),
+            dcterms_rights=licence,
+            dcterms_urlwebshop=landing_page,
+        )
+
+        doi = work_metadata.get('doi')
+        if doi:
+            oapen_metadata.add_field("dcterms_doi", doi.replace('https://doi.org/', ''))
+
+        # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
+        # as format, and also states `dc_contributor` in place of `dc_contributor_other`
+        for contributor in [n for n in work_metadata.get(
+                'contributions') if n.get('mainContribution') is True]:
+            contributor_string = '{}, {}'.format(contributor.get('lastName'), contributor.get('firstName'))
+            orcid = contributor.get('contributor').get('orcid')
+            if orcid:
+                contributor_string = '{} | {}'.format(contributor_string, orcid)
+            match contributor.get('contributionType'):
+                case 'AUTHOR':
+                    oapen_metadata.add_field("dcterms_creator", contributor_string)
+                case 'EDITOR':
+                    oapen_metadata.add_field("dcterms_editor", contributor_string)
+                case _:
+                    oapen_metadata.add_field("dcterms_contributionsBy", contributor_string)
+        for isbn in isbns:
+            oapen_metadata.add_field("dcterms_isbn", isbn)
+        for language in languages:
+            # pycountry translates ISO codes to language name in English (e.g. "English" instead of "ENG" )
+            # per OAPEN requirements
+            # (some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the less common
+            # "bibliographic" variant, so check for this variant first to avoid failed lookups)
+            oapen_formatted_language = pycountry.languages.get(bibliographic=language) or pycountry.languages.get(alpha_3=language)
+            oapen_metadata.add_field("dcterms_language", oapen_formatted_language.name)
+        for thema_code in thema_codes:
+            try:
+                thema_code = THEMACODES[thema_code]
+            except KeyError:
+                # Thema code not found in list of string mappings provided by OAPEN
+                # Default to submitting the raw Thema code
+                pass
+            oapen_metadata.add_field("dcterms_classification", thema_code)
+        for keyword in keywords:
+            oapen_metadata.add_field("dcterms_other", keyword)
+        # TBD if Thoth will be sending chapters (or chapter info?)
+        # for (relation_type, relation_doi) in [(n.get('relationType'), n.get(
+        #         'relatedWork').get('doi'))
+        #         for n in work_metadata.get('relations')]:
+        #     if relation_type == 'IS_PART_OF' or relation_type == 'IS_CHILD_OF':
+        #         oapen_metadata.add_field("dc_isPartOf", relation_doi)
+        #     elif relation_type == 'IS_REPLACED_BY':
+        #         oapen_metadata.add_field("dc_isReplacedBy", relation_doi)
+        #     elif relation_type == 'REPLACES':
+        #         oapen_metadata.add_field("dc_replaces", relation_doi)
+        #     else:
+        #         oapen_metadata.add_field("dc_relation", relation_doi)
+
+        oapen_metadata.add_field("dcterms_oapenIdentifier",
+                                 "thoth-work-id:{}".format(self.work_id))
+
+        for issue in work_metadata.get('issues'):
+            oapen_metadata.add_field("dcterms_issn", issue.get('series').get('issnDigital'))
+            oapen_metadata.add_field("dcterms_seriesId", issue.get('series').get('seriesName'))
+            oapen_metadata.add_field("dcterms_seriesNumber", str(issue.get('issueOrdinal')))
+
+        for funding in work_metadata.get('fundings'):
+            oapen_metadata.add_field("dcterms_grantNumber", funding.get('grantNumber'))
+            oapen_metadata.add_field("dcterms_program", funding.get('program'))
+            oapen_metadata.add_field("dcterms_projectName", funding.get('projectName'))
+            # appears in spreadsheet twice; second time states OAPEN funder ID list is needed
+            oapen_metadata.add_field("dcterms_institutionId", funding.get('institution').get('institutionName'))
+
+        return oapen_metadata
 
     def profile_basic(self):
         """
@@ -424,10 +574,10 @@ class SwordV2Uploader(Uploader):
 
 class SwordV2Api:
 
-    def __init__(self, work_id, user_name, user_pass,
+    def __init__(self, user_name, user_pass, filename_root,
                  service_document_iri, collection_iri):
         """Set up connection to API."""
-        self.work_id = work_id
+        self.filename_root = filename_root
         self.collection_iri = collection_iri
         self.conn = sword2.Connection(
             service_document_iri=service_document_iri,
@@ -537,15 +687,12 @@ class SwordV2Api:
             request_receipt = self.conn.create(
                 col_iri=self.collection_iri,
                 in_progress=True,
-                # This sets `dc.identifier.slug` i.e. suggested URI -
-                # but not supported in DSpace by default.
-                # suggested_identifier=self.work_id,
                 # Required kwargs: metadata_entry
                 **kwargs,
             )
         elif request_type == RequestType.UPLOAD_PDF:
             request_receipt = self.conn.add_file_to_resource(
-                filename='{}.pdf'.format(self.work_id),
+                filename='{}.pdf'.format(self.filename_root),
                 mimetype='application/pdf',
                 in_progress=True,
                 # Required kwargs: edit_media_iri, payload
@@ -553,7 +700,7 @@ class SwordV2Api:
             )
         elif request_type == RequestType.UPLOAD_METADATA:
             request_receipt = self.conn.add_file_to_resource(
-                filename='{}.json'.format(self.work_id),
+                filename='{}.json'.format(self.filename_root),
                 mimetype='application/json',
                 in_progress=True,
                 # Required kwargs: edit_media_iri, payload
