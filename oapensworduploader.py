@@ -15,8 +15,8 @@ class OAPENSWORDUploader(DSpaceUploader):
         """Set OAPEN-specific parameters and pass them to DSpaceUploader"""
         user_name_string = 'oapen_sword_user'
         user_pass_string = 'oapen_sword_pw'
-        service_document_iri = ("https://oapen-dev.siscern.org/swordv2/servicedocument")
-        collection_iri = ("https://oapen-dev.siscern.org/swordv2/collection/20.500.12657/106523")
+        service_document_iri = ("https://library.oapen.org/swordv2/servicedocument")
+        collection_iri = ("https://library.oapen.org/swordv2/collection/20.500.12657/106523")
         metadata_profile = MetadataProfile.OAPEN
         super().__init__(
             work_id,
