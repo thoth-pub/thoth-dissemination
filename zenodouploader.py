@@ -64,7 +64,7 @@ class ZenodoUploader(Uploader):
             zenodo_metadata)
 
         locations = []
-        location_platform = 'OTHER'
+        location_platform = 'ZENODO'
         # Treat Zenodo deposition as a single "landing page" which may be
         # shared by multiple "publications".
         landing_page = 'https://zenodo.org/records/{}'.format(deposition_id)
