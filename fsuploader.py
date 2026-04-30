@@ -120,7 +120,7 @@ class FigshareUploader(Uploader):
                 full_text_url = '{}/ndownloader/files/{}'.format(
                     self.REPO_ROOT, pub_file_id)
                 locations.append(Location(publication.id, location_platform,
-                                          landing_page, full_text_url))
+                                          landing_page, full_text_url, None))
             # Publish project.
             self.api.publish_project(project_id)
         except DisseminationError as error:

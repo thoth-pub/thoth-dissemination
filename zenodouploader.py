@@ -77,12 +77,12 @@ class ZenodoUploader(Uploader):
             for publication in publications:
                 full_filename = '{}_book{}'.format(filename,
                                                    publication.file_ext)
-                self.api.upload_file(publication.bytes, full_filename,
-                                     api_bucket)
+                upload_checksum = self.api.upload_file(publication.bytes, full_filename,
+                                                       api_bucket)
                 full_text_url = '{}/files/{}'.format(landing_page,
                                                      full_filename)
                 locations.append(Location(publication.id, location_platform,
-                                          landing_page, full_text_url))
+                                          landing_page, full_text_url, upload_checksum))
             self.api.upload_file(metadata_bytes,
                                  '{}_metadata.json'.format(filename),
                                  api_bucket)
@@ -463,9 +463,14 @@ class ZenodoApi:
         """Upload the supplied file under the specified API bucket."""
         url = '{}/{}'.format(api_bucket, file_name)
         try:
-            self.issue_request('PUT', url, 201, data_body=file_bytes)
+            response = self.issue_request('PUT', url, 201, data_body=file_bytes)
         except DisseminationError as error:
             raise DisseminationError('Uploading file failed: {}'.format(error))
+        try:
+            return response['checksum']
+        except KeyError:
+            raise DisseminationError(
+                'Uploading file failed: Zenodo API returned unexpected response')
 
     def publish_deposition(self, deposition_id):
         """Publish the specified deposition."""

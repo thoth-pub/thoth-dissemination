@@ -5,7 +5,7 @@ Retrieve and disseminate files and metadata to Internet Archive
 
 import logging
 import sys
-from internetarchive import get_item, upload, exceptions as ia_except
+from internetarchive import get_item, upload, exceptions as ia_except, File
 from io import BytesIO
 from requests import exceptions as req_except
 from errors import DisseminationError
@@ -102,8 +102,12 @@ class IAUploader(Uploader):
         logging.info('Successfully uploaded to Internet Archive at {}'.format(landing_page))
 
         # Return details of created upload to be entered as a Thoth Location
+        checksum = File(get_item(filename), '{}.pdf'.format(filename)).md5
+        # Checksum fetch will silently fail if not found
+        if checksum is None:
+            logging.warning('Unable to retrieve Internet Archive checksum for uploaded file')
         return [Location(publication.id, location_platform, landing_page,
-                         full_text_url)]
+                         full_text_url, checksum)]
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""
