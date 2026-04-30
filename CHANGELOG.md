@@ -5,8 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [[1.1.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.1.0) - 2026-04-30
 ### Added
   - [56](https://github.com/thoth-pub/thoth-dissemination/issues/56) - Created an OAPEN profile for SWORD v2 Uploader, to facilitate automatic dissemination of works from Thoth to OAPEN.
+### Changed
+  - Converted OAPEN automatic dissemination workflows to use SWORDv2 server connection instead of uploading to FTP server
+### Fixed
+  - Minor improvements to Zenodo workflow
 
 ## [[1.0.4]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.0.4) - 2026-04-23
 ### Fixed
