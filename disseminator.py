@@ -6,7 +6,7 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '1.0.4'
+__version__ = '1.1.0'
 
 import argparse
 import logging
@@ -14,7 +14,7 @@ import sys
 from dotenv import load_dotenv
 from pathlib import Path
 from iauploader import IAUploader
-from oapenuploader import OAPENUploader
+from oapensworduploader import OAPENSWORDUploader
 from souploader import SOUploader
 from culuploader import CULUploader
 from crossrefuploader import CrossrefUploader
@@ -29,7 +29,7 @@ from bkciuploader import BKCIUploader
 
 UPLOADERS = {
     "InternetArchive": IAUploader,
-    "OAPEN": OAPENUploader,
+    "OAPEN": OAPENSWORDUploader,
     "ScienceOpen": SOUploader,
     "CUL": CULUploader,
     "Crossref": CrossrefUploader,
