@@ -15,7 +15,7 @@ from thothapi import get_thoth_client
 
 
 def write_thoth_location(publication_id, location_platform, landing_page,
-                         full_text_url, checksum):
+                         full_text_url, checksum, checksum_algorithm):
     thoth = get_thoth_client()
     try:
         token = environ['THOTH_PAT']
@@ -30,7 +30,8 @@ def write_thoth_location(publication_id, location_platform, landing_page,
         'fullTextUrl': full_text_url,
         'locationPlatform': location_platform,
         'canonical': 'false',
-        'checksum': checksum
+        'checksum': checksum,
+        'checksumAlgorithm': checksum_algorithm
     }
     try:
         location_id = thoth.create_location(location)
@@ -51,6 +52,8 @@ if __name__ == '__main__':
                 # Handle locations which don't have a checksum
                 if parts[4] == "None":
                     parts[4] = None
-                write_thoth_location(parts[0], parts[1], parts[2], parts[3], parts[4])
+                if parts[5] == "None":
+                    parts[5] = None
+                write_thoth_location(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
             except IndexError:
                 raise ValueError('Not enough data in entry "{}"'.format(location.rstrip()))

@@ -49,4 +49,4 @@ class CULUploader(DSpaceUploader):
             full_text_url = None
         location_platform = 'OTHER'
         return [Location(publication_id, location_platform, landing_page,
-                         full_text_url, None)]
+                         full_text_url, None, None)]

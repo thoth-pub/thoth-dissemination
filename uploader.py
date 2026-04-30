@@ -59,12 +59,13 @@ PUB_FORMATS = {
 
 class Location():
     def __init__(self, publication_id, location_platform, landing_page,
-                 full_text_url, checksum):
+                 full_text_url, checksum, checksum_algorithm):
         self.publication_id = publication_id
         self.location_platform = location_platform
         self.landing_page = landing_page
         self.full_text_url = full_text_url
         self.checksum = checksum
+        self.checksum_algorithm = checksum_algorithm
 
     def __str__(self):
         return "{} {} {} {} {}".format(
@@ -72,7 +73,8 @@ class Location():
             self.location_platform,
             self.landing_page,
             self.full_text_url,
-            self.checksum
+            self.checksum,
+            self.checksum_algorithm
         )
 
 

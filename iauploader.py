@@ -98,16 +98,18 @@ class IAUploader(Uploader):
         landing_page = 'https://archive.org/details/{}'.format(filename)
         full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(filename, filename)
         location_platform = 'INTERNET_ARCHIVE'
+        checksum_algorithm = 'MD5'
 
         logging.info('Successfully uploaded to Internet Archive at {}'.format(landing_page))
 
         # Return details of created upload to be entered as a Thoth Location
-        checksum = File(get_item(filename), '{}.pdf'.format(filename)).md5
+        upload_md5 = File(get_item(filename), '{}.pdf'.format(filename)).md5
         # Checksum fetch will silently fail if not found
-        if checksum is None:
+        if upload_md5 is None:
             logging.warning('Unable to retrieve Internet Archive checksum for uploaded file')
+            checksum_algorithm = None
         return [Location(publication.id, location_platform, landing_page,
-                         full_text_url, checksum)]
+                         full_text_url, upload_md5, checksum_algorithm)]
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format"""
