@@ -274,13 +274,16 @@ class SwordV2Uploader(Uploader):
 
         # TODO this appears twice in spreadsheet - second time lists "lastName firstName" (+ orcid?)
         # as format, and also states `dc_contributor` in place of `dc_contributor_other`
-        for contributor in [n for n in work_metadata.get(
+        for contribution in [n for n in work_metadata.get(
                 'contributions') if n.get('mainContribution') is True]:
-            contributor_string = '{}, {}'.format(contributor.get('lastName'), contributor.get('firstName'))
-            orcid = contributor.get('contributor').get('orcid')
-            if orcid:
-                contributor_string = '{} | {}'.format(contributor_string, orcid)
-            match contributor.get('contributionType'):
+            first_name = contribution.get('firstName')
+            contributor_string = contribution.get(
+                'fullName') if first_name is None else "{}, {}".format(
+                contribution.get('lastName'), first_name)
+            orcid = contribution.get('contributor').get('orcid')
+            if orcid is not None:
+                contributor_string += ' | {}'.format(orcid)
+            match contribution.get('contributionType'):
                 case 'AUTHOR':
                     oapen_metadata.add_field("dcterms_creator", contributor_string)
                 case 'EDITOR':
