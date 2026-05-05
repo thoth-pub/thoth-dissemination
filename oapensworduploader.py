@@ -39,4 +39,4 @@ class OAPENSWORDUploader(DSpaceUploader):
         full_text_url = ('{}/{}.pdf?sequence=2&isAllowed=y').format(bitstream_root, self.work_id)
         location_platform = 'OAPEN'
         return [Location(publication_id, location_platform, landing_page,
-                         full_text_url)]
+                         full_text_url, None, None)]
