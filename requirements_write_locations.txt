@@ -1,1 +1,1 @@
-thothlibrary==1.0.1
+thothlibrary==1.1.1
