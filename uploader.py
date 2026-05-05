@@ -68,7 +68,7 @@ class Location():
         self.checksum_algorithm = checksum_algorithm
 
     def __str__(self):
-        return "{} {} {} {} {}".format(
+        return "{} {} {} {} {} {}".format(
             self.publication_id,
             self.location_platform,
             self.landing_page,

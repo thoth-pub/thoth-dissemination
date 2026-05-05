@@ -464,7 +464,7 @@ class ZenodoApi:
         """Upload the supplied file under the specified API bucket."""
         url = '{}/{}'.format(api_bucket, file_name)
         try:
-            response = self.issue_request('PUT', url, 201, data_body=file_bytes)
+            response = self.issue_request('PUT', url, 201, data_body=file_bytes, return_json=True)
         except DisseminationError as error:
             raise DisseminationError('Uploading file failed: {}'.format(error))
         try:
