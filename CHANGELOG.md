@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [[1.2.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.2.0) - 2026-05-05
+### Changed
+  - Enhanced automatic location writing to include checksums returned from IA/Zenodo
 
 ## [[1.1.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.1.0) - 2026-04-30
 ### Added
