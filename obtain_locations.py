@@ -21,12 +21,16 @@ works_to_search = ast.literal_eval(sys.stdin.read())
 locations = []
 
 for (publication_id, doi) in works_to_search:
-    oapen_rsp = requests.get(
-        url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
-            '&expand=metadata,bitstreams'
-            .format(doi),
-        headers={'Accept': 'application/json'},
-    )
+    try:
+        oapen_rsp = requests.get(
+            url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
+                '&expand=metadata,bitstreams'
+                .format(doi),
+            headers={'Accept': 'application/json'},
+        )
+    except requests.ConnectionError:
+        logging.error('OAPEN API request failed for {} (connection closed)'.format(doi))
+        continue
     if oapen_rsp.status_code != 200:
         logging.error('OAPEN API request failed for {} (status code {})'.format(doi, oapen_rsp.status_code))
         # Sleep in case the issue is too many requests
