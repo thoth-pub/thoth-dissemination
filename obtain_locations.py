@@ -21,12 +21,16 @@ works_to_search = ast.literal_eval(sys.stdin.read())
 locations = []
 
 for (publication_id, doi) in works_to_search:
-    oapen_rsp = requests.get(
-        url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
-            '&expand=metadata,bitstreams'
-            .format(doi),
-        headers={'Accept': 'application/json'},
-    )
+    try:
+        oapen_rsp = requests.get(
+            url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
+                '&expand=metadata,bitstreams'
+                .format(doi),
+            headers={'Accept': 'application/json'},
+        )
+    except requests.ConnectionError:
+        logging.error('OAPEN API request failed for {} (connection closed)'.format(doi))
+        continue
     if oapen_rsp.status_code != 200:
         logging.error('OAPEN API request failed for {} (status code {})'.format(doi, oapen_rsp.status_code))
         # Sleep in case the issue is too many requests
@@ -45,7 +49,7 @@ for (publication_id, doi) in works_to_search:
         oapen_full_text_url = 'https://library.oapen.org/bitstream/handle/{}/' \
                               '{}?sequence=1&isAllowed=y'.format(handle, file_name)
         logging.info('{} has OAPEN landing page {} and full text URL {}'.format(doi, oapen_landing_page, oapen_full_text_url))
-        locations.append('{} OAPEN {} {}'.format(publication_id, oapen_landing_page, oapen_full_text_url))
+        locations.append('{} OAPEN {} {} {} {}'.format(publication_id, oapen_landing_page, oapen_full_text_url, None, None))
     except (IndexError, KeyError, json.JSONDecodeError):
         logging.info('No results found in OAPEN for {} - assume not yet processed'.format(doi))
 
@@ -70,8 +74,9 @@ for (publication_id, doi) in works_to_search:
         # DOAB only has landing pages, not full text URLs
         doab_landing_page = 'https://directory.doabooks.org/handle/{}'.format(handle)
         logging.info('{} has DOAB landing page {}'.format(doi, doab_landing_page))
-        locations.append('{} DOAB {} {}'.format(publication_id, doab_landing_page, None))
+        locations.append('{} DOAB {} {} {} {}'.format(publication_id, doab_landing_page, None, None, None))
     except (IndexError, KeyError, json.JSONDecodeError):
         logging.info('No results found in DOAB for {} - assume not yet processed'.format(doi))
 
+logging.info('List of locations found: {}'.format(locations))
 print(json.dumps(locations))
