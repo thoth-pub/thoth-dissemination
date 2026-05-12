@@ -9,7 +9,6 @@ Based on `iabulkupload/obtain_work_ids.py`.
 """
 
 # Both third-party packages already included in thoth-dissemination/requirements.txt
-from internetarchive import search_items
 from thothlibrary import errors
 import argparse
 import json
@@ -254,37 +253,6 @@ class CrossrefIDFinder(IDFinder):
                     self.thoth_ids.remove(id)
 
 
-class InternetArchiveIDFinder(IDFinder):
-    """Logic for retrieving work IDs which is specific to Internet Archive dissemination"""
-
-    def get_query_parameters(self):
-        """Construct Thoth work ID query parameters depending on Internet Archive-specific requirements"""
-        # Target: all active (published) works listed in Thoth (from the selected publishers).
-        self.work_statuses = '[ACTIVE]'
-        # Start with the earliest, so that the upload is logically ordered
-        self.order = '{field: PUBLICATION_DATE, direction: ASC}'
-        self.updated_at_with_relations = None
-
-    def post_process(self):
-        """Amend list of retrieved work IDs depending on Internet Archive-specific requirements"""
-
-        # Obtain all works listed in the Internet Archive's Thoth Archiving Network collection.
-        # We only need the identifier; this matches the Thoth work ID.
-        # If the collection later grows to include more publishers, we may want to
-        # additionally filter the query to only return works from those selected.
-        ia_works = search_items(
-            query='collection:thoth-archiving-network', fields=['identifier'])
-
-        # Extract the IA identifiers from the set of results
-        ia_ids = [n['identifier'] for n in ia_works]
-
-        # The set of IDs of works that need to be uploaded to the Internet Archive
-        # is those which appear as published for the selected publishers in Thoth
-        # but do not appear as already uploaded to the IA collection
-        # (minus any specified exceptions).
-        self.thoth_ids = list(set(self.thoth_ids).difference(ia_ids))
-
-
 class GooglePlayIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Google Play dissemination"""
 
@@ -404,15 +372,13 @@ if __name__ == '__main__':
                 sys.exit(1)
     else:
         match platform:
-            case 'InternetArchive':
-                id_finder = InternetArchiveIDFinder()
             case 'Crossref':
                 id_finder = CrossrefIDFinder()
             case 'GooglePlay':
                 id_finder = GooglePlayIDFinder()
             case 'OAPEN' | 'EBSCOHost' | 'JSTOR' | 'ProjectMUSE' | 'ProQuest':
                 id_finder = WeeklyIDFinder()
-            case 'Figshare' | 'Zenodo' | 'CUL':
+            case 'Figshare' | 'Zenodo' | 'CUL' | 'InternetArchive':
                 id_finder = MonthlyIDFinder()
             case 'BKCI':
                 id_finder = BKCIIDFinder()
