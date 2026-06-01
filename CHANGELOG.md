@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.3.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.3.0) - 2026-06-01
+### Added
+  - GitHub Action for recurring automatic check and update of Project MUSE locations not yet listed in Thoth
+### Changed
+  - Upgraded GitHub Actions dependencies from Node 20 to 24 (`docker/setup-qemu-action@v4`, `docker/setup-buildx-action@v4`, `docker/login-action@v4`, `docker/build-push-action@v7`, `docker/metadata-action@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`, `actions/checkout@v6`, `actions/setup-python@v6`, `oNaiPs/secrets-to-env-action@v1.8`, `google-github-actions/auth@v3`)
+
 ## [[1.2.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.2.2) - 2026-05-12
 ### Changed
   - Internet Archive automatic dissemination now runs monthly and only picks up newly-published works, bringing it in line with other archive platforms

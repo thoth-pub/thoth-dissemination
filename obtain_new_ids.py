@@ -305,7 +305,7 @@ class BKCIIDFinder(IDFinder):
 class OapenLocationsIDFinder(IDFinder):
     """
     Helper class for workflow which updates Thoth records with newly-registered
-    OAPEN/DOAB location URLs (by searching their APIs). See obtain_locations.py.
+    OAPEN/DOAB location URLs (by searching their APIs). See obtain_oapen_locations.py.
     """
 
     def get_query_parameters(self):
