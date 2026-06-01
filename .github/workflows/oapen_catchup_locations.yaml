@@ -39,7 +39,7 @@ jobs:
       - name: Get locations for selected works using Python script
         id: get-locations
         run: |
-          output=$(echo "${{ steps.get-ids.outputs.NEW_IDS }}" | python obtain_locations.py)
+          output=$(echo "${{ steps.get-ids.outputs.NEW_IDS }}" | python obtain_oapen_locations.py)
           echo "NEW_LOCATIONS=$output" >> $GITHUB_OUTPUT
 
   write-locations:

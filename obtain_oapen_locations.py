@@ -2,10 +2,9 @@
 """
 Acquire a list of locations to be added to Thoth (in same format as output by disseminator.py).
 Purpose: automate updating of Thoth records for platforms where location is not immediately
-         returned as part of initial dissemination process.
+         returned as part of initial OAPEN/DOAB dissemination process.
 Inputs: string list of tuples containing publication ID and DOI.
-Currently only supports OAPEN and DOAB locations. Assumes that works lacking OAPEN location
-will also lack DOAB location.
+Assumes that works lacking OAPEN location will also lack DOAB location.
 """
 import ast
 import logging
@@ -19,6 +18,8 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(asctime)s: %(mes
 works_to_search = ast.literal_eval(sys.stdin.read())
 
 locations = []
+
+oapen_api_success = False
 
 for (publication_id, doi) in works_to_search:
     try:
@@ -37,6 +38,7 @@ for (publication_id, doi) in works_to_search:
         sleep(1)
         continue
     try:
+        oapen_api_success = True
         oapen_rsp_json = json.loads(oapen_rsp.content)
         if len(oapen_rsp_json) > 1:
             logging.error('More than one OAPEN API result found for {}'.format(doi))
@@ -80,3 +82,10 @@ for (publication_id, doi) in works_to_search:
 
 logging.info('List of locations found: {}'.format(locations))
 print(json.dumps(locations))
+
+# Raise an alarm if none of the OAPEN API requests returned status code 200 (success)
+# In this situation, there will be no locations to process, so it's acceptable
+# to return failure and prevent subsequent GitHub Actions jobs from running
+if not works_to_search.is_empty() and not oapen_api_success:
+    logging.warning("All attempts to contact OAPEN API failed. Please check for configuration issues.")
+    sys.exit(1)
