@@ -58,7 +58,7 @@ for row in data:
         if publication.publicationType == 'PDF':
             full_text_url = '{}/pdf/download'.format(landing_page)
         elif publication.publicationType == 'EPUB':
-            full_text_url = '{}/epub'.format(landing_page),
+            full_text_url = '{}/epub'.format(landing_page)
         else:
             continue
         try:
