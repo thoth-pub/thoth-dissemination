@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+Acquire a list of locations to be added to Thoth (in same format as output by disseminator.py).
+Purpose: automate updating of Thoth records for platforms where location is not immediately
+         returned as part of initial Project MUSE dissemination process.
+"""
 import csv
 import logging
 import json
@@ -75,6 +80,8 @@ for row in data:
 logging.info('List of locations found: {}'.format(locations))
 print(json.dumps(locations))
 
+# Prompt the user to review any errors. Some locations may still have been returned and need to
+# be processed by subsequent GitHub Actions jobs, so they need to run regardless of failure here
 if not success:
     logging.warning("Not all data could be processed. Please review errors logged above.")
     sys.exit(1)

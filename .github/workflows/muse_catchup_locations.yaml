@@ -1,0 +1,64 @@
+# Purpose: write newly-registered Project MUSE locations to Thoth records.
+# Monthly catchup check of MUSE self-service CSV metadata for works not previously listed.
+name: muse-catchup-locations
+
+on:
+  schedule:
+    # 'at 02:20 on day-of-month 10'
+    # (scheduling is not guaranteed; runs at the start of the hour
+    # are more likely to be delayed)
+    - cron: '20 2 10 * *'
+  workflow_dispatch:
+
+jobs:
+  obtain-locations:
+    runs-on: ubuntu-latest
+    outputs:
+      NEW_LOCATIONS: ${{ steps.get-locations.outputs.NEW_LOCATIONS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements_obtain_muse_locations.txt
+
+      - name: Get locations for selected works using Python script
+        id: get-locations
+        run: |
+          output=$(python obtain_muse_locations.py)
+          echo "NEW_LOCATIONS=$output" >> $GITHUB_OUTPUT
+
+  write-locations:
+    runs-on: ubuntu-latest
+    needs: obtain-locations
+    # Run even if previous step reported failure overall, as it may
+    # still have successfully retrieved some locations to be written
+    if: ${{ '!cancelled()' && needs.obtain-locations.outputs.NEW_LOCATIONS != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        location: ${{ fromJSON(needs.obtain-locations.outputs.NEW_LOCATIONS) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements_write_locations.txt
+
+      - name: Write location to temp file
+        run: echo "${{ matrix.location }}" >> location.txt
+
+      - name: Write location to Thoth using Python script
+        run: python write_locations.py location.txt
+        env:
+          THOTH_PAT: ${{ secrets.THOTH_PAT }}
