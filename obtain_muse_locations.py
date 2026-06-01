@@ -7,10 +7,7 @@ import requests
 from io import StringIO
 from thothlibrary import ThothClient, ThothError
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 thoth = ThothClient()
 
@@ -73,8 +70,9 @@ for row in data:
             continue
         except IndexError:
             pass
-        locations.append('{} PROJECT_MUSE {} {}'.format(publication.publicationId, landing_page, full_text_url))
+        locations.append('{} PROJECT_MUSE {} {} {} {}'.format(publication.publicationId, landing_page, full_text_url, None, None))
 
+logging.info('List of locations found: {}'.format(locations))
 print(json.dumps(locations))
 
 if not success:
