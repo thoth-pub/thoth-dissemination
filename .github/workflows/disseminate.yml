@@ -23,10 +23,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -35,18 +35,18 @@ jobs:
           pip install -r requirements.txt
 
       - name: Make all platform credentials available to later steps (with names lowercased)
-        uses: oNaiPs/secrets-to-env-action@v1.5
+        uses: oNaiPs/secrets-to-env-action@v1.8
         with:
           secrets: ${{ toJSON(secrets) }}
           convert: lower
           exclude: GOOGLE_WORKLOAD_ID_PROVIDER, GOOGLE_SERVICE_ACCOUNT
 
       - name: Checkout (google-github-actions/auth prerequisite)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         if: inputs.platform == 'GooglePlay'
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         if: inputs.platform == 'GooglePlay'
         with:
           workload_identity_provider: ${{ secrets.GOOGLE_WORKLOAD_ID_PROVIDER }}
@@ -82,7 +82,7 @@ jobs:
           exit $STATUS
 
       - name: Upload output to artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: contains(fromJSON('["InternetArchive", "CUL", "Figshare", "Zenodo", "OAPEN"]'), inputs.platform)
         with:
           name: ${{ inputs.work-id }}
@@ -99,15 +99,15 @@ jobs:
     steps:
       - name: Checkout
         # This step deletes existing directory contents, so must be done before artifact download
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download disseminator output artifact containing location info
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.work-id }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
