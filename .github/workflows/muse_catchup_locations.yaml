@@ -30,8 +30,15 @@ jobs:
       - name: Get locations for selected works using Python script
         id: get-locations
         run: |
+          # Disable exit on error temporarily so as not to lose output on failure
+          set +e
           output=$(python obtain_muse_locations.py)
+          # Capture exit code and store script output
+          STATUS=$?
           echo "NEW_LOCATIONS=$output" >> $GITHUB_OUTPUT
+          # Re-enable exit on error and exit with actual exit code
+          set -e
+          exit $STATUS
 
   write-locations:
     runs-on: ubuntu-latest

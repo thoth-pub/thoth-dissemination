@@ -86,6 +86,6 @@ print(json.dumps(locations))
 # Raise an alarm if none of the OAPEN API requests returned status code 200 (success)
 # In this situation, there will be no locations to process, so it's acceptable
 # to return failure and prevent subsequent GitHub Actions jobs from running
-if not works_to_search.is_empty() and not oapen_api_success:
+if works_to_search != [] and not oapen_api_success:
     logging.warning("All attempts to contact OAPEN API failed. Please check for configuration issues.")
     sys.exit(1)
