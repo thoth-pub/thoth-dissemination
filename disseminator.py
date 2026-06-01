@@ -6,7 +6,7 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '1.2.2'
+__version__ = '1.3.0'
 
 import argparse
 import logging
