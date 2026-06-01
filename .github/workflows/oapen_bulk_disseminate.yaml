@@ -1,7 +1,9 @@
-# Purpose: upload newly-published works from Thoth to OAPEN FTP server.
+# Purpose: upload newly-published works from Thoth to OAPEN SWORD server.
 # Uploads all active Thoth works with a publication date within the previous week.
-# Work must have an OA licence, and a valid URL supplied as the PDF Publication Canonical Location.
-# Credentials must be present as repository secrets named OAPEN_FTP_USER and OAPEN_FTP_PW.
+# Work must have an abstract, landing page, and OA licence,
+# at least one ISBN, language, THEMA code and keyword,
+# and a valid URL supplied as the PDF Publication Canonical Location.
+# Credentials must be present as repository secrets named OAPEN_SWORD_USER and OAPEN_SWORD_PW.
 name: oapen-bulk-disseminate
 
 on:

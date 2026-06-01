@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Retrieve and disseminate files and metadata to OAPEN
+Retrieve and disseminate files and metadata to OAPEN FTP server
+Deprecated in favour of dissemination via OAPEN SWORD server (oapensworduploader.py)
 """
 
 import logging
@@ -11,7 +12,7 @@ from errors import DisseminationError
 from uploader import Uploader
 
 
-class OAPENUploader(Uploader):
+class OAPENFTPUploader(Uploader):
     """Dissemination logic for OAPEN"""
 
     def upload_to_platform(self):

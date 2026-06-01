@@ -4,6 +4,34 @@ All notable changes to thoth-dissemination will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [[1.2.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.2.2) - 2026-05-12
+### Changed
+  - Internet Archive automatic dissemination now runs monthly and only picks up newly-published works, bringing it in line with other archive platforms
+### Fixed
+  - Fixed oapen-catchup-locations bug by adding missing checksum fields to locations lists
+
+## [[1.2.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.2.1) - 2026-05-07
+### Fixed
+  - Updated thothlibrary dependency to v1.1.2 to include fix for bug in createLocations method
+
+## [[1.2.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.2.0) - 2026-05-05
+### Changed
+  - Enhanced automatic location writing to include checksums returned from IA/Zenodo
+
+## [[1.1.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.1.0) - 2026-04-30
+### Added
+  - [56](https://github.com/thoth-pub/thoth-dissemination/issues/56) - Created an OAPEN profile for SWORD v2 Uploader, to facilitate automatic dissemination of works from Thoth to OAPEN.
+### Changed
+  - Converted OAPEN automatic dissemination workflows to use SWORDv2 server connection instead of uploading to FTP server
+### Fixed
+  - Minor improvements to Zenodo workflow
+
+## [[1.0.4]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.0.4) - 2026-04-23
+### Fixed
+  - Corrected typo in Project MUSE automated workflow
+
 ## [[1.0.3]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.0.3) - 2026-04-14
 ### Fixed
   - Corrected naming of updated credentials
