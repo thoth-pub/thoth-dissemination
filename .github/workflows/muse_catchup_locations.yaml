@@ -45,7 +45,7 @@ jobs:
     needs: obtain-locations
     # Run even if previous step reported failure overall, as it may
     # still have successfully retrieved some locations to be written
-    if: ${{ always() }}
+    if: ${{ always() && needs.obtain-locations.outputs.NEW_LOCATIONS != '[]' }}
     strategy:
       fail-fast: false
       matrix:
