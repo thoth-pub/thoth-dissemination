@@ -78,7 +78,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 #         locations.append('{} PROJECT_MUSE {} {} {} {}'.format(publication.publicationId, landing_page, full_text_url, None, None))
 
 success = False
-locations = []
+locations = ['00000000-0000-0000-0000-000000000000 PLACEHOLDER https://placeholder.com None None None']
 
 logging.info('List of locations found: {}'.format(locations))
 print(json.dumps(locations))
