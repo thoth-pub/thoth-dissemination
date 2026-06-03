@@ -42,19 +42,18 @@ def write_thoth_location(publication_id, location_platform, landing_page,
 
 if __name__ == '__main__':
     locations_file = sys.argv[1]
-    print('success')
-    # with open(locations_file, 'r') as locations:
-    #     for location in locations:
-    #         parts = location.rstrip().split(' ')
-    #         try:
-    #             # Handle locations which only have a landing page, no full text URL
-    #             if parts[3] == "None":
-    #                 parts[3] = None
-    #             # Handle locations which don't have a checksum
-    #             if parts[4] == "None":
-    #                 parts[4] = None
-    #             if parts[5] == "None":
-    #                 parts[5] = None
-    #             write_thoth_location(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
-    #         except IndexError:
-    #             raise ValueError('Not enough data in entry "{}"'.format(location.rstrip()))
+    with open(locations_file, 'r') as locations:
+        for location in locations:
+            parts = location.rstrip().split(' ')
+            try:
+                # Handle locations which only have a landing page, no full text URL
+                if parts[3] == "None":
+                    parts[3] = None
+                # Handle locations which don't have a checksum
+                if parts[4] == "None":
+                    parts[4] = None
+                if parts[5] == "None":
+                    parts[5] = None
+                write_thoth_location(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
+            except IndexError:
+                raise ValueError('Not enough data in entry "{}"'.format(location.rstrip()))
