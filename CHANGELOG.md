@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.3.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.3.1) - 2026-06-03
+### Fixed
+  - Fixed bugs preventing automatic location writing for Project MUSE and Internet Archive
+
 ## [[1.3.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.3.0) - 2026-06-01
 ### Added
   - GitHub Action for recurring automatic check and update of Project MUSE locations not yet listed in Thoth
