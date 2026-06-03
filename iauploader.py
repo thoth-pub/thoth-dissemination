@@ -7,6 +7,7 @@ import logging
 import sys
 from internetarchive import get_item, upload, exceptions as ia_except, File
 from io import BytesIO
+from time import sleep
 from requests import exceptions as req_except
 from errors import DisseminationError
 from uploader import Uploader, Location
@@ -103,11 +104,25 @@ class IAUploader(Uploader):
         logging.info('Successfully uploaded to Internet Archive at {}'.format(landing_page))
 
         # Return details of created upload to be entered as a Thoth Location
-        upload_md5 = File(get_item(filename), '{}.pdf'.format(filename)).md5
+        # It may take some time for the upload to be processed and a checksum to be returned
+        # (test example: approx 80 seconds for 50MB file)
         # Checksum fetch will silently fail if not found
+        upload_md5 = None
+        attempt = 1
+        while attempt <= 10:
+            sleep(20)
+            upload_md5 = File(get_item(filename), '{}.pdf'.format(filename)).md5
+            if upload_md5 == None:
+                logging.debug('No checksum returned for file (attempt {})'.format(attempt))
+                attempt += 1
+            else:
+                logging.debug('File checksum returned on attempt {}'.format(attempt))
+                break
+
         if upload_md5 is None:
             logging.warning('Unable to retrieve Internet Archive checksum for uploaded file')
             checksum_algorithm = None
+
         return [Location(publication.id, location_platform, landing_page,
                          full_text_url, upload_md5, checksum_algorithm)]
 
