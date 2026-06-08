@@ -135,7 +135,7 @@ jobs:
             }' | jq -r '.data.work.imprint.publisher.publisherName // "Unknown Publisher"')
           echo "publisher-name=$PUBLISHER_NAME" >> $GITHUB_OUTPUT
       - name: Send notification email
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v17
         with:
           connection_url: ${{ secrets.THOTH_SMTP }}
           subject: New book submitted from ${{ steps.get-publisher.outputs.publisher-name }} to ${{ inputs.platform }} via Thoth (${{ inputs.work-id }})
