@@ -11,7 +11,11 @@ Requires: Thoth personal access token as THOTH_PAT env var.
 from thothlibrary import ThothError
 from os import environ
 import sys
+import logging
 from thothapi import get_thoth_client
+
+
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(asctime)s: %(message)s')
 
 
 def write_thoth_location(publication_id, location_platform, landing_page,
@@ -36,7 +40,15 @@ def write_thoth_location(publication_id, location_platform, landing_page,
     try:
         location_id = thoth.create_location(location)
     except ThothError as e:
-        raise ValueError('Failed to create location in Thoth: token may be incorrect') from e
+        error_message = str(e)
+        if "A location on the selected platform already exists." in error_message:
+            logging.info(
+                "Location already exists for publication {} on {} - skipping".format(
+                    publication_id, location_platform
+                )
+            )
+            return
+        raise
     print(location_id)
 
 

@@ -318,9 +318,11 @@ class OapenLocationsIDFinder(IDFinder):
 
     def post_process(self):
         """
-        Narrow down the results to works which have a PDF publication but no OAPEN location.
-        Note that this returns a list of tuples of publication IDs and DOIs
-        (both required in next stage of workflow), rather than a list of work IDs.
+        Narrow down the results to works which have a PDF publication but are
+        missing an OAPEN and/or DOAB location.
+        Returns a list of 3-tuples (publication_id, doi, missing_platforms)
+        where missing_platforms is a list of platform names that are missing
+        (e.g. ["OAPEN"], ["DOAB"], or ["OAPEN", "DOAB"]).
         """
         oapen_location_required = []
         for id in self.thoth_ids:
@@ -329,18 +331,24 @@ class OapenLocationsIDFinder(IDFinder):
                 pdf_publication = [pub for pub in work.publications
                                    if pub.publicationType == 'PDF'][0]
             except IndexError:
-                # No PDF publication, so no OAPEN location - skip
                 continue
-            try:
-                [loc for loc in pdf_publication.locations
-                 if loc.locationPlatform == 'OAPEN'][0]
-            except IndexError:
-                # No existing OAPEN location found - add it to the list to search on
-                if work.doi:
-                    # If the work doesn't have a DOI, we can't easily search on it - skip
-                    doi = work.doi.replace('https://doi.org/', '')
-                    publication_id = pdf_publication.publicationId
-                    oapen_location_required.append((publication_id, doi))
+            has_oapen = any(
+                loc.locationPlatform == 'OAPEN' for loc in pdf_publication.locations
+            )
+            has_doab = any(
+                loc.locationPlatform == 'DOAB' for loc in pdf_publication.locations
+            )
+            missing_platforms = []
+            if not has_oapen:
+                missing_platforms.append("OAPEN")
+            if not has_doab:
+                missing_platforms.append("DOAB")
+            if missing_platforms and work.doi:
+                doi = work.doi.replace('https://doi.org/', '')
+                publication_id = pdf_publication.publicationId
+                oapen_location_required.append(
+                    (publication_id, doi, missing_platforms)
+                )
 
         self.thoth_ids = oapen_location_required
 
