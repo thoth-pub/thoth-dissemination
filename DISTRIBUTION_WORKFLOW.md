@@ -1,0 +1,262 @@
+# Thoth Dissemination Workflow (Repository Reference)
+
+This document describes the workflow currently implemented in `thoth-dissemination`: what is distributed to each platform, which works are selected, under what conditions, and how often.
+
+## 1) End-to-end architecture
+
+1. A scheduled (or manual) GitHub workflow calls `bulk_disseminate.yml` with:
+   - `platform`
+   - `env_publishers` (JSON list of publisher IDs)
+   - `env_exceptions` (JSON list of work IDs to skip)
+2. `bulk_disseminate.yml` runs `obtain_new_ids.py --platform <platform>` to produce a list of work IDs.
+3. It fans out to one `disseminate.yml` run per work ID.
+4. `disseminate.yml` runs `disseminator.py --work <work-id> --platform <platform>`.
+5. Platform uploaders either:
+   - return upload locations (which can be written back to Thoth), or
+   - return no locations (and rely on email notifications / later catch-up).
+
+## 2) Global selection rules (automatic runs)
+
+All automatic runs share these rules from `obtain_new_ids.py`:
+
+- `ENV_PUBLISHERS` is required, must be JSON, non-empty, and each publisher ID is validated against Thoth.
+- `ENV_EXCEPTIONS` is optional; if present, matching work IDs are removed.
+- Default target status is `ACTIVE`.
+- Automatic selection is book-focused:
+  - Default `work_types` excludes chapters (`BOOK_CHAPTER` is not included).
+  - Some routes use `bookIds`, which also excludes chapters (and Book Sets).
+- Date-windowed finders use publication date filters in code:
+  - `WeeklyIDFinder`: previous 7 days.
+  - `MonthlyIDFinder`: previous calendar month.
+  - `GooglePlayIDFinder`: previous day.
+  - `CrossrefIDFinder`: updated within ~last 1.25 hours.
+
+## 3) Platform schedule and scope matrix
+
+GitHub Actions schedules run in UTC.
+
+| Platform | Workflow | Cadence | Selector class | High-level scope |
+|---|---|---|---|---|
+| InternetArchive | `ia_bulk_disseminate.yml` | Monthly, day 1 at 00:15 | `InternetArchiveIDFinder` | Active works not already in IA collection |
+| Crossref | `cr_bulk_disseminate.yml` | Hourly at :45 | `CrossrefIDFinder` | Active + qualifying Forthcoming works updated recently |
+| Figshare | `fs_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
+| Zenodo | `zn_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
+| CUL | `cul_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
+| GooglePlay | `gp_bulk_disseminate.yaml` | Daily at 05:50 | `GooglePlayIDFinder` | Previous day, active |
+| BKCI | `bkci_bulk_disseminate.yaml` | Monthly, day 6 at 06:40 | `BKCIIDFinder` | Previous month, active, excludes textbooks |
+| OAPEN | `oapen_bulk_disseminate.yaml` | Weekly, Mon at 02:20 | `WeeklyIDFinder` | Previous week, active |
+| EBSCOHost | `eh_bulk_disseminate.yaml` | Weekly, Tue at 02:20 | `WeeklyIDFinder` | Previous week, active |
+| JSTOR | `jstor_bulk_disseminate.yaml` | Weekly, Wed at 02:20 | `WeeklyIDFinder` | Previous week, active |
+| ProjectMUSE | `muse_bulk_disseminate.yaml` | Weekly, Thu at 02:20 | Intended `WeeklyIDFinder` | Previous week, active |
+| ProQuest | `pq_bulk_disseminate.yaml` | Weekly, Fri at 02:20 | `WeeklyIDFinder` | Previous week, active |
+| ScienceOpen | No scheduled workflow | Manual only | N/A | Per-work manual dissemination |
+
+## 4) Platform-by-platform payload and conditions
+
+### Internet Archive (`InternetArchive`)
+- Upload content:
+  - Required: PDF publication file
+  - Also uploads: `json::thoth` metadata file
+  - Uses work ID as IA identifier
+- Preconditions:
+  - `ia_s3_access` / `ia_s3_secret`
+  - Identifier must not already exist in IA
+  - PDF canonical location must exist and be downloadable
+- Automatic writeback:
+  - Returns Thoth location (`INTERNET_ARCHIVE`) and is written back by workflow.
+
+### OAPEN (`OAPEN`)
+- Upload content:
+  - Only `onix_3.0::oapen` metadata XML is uploaded to OAPEN FTP.
+- Preconditions:
+  - `oapen_ftp_user` / `oapen_ftp_pw`
+- Automatic writeback:
+  - No immediate location returned by uploader.
+  - Separate weekly catch-up (`oapen_catchup_locations.yaml`) queries OAPEN + DOAB APIs and writes missing locations to Thoth.
+
+### ScienceOpen (`ScienceOpen`)
+- Upload content (manual flow only):
+  - `csv::thoth` metadata
+  - Cover image (`jpg` or `png`)
+  - PDF file
+  - Packaged as zip and uploaded to publisher/date folder.
+- Preconditions:
+  - `so_ftp_user` / `so_ftp_pw`
+  - Paperback ISBN used for filename root
+  - PDF required
+- Chapter support:
+  - Explicitly marked as not yet implemented.
+
+### CUL (`CUL`)
+- Upload content:
+  - SWORDv2 deposit with:
+    - Required PDF
+    - Supplemental `json::thoth`
+    - Metadata mapped via `JISC_ROUTER` profile
+- Preconditions:
+  - `cul_pilot_user` / `cul_pilot_pw`
+  - PDF canonical location required
+- Automatic writeback:
+  - Returns location (`OTHER`) and workflow writes it to Thoth.
+
+### Crossref (`Crossref`)
+- Upload content:
+  - Only `doideposit::crossref` XML submitted via HTTPS.
+- Preconditions:
+  - Per-publisher credentials:
+    - `crossref_user_<publisher_id>`
+    - `crossref_pw_<publisher_id>`
+  - DOI prefix must resolve via Crossref prefix API.
+- Selection specifics:
+  - Includes `ACTIVE` and `FORTHCOMING`.
+  - Forthcoming entries are removed unless both DOI and publication date exist.
+- Automatic writeback:
+  - No location writeback (metadata deposit workflow only).
+
+### Figshare (`Figshare`)
+- Upload content:
+  - Creates one project per work.
+  - Creates one article per available publication format.
+  - For each article uploads:
+    - Publication file
+    - `json::thoth` metadata file
+- Preconditions:
+  - `figshare_token`
+  - Work must have:
+    - Long Abstract
+    - Licence supported by Figshare
+    - At least one Main Contribution
+    - At least one Subject of type `KEYWORD`
+  - Existing article containing same Thoth work ID blocks upload.
+- Publication formats considered:
+  - Iterates all types in `PUB_FORMATS` (PDF, XML-as-zip, EPUB, AZW3, MOBI, DOCX, FICTION_BOOK), uploading whichever are available.
+- Automatic writeback:
+  - Returns per-publication locations (`OTHER`) and workflow writes them to Thoth.
+
+### Zenodo (`Zenodo`)
+- Upload content:
+  - One deposition per work.
+  - Uploads every available publication file.
+  - Uploads supplemental `*_metadata.json` (`json::thoth`).
+- Preconditions:
+  - `zenodo_token`
+  - Work must have:
+    - Long Abstract
+    - DOI
+    - Licence resolvable to a Zenodo licence ID
+    - At least one Main Contribution
+  - Existing Zenodo record with `notes:"thoth-work-id:<id>"` blocks upload.
+- Automatic writeback:
+  - Returns per-publication locations (`OTHER`) and workflow writes them to Thoth.
+
+### Project MUSE (`ProjectMUSE`)
+- Upload content:
+  - `onix_3.0::project_muse`
+  - JPG cover (strict `.jpg`)
+  - PDF and/or EPUB (at least one required)
+- Preconditions:
+  - Per-publisher credentials:
+    - `muse_ftp_user_<publisher_id>`
+    - `muse_ftp_pw_<publisher_id>`
+  - PDF ISBN used as filename root
+- Automatic writeback:
+  - No location writeback; intended notification email flow.
+
+### JSTOR (`JSTOR`)
+- Upload content:
+  - `onix_3.0::jstor`
+  - JPG cover
+  - PDF
+- Preconditions:
+  - `jstor_ftp_user`, `jstor_ftp_pw`
+  - Per-publisher folder secret:
+    - `jstor_ftp_folder_<publisher_id>`
+  - PDF ISBN used as filename root
+- Automatic writeback:
+  - No location writeback; notification email flow.
+
+### EBSCOHost (`EBSCOHost`)
+- Upload content:
+  - `onix_2.1::ebsco_host`
+  - PDF and/or EPUB (at least one)
+- Preconditions:
+  - `ebsco_ftp_user`, `ebsco_ftp_pw`
+  - Filename root prefers PDF ISBN, falls back to EPUB ISBN
+- Automatic writeback:
+  - No location writeback; notification email flow.
+
+### ProQuest (`ProQuest`)
+- Upload content:
+  - `onix_2.1::proquest_ebrary`
+  - Cover file (any extension)
+  - PDF and/or EPUB (intended)
+- Preconditions:
+  - `proquest_ftp_user`, `proquest_ftp_pw`
+  - Uploads to `/upload`
+- Automatic writeback:
+  - No location writeback; notification email flow.
+
+### Google Play (`GooglePlay`)
+- Upload content:
+  - Content files (PDF and/or EPUB) into:
+    - `ebooks/<collection_code>/...`
+  - Metadata file `onix_3.0::google_books` into:
+    - `onix/<collection_code>-full/...`
+- Preconditions:
+  - `google_play_bucket`
+  - `google_play_coll_<publisher_id>`
+  - GitHub OIDC + GCP service account/workload identity provider secrets
+  - At least one of PDF or EPUB required
+- Automatic writeback:
+  - No location writeback; no notification email step.
+
+### BKCI (`BKCI`)
+- Upload content:
+  - PDF file
+  - Minimal CSV metadata (`Title, ISBN, Publication date, Filename`)
+- Preconditions:
+  - Per-publisher credentials:
+    - `bkci_ftp_user_<publisher_id>`
+    - `bkci_ftp_pw_<publisher_id>`
+  - PDF with ISBN required
+  - Automatic selector excludes textbooks
+- Automatic writeback:
+  - No location writeback; notification email flow.
+
+## 5) Location writeback and notification model
+
+### Immediate writeback platforms
+From `disseminate.yml`, these platforms return location lines and trigger `write_locations.py`:
+- `InternetArchive`
+- `CUL`
+- `Figshare`
+- `Zenodo`
+
+### Deferred location writeback
+- OAPEN/DOAB locations are handled by `oapen_catchup_locations.yaml`:
+  1. find active works with PDF and missing OAPEN location
+  2. query OAPEN/DOAB APIs by DOI
+  3. write locations to Thoth
+
+### Email notifications
+From `disseminate.yml`, email job runs for:
+- `OAPEN`, `EBSCOHost`, `BKCI`, `JSTOR`, `ProjectMUSE`, `ProQuest`
+
+## 6) What is distributed: books vs chapters
+
+- Automatic dissemination is currently configured for book-like work types only.
+- `BOOK_CHAPTER` is not included in automatic ID-finder filters.
+- `ScienceOpen` uploader explicitly states chapter dissemination is not yet implemented.
+- `Figshare` metadata mapping contains explicit `BOOK_CHAPTER` type handling, so chapter dissemination is most plausible via manual per-work runs (not via current scheduled bulk selectors).
+
+## 7) Known implementation caveats in current repo state
+
+1. `muse_bulk_disseminate.yaml` passes `platform: 'MUSE'`, but platform matching in `obtain_new_ids.py` and `disseminator.py` expects `ProjectMUSE`. As coded, scheduled Project MUSE bulk runs will not resolve the platform correctly.
+2. Workflows that call `write_locations.py` set `THOTH_EMAIL` instead of `THOTH_PAT`, but `write_locations.py` requires `THOTH_PAT`. This can prevent automatic location writeback unless `THOTH_PAT` is otherwise present in job env.
+3. `ProQuest` uploader intends PDF-or-EPUB support, but it retrieves PDF ISBN before fallback logic, so EPUB-only records can fail early.
+
+## 8) Manual operations
+
+- `manual_disseminate.yml` supports ad-hoc dissemination of explicit work ID arrays to a chosen platform string.
+- `disseminator.py` can also be run directly for one work ID and one platform.
+
