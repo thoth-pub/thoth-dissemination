@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+  - Made oapen-catchup-locations workflow idempotent per platform: each publication's missing platforms (OAPEN/DOAB) are detected independently, and only locations for actually missing platforms are created; duplicate-location errors are handled as no-ops
+
+### Changed
+  - `OapenLocationsIDFinder.post_process()` emits 3-tuples `(publication_id, doi, missing_platforms)` instead of 2-tuples
+  - `obtain_oapen_locations.py` only queries each API when that platform is missing; health-check is per-platform
+  - `write_locations.py` treats duplicate-platform ThothError as an idempotent skip and preserves original error message for other failures
+
 ## [[1.3.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.3.1) - 2026-06-08
 ### Changed
   - Added JPEG cover image file to EBSCOHost automated upload
