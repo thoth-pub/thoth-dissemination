@@ -19,7 +19,7 @@ class EBSCOUploader(Uploader):
         """
         Upload work in required format to EBSCOHost.
 
-        Content required: PDF and/or EPUB work file
+        Content required: PDF and/or EPUB work file plus JPG cover file
         Metadata required: EBSCOHost ONIX 2.1 export
         Naming convention: Use "corresponding eISBN" for content filename roots
                            (can be either PDF or EPUB as long as both are in ONIX)
@@ -58,6 +58,10 @@ class EBSCOUploader(Uploader):
             logging.error(pdf_error)
             logging.error(epub_error)
             sys.exit(1)
+
+        # Only .jpg cover files are supported
+        cover_bytes = self.get_cover_image('jpg')
+        files.append(('{}.jpg'.format(filename), BytesIO(cover_bytes)))
 
         metadata_bytes = self.get_formatted_metadata('onix_2.1::ebsco_host')
         files.append(('{}_{}.xml'.format(filename, date.today().isoformat()),

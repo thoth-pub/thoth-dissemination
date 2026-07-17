@@ -18,7 +18,7 @@ jobs:
   muse-bulk-disseminate:
     uses: ./.github/workflows/bulk_disseminate.yml
     with:
-      platform: 'MUSE'
+      platform: 'ProjectMUSE'
       env_publishers: ${{ vars.MUSE_ENV_PUBLISHERS }}
       env_exceptions: ${{ vars.MUSE_ENV_EXCEPTIONS }}
     secrets: inherit

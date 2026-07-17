@@ -9,14 +9,14 @@ Based on `iabulkupload/obtain_work_ids.py`.
 """
 
 # Both third-party packages already included in thoth-dissemination/requirements.txt
-from internetarchive import search_items
-from thothlibrary import errors, ThothClient
+from thothlibrary import errors
 import argparse
 import json
 import logging
 from datetime import datetime, timedelta, UTC
 from os import environ
 import sys
+from thothapi import get_thoth_client
 
 
 class IDFinder():
@@ -24,7 +24,7 @@ class IDFinder():
 
     def __init__(self):
         """Set up Thoth client instance and variables for use in other methods"""
-        self.thoth = ThothClient()
+        self.thoth = get_thoth_client()
         self.thoth_ids = []
         self.work_statuses = None
         self.work_types = None
@@ -67,7 +67,7 @@ class IDFinder():
         # client call, it would behave the same as a valid ID for which no relevant works exist
         for publisher in publishers_env:
             try:
-                self.thoth.publisher(publisher)
+                self.thoth.publisher(publisher_id=publisher)
             except errors.ThothError:
                 # Don't include full error text as it's lengthy (contains full query/response)
                 logging.error('No record found for publisher {}: ID may be incorrect'.format(
@@ -247,41 +247,10 @@ class CrossrefIDFinder(IDFinder):
         both a DOI and publication date.
         """
         for id in reversed(self.thoth_ids):
-            work = self.thoth.work_by_id(id)
+            work = self.thoth.work_by_id(work_id=id)
             if work.workStatus == 'FORTHCOMING':
                 if not work.doi or not work.publicationDate:
                     self.thoth_ids.remove(id)
-
-
-class InternetArchiveIDFinder(IDFinder):
-    """Logic for retrieving work IDs which is specific to Internet Archive dissemination"""
-
-    def get_query_parameters(self):
-        """Construct Thoth work ID query parameters depending on Internet Archive-specific requirements"""
-        # Target: all active (published) works listed in Thoth (from the selected publishers).
-        self.work_statuses = '[ACTIVE]'
-        # Start with the earliest, so that the upload is logically ordered
-        self.order = '{field: PUBLICATION_DATE, direction: ASC}'
-        self.updated_at_with_relations = None
-
-    def post_process(self):
-        """Amend list of retrieved work IDs depending on Internet Archive-specific requirements"""
-
-        # Obtain all works listed in the Internet Archive's Thoth Archiving Network collection.
-        # We only need the identifier; this matches the Thoth work ID.
-        # If the collection later grows to include more publishers, we may want to
-        # additionally filter the query to only return works from those selected.
-        ia_works = search_items(
-            query='collection:thoth-archiving-network', fields=['identifier'])
-
-        # Extract the IA identifiers from the set of results
-        ia_ids = [n['identifier'] for n in ia_works]
-
-        # The set of IDs of works that need to be uploaded to the Internet Archive
-        # is those which appear as published for the selected publishers in Thoth
-        # but do not appear as already uploaded to the IA collection
-        # (minus any specified exceptions).
-        self.thoth_ids = list(set(self.thoth_ids).difference(ia_ids))
 
 
 class GooglePlayIDFinder(IDFinder):
@@ -336,7 +305,7 @@ class BKCIIDFinder(IDFinder):
 class OapenLocationsIDFinder(IDFinder):
     """
     Helper class for workflow which updates Thoth records with newly-registered
-    OAPEN/DOAB location URLs (by searching their APIs). See obtain_locations.py.
+    OAPEN/DOAB location URLs (by searching their APIs). See obtain_oapen_locations.py.
     """
 
     def get_query_parameters(self):
@@ -355,7 +324,7 @@ class OapenLocationsIDFinder(IDFinder):
         """
         oapen_location_required = []
         for id in self.thoth_ids:
-            work = self.thoth.work_by_id(id)
+            work = self.thoth.work_by_id(work_id=id)
             try:
                 pdf_publication = [pub for pub in work.publications
                                    if pub.publicationType == 'PDF'][0]
@@ -403,15 +372,13 @@ if __name__ == '__main__':
                 sys.exit(1)
     else:
         match platform:
-            case 'InternetArchive':
-                id_finder = InternetArchiveIDFinder()
             case 'Crossref':
                 id_finder = CrossrefIDFinder()
             case 'GooglePlay':
                 id_finder = GooglePlayIDFinder()
             case 'OAPEN' | 'EBSCOHost' | 'JSTOR' | 'ProjectMUSE' | 'ProQuest':
                 id_finder = WeeklyIDFinder()
-            case 'Figshare' | 'Zenodo' | 'CUL':
+            case 'Figshare' | 'Zenodo' | 'CUL' | 'InternetArchive':
                 id_finder = MonthlyIDFinder()
             case 'BKCI':
                 id_finder = BKCIIDFinder()

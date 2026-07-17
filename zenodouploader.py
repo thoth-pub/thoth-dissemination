@@ -4,6 +4,7 @@ Retrieve and disseminate files and metadata to Zenodo
 """
 
 import logging
+from pycountry import languages
 import sys
 import re
 import requests
@@ -64,7 +65,8 @@ class ZenodoUploader(Uploader):
             zenodo_metadata)
 
         locations = []
-        location_platform = 'OTHER'
+        location_platform = 'ZENODO'
+        checksum_algorithm = 'MD5'
         # Treat Zenodo deposition as a single "landing page" which may be
         # shared by multiple "publications".
         landing_page = 'https://zenodo.org/records/{}'.format(deposition_id)
@@ -76,12 +78,12 @@ class ZenodoUploader(Uploader):
             for publication in publications:
                 full_filename = '{}_book{}'.format(filename,
                                                    publication.file_ext)
-                self.api.upload_file(publication.bytes, full_filename,
-                                     api_bucket)
+                upload_md5 = self.api.upload_file(publication.bytes, full_filename,
+                                                  api_bucket)
                 full_text_url = '{}/files/{}'.format(landing_page,
                                                      full_filename)
-                locations.append(Location(publication.id, location_platform,
-                                          landing_page, full_text_url))
+                locations.append(Location(publication.id, location_platform, landing_page,
+                                          full_text_url, upload_md5, checksum_algorithm))
             self.api.upload_file(metadata_bytes,
                                  '{}_metadata.json'.format(filename),
                                  api_bucket)
@@ -166,6 +168,11 @@ class ZenodoUploader(Uploader):
         language = next((n['languageCode']
                         for n in work_metadata.get('languages')), None)
         if language is not None:
+            # Some languages e.g. German have two 3-letter ISO codes, of which Thoth uses the
+            # "bibliographic" variant, but Zenodo wants the more common "terminological" (default) variant
+            language_variant = languages.get(bibliographic=language)
+            if language_variant is not None:
+                language = language_variant.alpha_3
             zenodo_metadata['metadata'].update({'language': language.lower()})
 
         return zenodo_metadata
@@ -457,9 +464,14 @@ class ZenodoApi:
         """Upload the supplied file under the specified API bucket."""
         url = '{}/{}'.format(api_bucket, file_name)
         try:
-            self.issue_request('PUT', url, 201, data_body=file_bytes)
+            response = self.issue_request('PUT', url, 201, data_body=file_bytes, return_json=True)
         except DisseminationError as error:
             raise DisseminationError('Uploading file failed: {}'.format(error))
+        try:
+            return response['checksum'].removeprefix('md5:')
+        except KeyError:
+            raise DisseminationError(
+                'Uploading file failed: Zenodo API returned unexpected response')
 
     def publish_deposition(self, deposition_id):
         """Publish the specified deposition."""

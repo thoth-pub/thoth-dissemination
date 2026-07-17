@@ -2,10 +2,9 @@
 """
 Acquire a list of locations to be added to Thoth (in same format as output by disseminator.py).
 Purpose: automate updating of Thoth records for platforms where location is not immediately
-         returned as part of initial dissemination process.
+         returned as part of initial OAPEN/DOAB dissemination process.
 Inputs: string list of tuples containing publication ID and DOI.
-Currently only supports OAPEN and DOAB locations. Assumes that works lacking OAPEN location
-will also lack DOAB location.
+Assumes that works lacking OAPEN location will also lack DOAB location.
 """
 import ast
 import logging
@@ -20,19 +19,26 @@ works_to_search = ast.literal_eval(sys.stdin.read())
 
 locations = []
 
+oapen_api_success = False
+
 for (publication_id, doi) in works_to_search:
-    oapen_rsp = requests.get(
-        url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
-            '&expand=metadata,bitstreams'
-            .format(doi),
-        headers={'Accept': 'application/json'},
-    )
+    try:
+        oapen_rsp = requests.get(
+            url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
+                '&expand=metadata,bitstreams'
+                .format(doi),
+            headers={'Accept': 'application/json'},
+        )
+    except requests.ConnectionError:
+        logging.error('OAPEN API request failed for {} (connection closed)'.format(doi))
+        continue
     if oapen_rsp.status_code != 200:
         logging.error('OAPEN API request failed for {} (status code {})'.format(doi, oapen_rsp.status_code))
         # Sleep in case the issue is too many requests
         sleep(1)
         continue
     try:
+        oapen_api_success = True
         oapen_rsp_json = json.loads(oapen_rsp.content)
         if len(oapen_rsp_json) > 1:
             logging.error('More than one OAPEN API result found for {}'.format(doi))
@@ -45,7 +51,7 @@ for (publication_id, doi) in works_to_search:
         oapen_full_text_url = 'https://library.oapen.org/bitstream/handle/{}/' \
                               '{}?sequence=1&isAllowed=y'.format(handle, file_name)
         logging.info('{} has OAPEN landing page {} and full text URL {}'.format(doi, oapen_landing_page, oapen_full_text_url))
-        locations.append('{} OAPEN {} {}'.format(publication_id, oapen_landing_page, oapen_full_text_url))
+        locations.append('{} OAPEN {} {} {} {}'.format(publication_id, oapen_landing_page, oapen_full_text_url, None, None))
     except (IndexError, KeyError, json.JSONDecodeError):
         logging.info('No results found in OAPEN for {} - assume not yet processed'.format(doi))
 
@@ -70,8 +76,16 @@ for (publication_id, doi) in works_to_search:
         # DOAB only has landing pages, not full text URLs
         doab_landing_page = 'https://directory.doabooks.org/handle/{}'.format(handle)
         logging.info('{} has DOAB landing page {}'.format(doi, doab_landing_page))
-        locations.append('{} DOAB {} {}'.format(publication_id, doab_landing_page, None))
+        locations.append('{} DOAB {} {} {} {}'.format(publication_id, doab_landing_page, None, None, None))
     except (IndexError, KeyError, json.JSONDecodeError):
         logging.info('No results found in DOAB for {} - assume not yet processed'.format(doi))
 
+logging.info('List of locations found: {}'.format(locations))
 print(json.dumps(locations))
+
+# Raise an alarm if none of the OAPEN API requests returned status code 200 (success)
+# In this situation, there will be no locations to process, so it's acceptable
+# to return failure and prevent subsequent GitHub Actions jobs from running
+if works_to_search != [] and not oapen_api_success:
+    logging.warning("All attempts to contact OAPEN API failed. Please check for configuration issues.")
+    sys.exit(1)
