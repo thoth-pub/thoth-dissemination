@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.4.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.4.0) - 2026-07-17
 ### Fixed
   - Made oapen-catchup-locations workflow idempotent per platform: each publication's missing platforms (OAPEN/DOAB) are detected independently, and only locations for actually missing platforms are created; duplicate-location errors are handled as no-ops
 
