@@ -9,6 +9,12 @@ on:
     # are more likely to be delayed)
     - cron: '20 2 * * 2'
   workflow_dispatch:
+    inputs:
+      max_locations:
+        description: "Maximum number of locations to write in this run"
+        required: false
+        default: "250"
+        type: number
 
 jobs:
   obtain-locations:
@@ -39,7 +45,65 @@ jobs:
       - name: Get locations for selected works using Python script
         id: get-locations
         run: |
-          output=$(echo "${{ steps.get-ids.outputs.NEW_IDS }}" | python obtain_oapen_locations.py)
+          raw_output=$(echo "${{ steps.get-ids.outputs.NEW_IDS }}" | python obtain_oapen_locations.py)
+          echo "$raw_output" > new_locations.json
+
+          MAX_LOCATIONS="${{ inputs.max_locations }}"
+          if [ -z "$MAX_LOCATIONS" ]; then
+            MAX_LOCATIONS=250
+          fi
+
+          output=$(MAX_LOCATIONS="$MAX_LOCATIONS" python - <<'PY'
+          import json
+          import os
+          import sys
+
+          max_locations_raw = os.environ.get("MAX_LOCATIONS", "250")
+
+          try:
+              max_locations = int(max_locations_raw)
+          except ValueError:
+              print(f"::error::Invalid max_locations value: {max_locations_raw}", file=sys.stderr)
+              sys.exit(1)
+
+          if max_locations < 1:
+              print("::error::max_locations must be at least 1", file=sys.stderr)
+              sys.exit(1)
+
+          if max_locations > 256:
+              print(
+                  f"::notice::Requested max_locations={max_locations}, but GitHub matrix limit is 256. "
+                  "Capping to 256.",
+                  file=sys.stderr,
+              )
+              max_locations = 256
+
+          with open("new_locations.json", "r", encoding="utf-8") as locations_file:
+              locations = json.load(locations_file)
+
+          if not isinstance(locations, list):
+              print(
+                  "::error::Expected obtain_oapen_locations.py to return a JSON array",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          total = len(locations)
+          capped = locations[:max_locations]
+
+          if total > max_locations:
+              print(
+                  f"::notice::Capping NEW_LOCATIONS from {total} to {max_locations}. "
+                  f"{total - max_locations} remaining locations should be picked up by a later rerun.",
+                  file=sys.stderr,
+              )
+          else:
+              print(f"::notice::NEW_LOCATIONS contains {total} locations.", file=sys.stderr)
+
+          print(json.dumps(capped, separators=(",", ":")))
+          PY
+          )
+
           echo "NEW_LOCATIONS=$output" >> $GITHUB_OUTPUT
 
   write-locations:
