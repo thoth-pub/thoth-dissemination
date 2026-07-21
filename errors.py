@@ -9,3 +9,11 @@ class DisseminationError(Exception):
 
     def __init__(self, message):
         super().__init__(message)
+
+
+class InternetArchiveIdentifierCollisionError(DisseminationError):
+    """Refuse to modify an Internet Archive item not known to belong to Thoth."""
+
+
+class InternetArchiveVerificationError(DisseminationError):
+    """Report an Internet Archive upload which could not be verified in time."""

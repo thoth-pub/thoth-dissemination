@@ -202,11 +202,7 @@ class Uploader():
         """Retrieve work metadata from Thoth Export API in specified format"""
         metadata_url = self.export_url + '/specifications/' + \
             format + '/work/' + self.work_id
-        try:
-            return self.get_data_from_url(metadata_url)
-        except DisseminationError as error:
-            logging.error(error)
-            sys.exit(1)
+        return self.get_data_from_url(metadata_url)
 
     def get_cover_image(self, required_format=None):
         """

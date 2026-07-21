@@ -13,6 +13,7 @@ import logging
 import sys
 from dotenv import load_dotenv
 from pathlib import Path
+from errors import DisseminationError
 from iauploader import IAUploader
 from oapensworduploader import OAPENSWORDUploader
 from souploader import SOUploader
@@ -76,13 +77,25 @@ def run(work_id, platform, export_url, client_url):
     """Execute a dissemination uploader based on input parameters"""
     logging.info('Beginning upload of {} to {}'.format(work_id, platform))
     try:
-        uploader = UPLOADERS[platform](
-            work_id, export_url, client_url, __version__)
+        uploader_class = UPLOADERS[platform]
     except KeyError:
-        logging.error('{} not supported: platform must be one of {}'.format(
-            platform, UPLOADERS_STR))
-        sys.exit(1)
+        raise DisseminationError(
+            '{} not supported: platform must be one of {}'.format(
+                platform, UPLOADERS_STR))
+    uploader = uploader_class(work_id, export_url, client_url, __version__)
     uploader.run()
+
+
+def main():
+    """Run the CLI and convert reusable uploader errors into a failing status."""
+    arguments = get_arguments()
+    try:
+        run(arguments.work_id, arguments.platform,
+            arguments.export_url, arguments.client_url)
+    except DisseminationError as error:
+        logging.error(error)
+        return 1
+    return 0
 
 
 def get_arguments():
@@ -113,6 +126,4 @@ if __name__ == '__main__':
     # with Docker, --env-file option could be used instead
     dotenv_path = Path('./config.env')
     load_dotenv(dotenv_path=dotenv_path)
-    ARGUMENTS = get_arguments()
-    run(ARGUMENTS.work_id, ARGUMENTS.platform,
-        ARGUMENTS.export_url, ARGUMENTS.client_url)
+    sys.exit(main())
