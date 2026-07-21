@@ -373,6 +373,163 @@ class TestIAUploader(unittest.TestCase):
                     'missing as an original file'):
                 self.uploader.upload_to_platform()
 
+    def test_metadata_verification_retries_until_change_is_visible(self):
+        desired_metadata = self._desired_metadata()
+        stale_metadata = dict(desired_metadata, title='Old title')
+        self._set_existing_item(metadata=stale_metadata)
+        self.item.modify_metadata.side_effect = lambda *args, **kwargs: \
+            make_response()
+
+        def reveal_metadata(item):
+            if item.refresh.call_count >= 2:
+                item.metadata = dict(desired_metadata)
+
+        self.item.refresh_hook = reveal_metadata
+
+        locations = self.uploader.upload_to_platform()
+
+        self.assertEqual(self.item.refresh.call_count, 2)
+        self.mock_sleep.assert_called_once()
+        self.item.modify_metadata.assert_called_once()
+        self._assert_location(locations[0])
+
+    def test_metadata_verification_times_out_when_change_stays_stale(self):
+        metadata = self._desired_metadata()
+        metadata['title'] = 'Old title'
+        self._set_existing_item(metadata=metadata)
+        self.item.modify_metadata.side_effect = lambda *args, **kwargs: \
+            make_response()
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 3):
+            with self.assertRaises(InternetArchiveVerificationError) as raised:
+                self.uploader.upload_to_platform()
+
+        self.assertIn('metadata discrepancies', str(raised.exception))
+        self.assertIn('title', str(raised.exception))
+        self.assertIn('Old title', str(raised.exception))
+        self.assertEqual(self.item.refresh.call_count, 3)
+        self.assertEqual(self.mock_sleep.call_count, 2)
+
+    def test_metadata_verification_times_out_when_removed_field_remains(self):
+        metadata = self._desired_metadata()
+        self.uploader.metadata['data']['work']['longAbstract'] = None
+        self._set_existing_item(metadata=metadata)
+        self.item.modify_metadata.side_effect = lambda *args, **kwargs: \
+            make_response()
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 2):
+            with self.assertRaises(InternetArchiveVerificationError) as raised:
+                self.uploader.upload_to_platform()
+
+        self.assertIn('description', str(raised.exception))
+        self.assertIn('expected it to be absent', str(raised.exception))
+        self.assertEqual(self.item.refresh.call_count, 2)
+        self.mock_sleep.assert_called_once()
+
+    def test_unrelated_metadata_does_not_prevent_verification(self):
+        metadata = self._desired_metadata()
+        metadata['unrelated-field'] = ['keep', 'both']
+        self._set_existing_item(metadata=metadata)
+
+        locations = self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.item.refresh.assert_called_once()
+        self._assert_location(locations[0])
+
+    def test_unrelated_collection_memberships_do_not_prevent_verification(self):
+        metadata = self._desired_metadata()
+        metadata['collection'] = [
+            'other-collection', IAUploader.THOTH_COLLECTION]
+        self._set_existing_item(metadata=metadata)
+
+        locations = self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.item.refresh.assert_called_once()
+        self._assert_location(locations[0])
+
+    def test_new_item_waits_for_files_and_metadata_to_become_visible(self):
+        desired_metadata = self._desired_metadata()
+        self.mock_upload.side_effect = lambda **kwargs: [
+            make_response() for _ in kwargs['files']]
+
+        def reveal_new_item(item):
+            item.files = [
+                original_file(PDF_NAME, self.pdf_bytes),
+                original_file(JSON_NAME, self.json_bytes),
+            ]
+            if item.refresh.call_count == 1:
+                item.metadata = {'title': 'Stale title'}
+            else:
+                item.metadata = dict(desired_metadata)
+
+        self.item.refresh_hook = reveal_new_item
+
+        locations = self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_called_once()
+        self.item.modify_metadata.assert_not_called()
+        self.assertEqual(self.item.refresh.call_count, 2)
+        self.mock_sleep.assert_called_once()
+        self._assert_location(locations[0])
+
+    def test_second_run_is_read_only_after_eventual_metadata_update(self):
+        desired_metadata = self._desired_metadata()
+        stale_metadata = dict(desired_metadata, title='Old title')
+        self._set_existing_item(metadata=stale_metadata)
+        self.item.modify_metadata.side_effect = lambda *args, **kwargs: \
+            make_response()
+
+        def reveal_metadata(item):
+            if item.refresh.call_count >= 2:
+                item.metadata = dict(desired_metadata)
+
+        self.item.refresh_hook = reveal_metadata
+
+        first_locations = self.uploader.upload_to_platform()
+        self._assert_location(first_locations[0])
+        self.assertEqual(self.item.refresh.call_count, 2)
+        self.mock_upload.reset_mock()
+        self.item.modify_metadata.reset_mock()
+
+        second_locations = self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self._assert_location(second_locations[0])
+
+    def test_file_verification_retries_until_originals_are_visible(self):
+        self._set_existing_item(files=[])
+        self.mock_upload.side_effect = lambda **kwargs: [
+            make_response() for _ in kwargs['files']]
+
+        def reveal_files(item):
+            if item.refresh.call_count == 1:
+                item.files = []
+            elif item.refresh.call_count == 2:
+                item.files = [
+                    original_file(PDF_NAME, b'stale PDF'),
+                    original_file(JSON_NAME, self.json_bytes),
+                ]
+            else:
+                item.files = [
+                    original_file(PDF_NAME, self.pdf_bytes),
+                    original_file(JSON_NAME, self.json_bytes),
+                ]
+
+        self.item.refresh_hook = reveal_files
+
+        locations = self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_called_once()
+        self.item.modify_metadata.assert_not_called()
+        self.assertEqual(self.item.refresh.call_count, 3)
+        self.assertEqual(self.mock_sleep.call_count, 2)
+        self._assert_location(locations[0])
+
     def test_checksum_skipped_empty_response_is_not_a_failure(self):
         self._set_existing_item(files=[
             original_file(PDF_NAME, b'old PDF'),

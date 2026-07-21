@@ -73,6 +73,8 @@ class IAUploader(Uploader):
         publication = self.get_publication_details('PDF')
         pdf_bytes = publication.bytes
         ia_metadata = self.parse_metadata()
+        absent_metadata_fields = (
+            self.MANAGED_METADATA_FIELDS - ia_metadata.keys())
 
         file_bytes = {
             '{}.pdf'.format(identifier): pdf_bytes,
@@ -103,7 +105,12 @@ class IAUploader(Uploader):
             self._modify_metadata(
                 item, metadata_patch, access_key, secret_key)
 
-        verified_md5s = self._verify_final_state(item, expected_md5s)
+        verified_md5s = self._verify_final_state(
+            item,
+            expected_md5s,
+            ia_metadata,
+            absent_metadata_fields,
+        )
         landing_page = 'https://archive.org/details/{}'.format(identifier)
         full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(
             identifier, identifier)
@@ -290,6 +297,31 @@ class IAUploader(Uploader):
                 patch[field] = desired_metadata[field]
         return patch
 
+    def _metadata_verification_problems(
+            self, current_metadata, desired_metadata, absent_fields):
+        current_metadata = current_metadata or {}
+        problems = []
+        for field, desired_value in desired_metadata.items():
+            current_value = current_metadata.get(field)
+            if field == 'collection':
+                if self.THOTH_COLLECTION not in self._as_metadata_list(
+                        current_value):
+                    problems.append(
+                        '{} is {!r}, expected to include {!r}'.format(
+                            field, current_value, self.THOTH_COLLECTION))
+            elif not self._metadata_values_equal(
+                    field, current_value, desired_value):
+                problems.append(
+                    '{} is {!r}, expected {!r}'.format(
+                        field, current_value, desired_value))
+
+        for field in sorted(absent_fields):
+            if field in current_metadata:
+                problems.append(
+                    '{} is still present with value {!r}, expected it to be '
+                    'absent'.format(field, current_metadata[field]))
+        return problems
+
     @classmethod
     def _metadata_values_equal(cls, field, current_value, desired_value):
         if field in cls.REPEATABLE_METADATA_FIELDS:
@@ -331,31 +363,51 @@ class IAUploader(Uploader):
             return None
         return value
 
-    def _verify_final_state(self, item, expected_md5s):
-        last_problem = 'item metadata was not available'
+    def _verify_final_state(
+            self, item, expected_md5s, desired_metadata, absent_fields):
+        last_file_problems = ['item file metadata was not available']
+        last_metadata_problems = ['item metadata was not available']
+        last_refresh_problem = None
         for attempt in range(1, self.VERIFICATION_ATTEMPTS + 1):
             try:
                 item.refresh()
                 originals = self._original_files(item.files)
-                problems = []
+                file_problems = []
                 for name, expected_md5 in expected_md5s.items():
                     if name not in originals:
-                        problems.append(
+                        file_problems.append(
                             '{} is missing as an original file'.format(name))
                         continue
                     remote_md5 = self._file_value(originals[name], 'md5')
                     if remote_md5 != expected_md5:
-                        problems.append(
+                        file_problems.append(
                             '{} has MD5 {!r}, expected {!r}'.format(
                                 name, remote_md5, expected_md5))
-                if not problems:
+                metadata_problems = self._metadata_verification_problems(
+                    item.metadata, desired_metadata, absent_fields)
+                last_file_problems = file_problems
+                last_metadata_problems = metadata_problems
+                last_refresh_problem = None
+                if not file_problems and not metadata_problems:
                     return {
                         name: self._file_value(originals[name], 'md5')
                         for name in expected_md5s
                     }
-                last_problem = '; '.join(problems)
             except req_except.RequestException as error:
-                last_problem = 'refresh failed: {}'.format(error)
+                last_refresh_problem = 'refresh failed: {}'.format(error)
+
+            problem_groups = []
+            if last_file_problems:
+                problem_groups.append(
+                    'file discrepancies: {}'.format(
+                        '; '.join(last_file_problems)))
+            if last_metadata_problems:
+                problem_groups.append(
+                    'metadata discrepancies: {}'.format(
+                        '; '.join(last_metadata_problems)))
+            if last_refresh_problem:
+                problem_groups.append(last_refresh_problem)
+            last_problem = '; '.join(problem_groups)
 
             if attempt < self.VERIFICATION_ATTEMPTS:
                 logging.debug(
