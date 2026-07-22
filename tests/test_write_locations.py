@@ -129,6 +129,18 @@ class TestLocationUpsert(unittest.TestCase):
         self.assertEqual(update['fullTextUrl'], FULL_TEXT_URL)
         thoth.create_location.assert_not_called()
 
+    def test_clearing_full_text_url_sends_explicit_graphql_null(self):
+        thoth = mock_thoth_with_locations([existing_location()])
+
+        upsert_location(thoth, location_input(full_text_url=None))
+
+        update = thoth.update_location.call_args.args[0]
+        patch_thoth_client_mutations()
+        request = ThothMutation('updateLocation', update).request
+        self.assertIn('fullTextUrl: null', request)
+        self.assertNotIn('fullTextUrl: "null"', request)
+        thoth.create_location.assert_not_called()
+
     def test_changed_checksum_and_algorithm_update(self):
         thoth = mock_thoth_with_locations([
             existing_location(checksum='old', checksumAlgorithm='SHA1')

@@ -7,6 +7,7 @@ from os import environ
 import sys
 
 from thothapi import (
+    EXPLICIT_GRAPHQL_NULL,
     ThothGraphQLResponseError,
     ThothGraphQLTransportError,
     get_publication_locations,
@@ -278,8 +279,12 @@ def perform_location_plan(thoth, plan):
         thoth.create_location if plan.action == 'create'
         else thoth.update_location
     )
+    mutation_data = plan.data
+    if plan.action == 'update' and plan.data['fullTextUrl'] is None:
+        mutation_data = dict(plan.data)
+        mutation_data['fullTextUrl'] = EXPLICIT_GRAPHQL_NULL
     try:
-        location_id = mutation(plan.data)
+        location_id = mutation(mutation_data)
     except Exception as error:
         if _is_authentication_error(error):
             raise AuthenticationError(

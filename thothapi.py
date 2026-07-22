@@ -32,6 +32,13 @@ class ThothGraphQLResponseError(RuntimeError):
     """The Thoth GraphQL endpoint returned one or more GraphQL errors."""
 
 
+class _ExplicitGraphQLNull:
+    """Sentinel for nullable mutation fields that must be explicitly cleared."""
+
+
+EXPLICIT_GRAPHQL_NULL = _ExplicitGraphQLNull()
+
+
 def get_thoth_client_url(client_url=None):
     """
     Return the Thoth API base URL expected by thothlibrary.
@@ -89,6 +96,8 @@ def patch_thoth_client_mutations():
 
     @staticmethod
     def statement(key, value, enclose):
+        if value is EXPLICIT_GRAPHQL_NULL:
+            return '{}: null'.format(key)
         if isinstance(value, bool):
             return '{}: {}'.format(key, str(value).lower())
         return original_statement(key, value, enclose)
