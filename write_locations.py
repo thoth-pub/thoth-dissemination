@@ -264,7 +264,7 @@ def decide_location_action(location_input, existing_locations):
     return LocationPlan('update', desired)
 
 
-def perform_location_plan(thoth, plan):
+def perform_location_plan(thoth, plan, progress=None):
     """Perform the planned mutation, if any, and return its location ID."""
     if plan.action == 'noop':
         logging.info(
@@ -283,6 +283,9 @@ def perform_location_plan(thoth, plan):
     if plan.action == 'update' and plan.data['fullTextUrl'] is None:
         mutation_data = dict(plan.data)
         mutation_data['fullTextUrl'] = EXPLICIT_GRAPHQL_NULL
+    action = '{}_thoth_location'.format(plan.action)
+    if progress is not None:
+        progress(action, 'attempted')
     try:
         location_id = mutation(mutation_data)
     except Exception as error:
@@ -301,14 +304,16 @@ def perform_location_plan(thoth, plan):
             )
         ) from error
 
+    if progress is not None:
+        progress(action, 'completed')
     print(location_id)
     return location_id
 
 
-def upsert_location(thoth, location_input):
+def upsert_location(thoth, location_input, progress=None):
     existing = retrieve_existing_locations(thoth, location_input.publication_id)
     plan = decide_location_action(location_input, existing)
-    return perform_location_plan(thoth, plan)
+    return perform_location_plan(thoth, plan, progress=progress)
 
 
 def write_thoth_location(publication_id, location_platform, landing_page,

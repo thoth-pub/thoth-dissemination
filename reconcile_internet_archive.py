@@ -168,6 +168,10 @@ def _status_for_issues(issues):
 def _base_result(work_id):
     return {
         'work_id': work_id,
+        'selection': {
+            'explicit': True,
+            'publisher': False,
+        },
         'publisher_id': None,
         'title': None,
         'publication_id': None,
@@ -176,7 +180,10 @@ def _base_result(work_id):
         'status': 'error',
         'issues': [],
         'recommended_actions': [],
+        'auto_applicable_actions': [],
+        'attempted_actions': [],
         'applied_actions': [],
+        'uncertain_actions': [],
         'internet_archive': None,
         'thoth_location': None,
         'error': None,
@@ -195,10 +202,10 @@ def _location_input(location):
 
 
 def _location_report(locations, location_input, plan=None):
-    matches = [
+    matches = sorted([
         location for location in locations
         if location['locationPlatform'] == location_input.location_platform
-    ]
+    ], key=lambda location: location['locationId'])
     return {
         'count': len(matches),
         'state': (
@@ -265,12 +272,12 @@ def _archive_report(item, desired, inspection):
             'files': sorted(all_file_names - expected_names),
             'original_files': unmanaged_originals,
             'metadata_fields': unmanaged_metadata,
-            'collections': [
+            'collections': sorted([
                 collection
                 for collection in IAUploader._as_metadata_list(
                     (item.metadata or {}).get('collection'))
                 if collection != IAUploader.THOTH_COLLECTION
-            ],
+            ]),
         },
         'expected': {
             'pdf_filename': '{}.pdf'.format(desired.identifier),
@@ -288,12 +295,81 @@ def _archive_report(item, desired, inspection):
     }
 
 
+def _archive_inventory_report(item, uploader):
+    """Report safely discoverable Archive state without desired source state."""
+    ownership = uploader.classify_item_ownership(item)
+    all_files = sorted(filter(None, (
+        IAUploader._file_value(file_metadata, 'name')
+        for file_metadata in item.files or []
+    )))
+    originals = sorted(IAUploader._original_files(item.files))
+    metadata = item.metadata or {}
+    return {
+        'identifier': uploader.work_id,
+        'exists': bool(item.exists),
+        'ownership': ownership['status'],
+        'ownership_reason': ownership['reason'],
+        'accepted_legacy_item': ownership['status'] == 'legacy',
+        'warnings': (
+            ['legacy_item_missing_ownership_marker']
+            if ownership['status'] == 'legacy' else []
+        ),
+        'files': {
+            'all_names': all_files,
+            'original_names': originals,
+        },
+        'metadata': None,
+        'unrelated': {
+            'files': all_files,
+            'original_files': originals,
+            'metadata_fields': sorted(metadata),
+            'collections': sorted(
+                IAUploader._as_metadata_list(metadata.get('collection'))),
+        },
+        'expected': None,
+    }, ownership
+
+
+def _location_inventory_report(locations):
+    """Report observed IA locations when desired source state is unavailable."""
+    matches = sorted([
+        location for location in locations
+        if location['locationPlatform'] == 'INTERNET_ARCHIVE'
+    ], key=lambda location: location['locationId'])
+    return {
+        'count': len(matches),
+        'state': (
+            'duplicate' if len(matches) > 1
+            else 'missing' if not matches
+            else 'observed'
+        ),
+        'location_id': matches[0]['locationId'] if len(matches) == 1 else None,
+        'canonical': matches[0]['canonical'] if len(matches) == 1 else None,
+        'locations': [
+            {
+                'location_id': location['locationId'],
+                'publication_id': location['publicationId'],
+                'platform': location['locationPlatform'],
+                'landing_page': location['landingPage'],
+                'full_text_url': location['fullTextUrl'],
+                'canonical': location['canonical'],
+                'checksum': location['checksum'],
+                'checksum_algorithm': location['checksumAlgorithm'],
+            }
+            for location in matches
+        ],
+        'other_platform_location_count': len(locations) - len(matches),
+        'expected': None,
+    }
+
+
 class InternetArchiveReconciler:
     """Coordinate read-only inspection and guarded idempotent repairs."""
 
     def __init__(self, thoth=None, export_url=DEFAULT_EXPORT_URL):
         self.thoth = thoth or get_thoth_client()
         self.export_url = export_url.rstrip('/')
+        self.selection_by_work_id = {}
 
     def publisher_work_ids(self, publisher_id, limit, offset):
         """Return a stable eligible publisher slice without downloading files."""
@@ -342,10 +418,19 @@ class InternetArchiveReconciler:
     def select_work_ids(
             self, publisher_id=None, explicit_work_ids=None,
             limit=DEFAULT_LIMIT, offset=0):
-        selected = set(explicit_work_ids or [])
+        explicit = set(explicit_work_ids or [])
+        publisher = set()
         if publisher_id is not None:
-            selected.update(
+            publisher.update(
                 self.publisher_work_ids(publisher_id, limit, offset))
+        selected = explicit | publisher
+        self.selection_by_work_id = {
+            work_id: {
+                'explicit': work_id in explicit,
+                'publisher': work_id in publisher,
+            }
+            for work_id in selected
+        }
         return sorted(selected)
 
     def _load_work_metadata(self, work_id):
@@ -396,9 +481,14 @@ class InternetArchiveReconciler:
             issues.append('no_pdf_publication')
         return issues
 
-    def inspect_work(self, work_id):
+    def inspect_work(self, work_id, selection=None):
         """Build desired state, then inspect both remote systems read-only."""
         result = _base_result(work_id)
+        if selection is not None:
+            result['selection'] = {
+                'explicit': bool(selection.get('explicit')),
+                'publisher': bool(selection.get('publisher')),
+            }
         context = {}
         try:
             metadata = self._load_work_metadata(work_id)
@@ -410,6 +500,11 @@ class InternetArchiveReconciler:
             result['issues'] = [issue]
             result['status'] = _status_for_issues(result['issues'])
             result['error'] = str(error)
+            if result['selection']['explicit']:
+                uploader = self._uploader(
+                    work_id, {'data': {'work': {}}})
+                return self._inspect_discoverable_state(
+                    result, uploader, context), context
             return result, context
 
         work = metadata['data']['work']
@@ -420,26 +515,36 @@ class InternetArchiveReconciler:
             'title': work.get('title') or work.get('fullTitle'),
         })
         eligibility_issues = self._eligibility_issues(work)
+        result['issues'] = _ordered_unique(eligibility_issues, ISSUE_ORDER)
         if eligibility_issues:
-            result['issues'] = _ordered_unique(
-                eligibility_issues, ISSUE_ORDER)
             result['recommended_actions'] = ['fix_work_eligibility']
+        if eligibility_issues and not result['selection']['explicit']:
             result['status'] = _status_for_issues(result['issues'])
             return result, context
 
         try:
             source = uploader.get_publication_source('PDF')
         except Exception as error:
-            result['issues'] = ['no_pdf_source']
-            result['recommended_actions'] = ['fix_work_eligibility']
-            result['status'] = 'ineligible'
+            result['issues'] = _ordered_unique(
+                result['issues'] + ['no_pdf_source'], ISSUE_ORDER)
+            result['recommended_actions'] = _ordered_unique(
+                result['recommended_actions'] + ['fix_work_eligibility'],
+                ACTION_ORDER,
+            )
             result['error'] = str(error)
-            return result, context
+            pdf_publication = next((
+                publication for publication in work.get('publications') or []
+                if publication.get('publicationType') == 'PDF'
+            ), None)
+            if pdf_publication is not None:
+                result['publication_id'] = pdf_publication.get('publicationId')
+            return self._inspect_discoverable_state(
+                result, uploader, context), context
 
         result.update({
             'publication_id': source.id,
             'pdf_source_url': source.url,
-            'eligible': True,
+            'eligible': not eligibility_issues,
         })
         try:
             desired = uploader.build_desired_state()
@@ -449,25 +554,74 @@ class InternetArchiveReconciler:
                 'json': 'json_export_unavailable',
                 'metadata': 'malformed_metadata',
             }.get(error.source, 'malformed_metadata')
-            result['issues'] = [issue]
-            result['recommended_actions'] = [{
+            result['issues'] = _ordered_unique(
+                result['issues'] + [issue], ISSUE_ORDER)
+            result['recommended_actions'] = _ordered_unique(
+                result['recommended_actions'] + [{
                 'pdf_source_unavailable': 'restore_pdf_source',
                 'json_export_unavailable': 'restore_json_export',
                 'malformed_metadata': 'fix_work_eligibility',
-            }[issue]]
-            result['status'] = _status_for_issues(result['issues'])
+                }[issue]], ACTION_ORDER)
             result['error'] = str(error)
-            return result, context
+            return self._inspect_discoverable_state(
+                result, uploader, context), context
 
         context.update({'uploader': uploader, 'desired': desired})
         result = self._inspect_remote(result, uploader, desired, context)
         return result, context
 
+    def _inspect_discoverable_state(self, initial_result, uploader, context):
+        """Inspect ownership and observed locations without expected state."""
+        result = deepcopy(initial_result)
+        issues = list(result['issues'])
+        actions = list(result['recommended_actions'])
+        errors = [result['error']] if result['error'] else []
+
+        try:
+            item = get_item(uploader.work_id)
+            archive_report, ownership = _archive_inventory_report(
+                item, uploader)
+            context['item'] = item
+            result['internet_archive'] = archive_report
+            if not item.exists:
+                issues.append('item_missing')
+                actions.append('create_archive_item')
+            elif ownership['status'] == 'collision':
+                issues.append('identifier_collision')
+                actions.append('resolve_identifier_collision')
+        except Exception as error:
+            issues.append('archive_request_failed')
+            errors.append('Internet Archive request failed: {}'.format(error))
+
+        if result['publication_id'] is not None:
+            try:
+                locations = retrieve_existing_locations(
+                    self.thoth, result['publication_id'])
+                context['locations'] = locations
+                result['thoth_location'] = _location_inventory_report(locations)
+                count = result['thoth_location']['count']
+                if count == 0:
+                    issues.append('location_missing')
+                    actions.append('create_thoth_location')
+                elif count > 1:
+                    issues.append('duplicate_locations')
+                    actions.append('resolve_duplicate_locations')
+            except Exception as error:
+                issues.append('thoth_location_lookup_failed')
+                errors.append('Thoth location lookup failed: {}'.format(error))
+
+        result['issues'] = _ordered_unique(issues, ISSUE_ORDER)
+        result['recommended_actions'] = _ordered_unique(actions, ACTION_ORDER)
+        result['auto_applicable_actions'] = []
+        result['status'] = _status_for_issues(result['issues'])
+        result['error'] = '; '.join(_ordered_unique(errors, ())) or None
+        return result
+
     def _inspect_remote(self, initial_result, uploader, desired, context):
         result = deepcopy(initial_result)
-        issues = []
-        actions = []
-        errors = []
+        issues = list(result['issues'])
+        actions = list(result['recommended_actions'])
+        errors = [result['error']] if result['error'] else []
         result['internet_archive'] = None
         result['thoth_location'] = None
 
@@ -485,7 +639,11 @@ class InternetArchiveReconciler:
                 )
             if not inspection['exists']:
                 issues.append('item_missing')
-                actions.append('create_archive_item')
+                actions.extend([
+                    'create_archive_item',
+                    'upload_pdf_original',
+                    'upload_json_original',
+                ])
             elif inspection['ownership'] == 'collision':
                 issues.append('identifier_collision')
                 actions.append('resolve_identifier_collision')
@@ -538,38 +696,58 @@ class InternetArchiveReconciler:
 
         issues = _ordered_unique(issues, ISSUE_ORDER)
         actions = _ordered_unique(actions, ACTION_ORDER)
-        if 'identifier_collision' in issues:
-            actions = ['resolve_identifier_collision']
-        elif 'duplicate_locations' in issues:
-            actions = ['resolve_duplicate_locations']
         result['issues'] = issues
         result['recommended_actions'] = actions
         result['status'] = _status_for_issues(issues)
-        result['error'] = '; '.join(errors) if errors else None
+        result['error'] = '; '.join(_ordered_unique(errors, ())) or None
+        result['auto_applicable_actions'] = self._auto_applicable_actions(
+            result)
         return result
 
     @staticmethod
-    def _safe_to_apply(result):
-        return (
-            result['eligible']
-            and result['error'] is None
-            and 'identifier_collision' not in result['issues']
-            and 'duplicate_locations' not in result['issues']
-            and bool(
-                set(result['recommended_actions'])
-                & (ARCHIVE_ACTIONS | LOCATION_ACTIONS)
-            )
-        )
+    def _auto_applicable_actions(result):
+        blocking_issues = {
+            'work_not_found',
+            'thoth_work_lookup_failed',
+            'pdf_source_unavailable',
+            'json_export_unavailable',
+            'malformed_metadata',
+            'archive_request_failed',
+            'identifier_collision',
+            'thoth_location_lookup_failed',
+            'duplicate_locations',
+        }
+        if (not result['eligible'] or result['error'] is not None
+                or blocking_issues.intersection(result['issues'])):
+            return []
+        return _ordered_unique([
+            action for action in result['recommended_actions']
+            if action in ARCHIVE_ACTIONS | LOCATION_ACTIONS
+        ], ACTION_ORDER)
 
-    def reconcile_one(self, work_id, apply=False, credentials=None):
-        before, context = self.inspect_work(work_id)
+    @staticmethod
+    def _safe_to_apply(result):
+        return bool(result['auto_applicable_actions'])
+
+    def reconcile_one(
+            self, work_id, apply=False, credentials=None, selection=None):
+        before, context = self.inspect_work(work_id, selection=selection)
         if not apply or not self._safe_to_apply(before):
             return before
 
+        attempted_actions = []
         applied_actions = []
+        uncertain_actions = []
+
+        def record_progress(action, state):
+            if state == 'attempted':
+                attempted_actions.append(action)
+            elif state == 'completed':
+                applied_actions.append(action)
+
         try:
             archive_actions = [
-                action for action in before['recommended_actions']
+                action for action in before['auto_applicable_actions']
                 if action in ARCHIVE_ACTIONS
             ]
             if archive_actions:
@@ -579,39 +757,78 @@ class InternetArchiveReconciler:
                     inspection=context['archive_inspection'],
                     access_key=credentials['ia_s3_access'],
                     secret_key=credentials['ia_s3_secret'],
+                    progress=record_progress,
                 )
-                applied_actions.extend(archive_actions)
+                # Preserve compatibility with test doubles or alternate
+                # uploaders that return success without progress callbacks.
+                for action in archive_actions:
+                    if action not in attempted_actions:
+                        attempted_actions.append(action)
+                    if action not in applied_actions:
+                        applied_actions.append(action)
 
             location_actions = [
-                action for action in before['recommended_actions']
+                action for action in before['auto_applicable_actions']
                 if action in LOCATION_ACTIONS
             ]
             if location_actions:
-                upsert_location(self.thoth, context['location_input'])
-                applied_actions.extend(location_actions)
+                location_result = upsert_location(
+                    self.thoth,
+                    context['location_input'],
+                    progress=record_progress,
+                )
+                # A successful alternate implementation without progress
+                # callbacks still indicates a mutation when it returns an ID.
+                if location_result is not None:
+                    for action in location_actions:
+                        if action not in attempted_actions:
+                            attempted_actions.append(action)
+                        if action not in applied_actions:
+                            applied_actions.append(action)
         except InternetArchiveVerificationError as error:
+            uncertain_actions = [
+                action for action in applied_actions
+                if action in ARCHIVE_ACTIONS
+            ]
+            applied_actions = [
+                action for action in applied_actions
+                if action not in uncertain_actions
+            ]
             return self._failed_apply_result(
-                before, applied_actions, 'verification_failed', str(error))
+                before, attempted_actions, applied_actions,
+                uncertain_actions, 'verification_failed', str(error))
         except DisseminationError as error:
             return self._failed_apply_result(
-                before, applied_actions, 'archive_mutation_failed', str(error))
+                before, attempted_actions, applied_actions,
+                uncertain_actions, 'archive_mutation_failed', str(error))
         except Exception as error:
+            selected_location_actions = [
+                action for action in before['auto_applicable_actions']
+                if action in LOCATION_ACTIONS
+            ]
+            if selected_location_actions and not any(
+                    action in attempted_actions
+                    for action in selected_location_actions):
+                attempted_actions.extend(selected_location_actions)
             issue = (
                 'thoth_location_mutation_failed'
                 if any(
                     action in LOCATION_ACTIONS
-                    for action in before['recommended_actions'])
-                and all(action in applied_actions for action in archive_actions)
+                    for action in attempted_actions)
                 else 'archive_mutation_failed'
             )
             return self._failed_apply_result(
-                before, applied_actions, issue, str(error))
+                before, attempted_actions, applied_actions,
+                uncertain_actions, issue, str(error))
 
         verification_base = deepcopy(before)
         verification_base.update({
             'issues': [],
             'recommended_actions': [],
+            'auto_applicable_actions': [],
+            'attempted_actions': [],
             'applied_actions': [],
+            'uncertain_actions': [],
             'internet_archive': None,
             'thoth_location': None,
             'error': None,
@@ -627,8 +844,12 @@ class InternetArchiveReconciler:
             verification_context,
         )
         final['before'] = before
+        final['attempted_actions'] = _ordered_unique(
+            attempted_actions, ACTION_ORDER)
         final['applied_actions'] = _ordered_unique(
             applied_actions, ACTION_ORDER)
+        final['uncertain_actions'] = _ordered_unique(
+            uncertain_actions, ACTION_ORDER)
         if final['status'] != 'current':
             final['issues'] = _ordered_unique(
                 final['issues'] + ['verification_failed'], ISSUE_ORDER)
@@ -641,14 +862,20 @@ class InternetArchiveReconciler:
         return final
 
     @staticmethod
-    def _failed_apply_result(before, applied_actions, issue, error):
+    def _failed_apply_result(
+            before, attempted_actions, applied_actions, uncertain_actions,
+            issue, error):
         result = deepcopy(before)
         result['before'] = before
         result['issues'] = _ordered_unique(
             result['issues'] + [issue], ISSUE_ORDER)
         result['status'] = 'error'
+        result['attempted_actions'] = _ordered_unique(
+            attempted_actions, ACTION_ORDER)
         result['applied_actions'] = _ordered_unique(
             applied_actions, ACTION_ORDER)
+        result['uncertain_actions'] = _ordered_unique(
+            uncertain_actions, ACTION_ORDER)
         result['error'] = error
         return result
 
@@ -658,9 +885,16 @@ class InternetArchiveReconciler:
             logging.info('Inspecting Internet Archive state for %s', work_id)
             try:
                 result = self.reconcile_one(
-                    work_id, apply=apply, credentials=credentials)
+                    work_id,
+                    apply=apply,
+                    credentials=credentials,
+                    selection=self.selection_by_work_id.get(work_id),
+                )
             except Exception as error:
                 result = _base_result(work_id)
+                selection = self.selection_by_work_id.get(work_id)
+                if selection is not None:
+                    result['selection'] = selection
                 result.update({
                     'status': 'error',
                     'issues': ['thoth_work_lookup_failed'],
@@ -690,16 +924,15 @@ def summarise(results):
         'repairable': sum(
             result['eligible']
             and result['status'] not in ambiguous_statuses | failed_statuses
-            and bool(
-                set(result['recommended_actions'])
-                & (ARCHIVE_ACTIONS | LOCATION_ACTIONS)
-            )
+            and bool(result['auto_applicable_actions'])
             for result in results
         ),
         'ambiguous': sum(
-            result['status'] in ambiguous_statuses for result in results),
+            result['eligible'] and result['status'] in ambiguous_statuses
+            for result in results),
         'failed': sum(
-            result['status'] in failed_statuses for result in results),
+            not result['eligible'] or result['status'] in failed_statuses
+            for result in results),
         'repaired': sum(
             result['status'] == 'current' and bool(result['applied_actions'])
             for result in results

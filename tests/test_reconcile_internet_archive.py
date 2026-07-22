@@ -21,6 +21,7 @@ from reconcile_internet_archive import (
     validate_apply_credentials,
 )
 from uploader import Publication
+from version import __version__
 
 
 WORK_ID = '11111111-2222-3333-4444-555555555555'
@@ -99,7 +100,7 @@ class FakeItem:
 def desired_metadata(metadata=None):
     uploader = IAUploader.__new__(IAUploader)
     uploader.work_id = WORK_ID
-    uploader.version = '1.3.2'
+    uploader.version = __version__
     uploader.metadata = metadata or work_metadata()
     return uploader.parse_metadata()
 
@@ -136,7 +137,8 @@ class InspectionHarness:
         thoth = MagicMock()
         thoth.work_by_id.return_value = json.dumps(metadata or work_metadata())
         reconciler = InternetArchiveReconciler(thoth=thoth)
-        item = item if item is not None else current_item(metadata)
+        item = item if item is not None else current_item(
+            metadata=desired_metadata(metadata))
         locations = [current_location()] if locations is None else locations
         json_side_effect = json_error
         pdf_side_effect = pdf_error
@@ -198,6 +200,18 @@ class TestSelectionAndCLI(unittest.TestCase):
                 PUBLISHER_ID, [WORK_ID_2, WORK_ID_3], 100, 0)
 
         self.assertEqual(selected, [WORK_ID, WORK_ID_2, WORK_ID_3])
+        self.assertEqual(reconciler.selection_by_work_id[WORK_ID_2], {
+            'explicit': True,
+            'publisher': True,
+        })
+        self.assertEqual(reconciler.selection_by_work_id[WORK_ID], {
+            'explicit': False,
+            'publisher': True,
+        })
+        self.assertEqual(reconciler.selection_by_work_id[WORK_ID_3], {
+            'explicit': True,
+            'publisher': False,
+        })
 
     def test_invalid_uuid_is_rejected(self):
         with redirect_stderr(io.StringIO()):
@@ -227,8 +241,27 @@ class TestSelectionAndCLI(unittest.TestCase):
             metadata=work_metadata(workStatus='DRAFT'))
 
         self.assertFalse(result['eligible'])
-        self.assertEqual(result['status'], 'ineligible')
         self.assertIn('ineligible_status', result['issues'])
+        self.assertTrue(result['internet_archive']['exists'])
+
+    def test_explicit_inactive_work_with_pdf_is_remotely_inspected(self):
+        result, _, get_item, get_locations = InspectionHarness().inspect(
+            metadata=work_metadata(workStatus='DRAFT'))
+
+        self.assertFalse(result['eligible'])
+        self.assertTrue(result['selection']['explicit'])
+        self.assertIn('ineligible_status', result['issues'])
+        get_item.assert_called_once_with(WORK_ID)
+        get_locations.assert_called_once()
+
+    def test_explicit_unsupported_work_with_pdf_is_remotely_inspected(self):
+        result, _, get_item, get_locations = InspectionHarness().inspect(
+            metadata=work_metadata(workType='CHAPTER'))
+
+        self.assertFalse(result['eligible'])
+        self.assertIn('unsupported_work_type', result['issues'])
+        get_item.assert_called_once_with(WORK_ID)
+        get_locations.assert_called_once()
 
     def test_publisher_selection_excludes_works_without_pdf(self):
         thoth = MagicMock()
@@ -272,7 +305,14 @@ class TestDryRunInspection(unittest.TestCase):
             item=FakeItem(exists=False), locations=[])
 
         self.assertEqual(result['status'], 'item_missing')
-        self.assertIn('create_archive_item', result['recommended_actions'])
+        self.assertEqual(result['recommended_actions'], [
+            'create_archive_item',
+            'upload_pdf_original',
+            'upload_json_original',
+            'create_thoth_location',
+        ])
+        self.assertEqual(
+            result['auto_applicable_actions'], result['recommended_actions'])
 
     def test_missing_pdf_original(self):
         result, _, _, _ = self.harness.inspect(item=current_item(files=[
@@ -343,8 +383,29 @@ class TestDryRunInspection(unittest.TestCase):
 
         self.assertEqual(result['status'], 'identifier_collision')
         self.assertEqual(
-            result['recommended_actions'], ['resolve_identifier_collision'])
+            result['recommended_actions'], [
+                'resolve_identifier_collision', 'create_thoth_location'])
+        self.assertEqual(result['auto_applicable_actions'], [])
         self.assertIn('location_missing', result['issues'])
+
+    def test_ineligible_work_retains_remote_issues_and_has_no_auto_actions(self):
+        result, _, _, _ = self.harness.inspect(
+            metadata=work_metadata(workStatus='DRAFT'),
+            item=FakeItem(exists=False),
+            locations=[],
+        )
+
+        self.assertIn('ineligible_status', result['issues'])
+        self.assertIn('item_missing', result['issues'])
+        self.assertIn('location_missing', result['issues'])
+        self.assertEqual(result['recommended_actions'], [
+            'fix_work_eligibility',
+            'create_archive_item',
+            'upload_pdf_original',
+            'upload_json_original',
+            'create_thoth_location',
+        ])
+        self.assertEqual(result['auto_applicable_actions'], [])
 
     def test_unknown_ownership_is_collision(self):
         metadata = desired_metadata()
@@ -361,8 +422,8 @@ class TestDryRunInspection(unittest.TestCase):
 
         self.assertEqual(result['status'], 'source_unavailable')
         self.assertEqual(result['issues'], ['pdf_source_unavailable'])
-        get_item.assert_not_called()
-        get_locations.assert_not_called()
+        get_item.assert_called_once_with(WORK_ID)
+        get_locations.assert_called_once()
 
     def test_json_export_unavailable(self):
         result, _, _, _ = self.harness.inspect(
@@ -393,6 +454,27 @@ class TestDryRunInspection(unittest.TestCase):
         self.assertEqual(
             result['recommended_actions'], ['resolve_duplicate_locations'])
 
+    def test_duplicate_locations_retain_independent_archive_recommendation(self):
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(files=[
+                original_file(PDF_NAME, b'old'),
+                original_file(JSON_NAME, JSON_BYTES),
+            ]),
+            locations=[
+                current_location(locationId='two'),
+                current_location(locationId='one'),
+            ],
+        )
+
+        self.assertEqual(result['recommended_actions'], [
+            'upload_pdf_original', 'resolve_duplicate_locations'])
+        self.assertEqual(result['auto_applicable_actions'], [])
+        self.assertEqual(
+            [location['location_id']
+             for location in result['thoth_location']['locations']],
+            ['one', 'two'],
+        )
+
     def test_archive_current_but_location_checksum_stale(self):
         result, _, _, _ = self.harness.inspect(locations=[
             current_location(checksum='old')])
@@ -419,6 +501,35 @@ class TestDryRunInspection(unittest.TestCase):
         self.assertEqual(unrelated['original_files'], ['unrelated.txt'])
         self.assertIn('unrelated-field', unrelated['metadata_fields'])
         self.assertEqual(unrelated['collections'], ['another-collection'])
+
+    def test_unrelated_collection_reporting_is_sorted(self):
+        metadata = desired_metadata()
+        metadata['collection'] = [
+            'zeta', IAUploader.THOTH_COLLECTION, 'alpha']
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(
+            result['internet_archive']['unrelated']['collections'],
+            ['alpha', 'zeta'],
+        )
+
+    def test_recommended_and_auto_actions_use_stable_ordering(self):
+        metadata = desired_metadata()
+        metadata['title'] = 'old'
+        result, _, _, _ = self.harness.inspect(
+            item=FakeItem(exists=True, metadata=metadata, files=[]),
+            locations=[],
+        )
+
+        expected = [
+            'upload_pdf_original',
+            'upload_json_original',
+            'update_archive_metadata',
+            'create_thoth_location',
+        ]
+        self.assertEqual(result['recommended_actions'], expected)
+        self.assertEqual(result['auto_applicable_actions'], expected)
 
     def test_dry_run_makes_zero_mutations(self):
         item = current_item(files=[original_file(PDF_NAME, PDF_BYTES)])
@@ -465,6 +576,17 @@ def repairable_result(actions, status='item_missing'):
         'status': status,
         'issues': [status],
         'recommended_actions': list(actions),
+        'auto_applicable_actions': [
+            action for action in actions
+            if action in {
+                'create_archive_item',
+                'upload_pdf_original',
+                'upload_json_original',
+                'update_archive_metadata',
+                'create_thoth_location',
+                'update_thoth_location',
+            }
+        ],
         'error': None,
     })
     return result
@@ -509,6 +631,43 @@ class TestApplyMode(unittest.TestCase):
                 WORK_ID, apply=True, credentials=CREDENTIALS)
         return result, inspect_remote, upsert
 
+    def _real_archive_apply(self, item, upload_side_effect=None, metadata=None):
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(metadata or work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        publication = Publication(
+            'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+            'https://source.example/book.pdf')
+        response = MagicMock(status_code=200, text='')
+        response.json.return_value = {'success': True}
+        if upload_side_effect is None:
+            def upload_side_effect(**kwargs):
+                for name, file_object in kwargs['files'].items():
+                    item.files = [
+                        entry for entry in item.files
+                        if entry.get('name') != name
+                    ]
+                    item.files.append(original_file(name, file_object.read()))
+                if kwargs.get('metadata') is not None:
+                    item.metadata = dict(kwargs['metadata'])
+                item.exists = True
+                return [response]
+
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                return_value=JSON_BYTES), patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=publication), patch(
+                    'reconcile_internet_archive.get_item',
+                    return_value=item), patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=[current_location()]), patch(
+                    'iauploader.upload', side_effect=upload_side_effect
+                ) as upload:
+            result = reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+        return result, upload
+
     def test_apply_without_credentials_fails_before_mutation(self):
         with self.assertRaises(ReconciliationConfigurationError):
             validate_apply_credentials({})
@@ -551,8 +710,10 @@ class TestApplyMode(unittest.TestCase):
         result, _, upsert = self._apply(before, context)
 
         context['uploader'].apply_archive_repairs.assert_not_called()
-        upsert.assert_called_once_with(
-            self.reconciler.thoth, context['location_input'])
+        upsert.assert_called_once()
+        self.assertEqual(upsert.call_args.args, (
+            self.reconciler.thoth, context['location_input']))
+        self.assertIn('progress', upsert.call_args.kwargs)
         self.assertEqual(result['applied_actions'], ['create_thoth_location'])
 
     def test_stale_location_does_not_mutate_current_archive(self):
@@ -672,6 +833,112 @@ class TestApplyMode(unittest.TestCase):
         self.assertEqual(result['status'], 'error')
         self.assertIn('archive_mutation_failed', result['issues'])
 
+    def test_ineligible_explicit_work_is_never_mutated(self):
+        metadata = work_metadata(workStatus='DRAFT')
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(metadata)
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                return_value=JSON_BYTES), patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=Publication(
+                        'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+                        'https://source.example/book.pdf')), \
+                patch('reconcile_internet_archive.get_item',
+                      return_value=FakeItem(exists=False)), patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=[]), patch.object(
+                    IAUploader, 'apply_archive_repairs') as archive_repair, \
+                patch('reconcile_internet_archive.upsert_location') as upsert:
+            result = reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertFalse(result['eligible'])
+        self.assertEqual(result['attempted_actions'], [])
+        archive_repair.assert_not_called()
+        upsert.assert_not_called()
+
+    def test_real_orchestration_records_successful_archive_repair(self):
+        item = current_item(files=[
+            original_file(PDF_NAME, b'old'),
+            original_file(JSON_NAME, JSON_BYTES),
+        ])
+
+        result, upload = self._real_archive_apply(item)
+
+        self.assertEqual(result['status'], 'current')
+        self.assertEqual(result['attempted_actions'], ['upload_pdf_original'])
+        self.assertEqual(result['applied_actions'], ['upload_pdf_original'])
+        self.assertEqual(result['uncertain_actions'], [])
+        upload.assert_called_once()
+
+    def test_real_orchestration_timeout_records_uncertain_activity(self):
+        item = current_item(files=[
+            original_file(PDF_NAME, b'old'),
+            original_file(JSON_NAME, JSON_BYTES),
+        ])
+        response = MagicMock(status_code=200, text='')
+        response.json.return_value = {'success': True}
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 1):
+            result, _ = self._real_archive_apply(
+                item, upload_side_effect=lambda **kwargs: [response])
+
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['attempted_actions'], ['upload_pdf_original'])
+        self.assertEqual(result['applied_actions'], [])
+        self.assertEqual(result['uncertain_actions'], ['upload_pdf_original'])
+        self.assertIn('verification_failed', result['issues'])
+
+    def test_real_orchestration_partial_archive_failure_is_accurate(self):
+        metadata = desired_metadata()
+        metadata['title'] = 'old'
+        item = current_item(metadata=metadata, files=[
+            original_file(PDF_NAME, b'old'),
+            original_file(JSON_NAME, JSON_BYTES),
+        ])
+        item.modify_metadata.side_effect = RuntimeError('metadata failed')
+
+        result, _ = self._real_archive_apply(item)
+
+        self.assertEqual(result['attempted_actions'], [
+            'upload_pdf_original', 'update_archive_metadata'])
+        self.assertEqual(result['applied_actions'], ['upload_pdf_original'])
+        self.assertIn('archive_mutation_failed', result['issues'])
+
+    def test_real_orchestration_second_apply_is_mutation_free(self):
+        item = current_item(files=[
+            original_file(PDF_NAME, b'old'),
+            original_file(JSON_NAME, JSON_BYTES),
+        ])
+
+        first, upload = self._real_archive_apply(item)
+        second, second_upload = self._real_archive_apply(item)
+
+        self.assertEqual(first['applied_actions'], ['upload_pdf_original'])
+        self.assertEqual(second['status'], 'current')
+        self.assertEqual(second['attempted_actions'], [])
+        upload.assert_called_once()
+        second_upload.assert_not_called()
+
+    def test_location_failure_records_attempt_without_success(self):
+        before = repairable_result(
+            ['create_thoth_location'], status='location_missing')
+        context = apply_context()
+        with patch.object(
+                self.reconciler, 'inspect_work',
+                return_value=(before, context)), patch(
+                    'reconcile_internet_archive.upsert_location',
+                    side_effect=RuntimeError('location failed')):
+            result = self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(result['attempted_actions'], [
+            'create_thoth_location'])
+        self.assertEqual(result['applied_actions'], [])
+        self.assertIn('thoth_location_mutation_failed', result['issues'])
+
 
 class TestOutput(unittest.TestCase):
     def test_json_output_is_deterministic(self):
@@ -716,6 +983,19 @@ class TestOutput(unittest.TestCase):
                 'current': 2,
             },
         })
+
+    def test_ineligible_remote_discrepancy_is_failed_not_repairable(self):
+        result = repairable_result(
+            ['create_archive_item'], status='item_missing')
+        result['eligible'] = False
+        result['issues'] = ['ineligible_status', 'item_missing']
+        result['auto_applicable_actions'] = []
+
+        summary = summarise([result])
+
+        self.assertEqual(summary['failed'], 1)
+        self.assertEqual(summary['repairable'], 0)
+        self.assertEqual(summary['ambiguous'], 0)
 
     def test_output_redacts_credential_values(self):
         result = current_result()

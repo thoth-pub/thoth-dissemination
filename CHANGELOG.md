@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+  - Added a read-only-by-default Internet Archive reconciliation CLI with explicit and publisher selection provenance, deterministic JSON/JSONL reports, and guarded apply mode
+
+### Changed
+  - Made Internet Archive dissemination idempotently converge managed originals and metadata, verify their final remote state in one bounded polling loop, and preserve unrelated Archive data
+  - Made Thoth location write-back converge create, update, and no-op states while preserving canonical and checksum data
+  - Report all reconciliation recommendations separately from safe automatic, attempted, applied, and uncertain actions
+  - Set the dissemination service version to the next feature release, 1.5.0
+
+### Fixed
+  - Send explicit GraphQL nulls when clearing nullable location full-text URLs
 
 ## [[1.4.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.4.1) - 2026-07-20
 ### Fixed

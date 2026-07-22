@@ -258,7 +258,7 @@ class IAUploader(Uploader):
 
     def apply_archive_repairs(
             self, item, desired, inspection=None, access_key=None,
-            secret_key=None):
+            secret_key=None, progress=None):
         """Apply only the file and metadata differences found by inspection."""
         access_key = access_key or self.get_variable_from_env(
             'ia_s3_access', 'Internet Archive')
@@ -268,27 +268,47 @@ class IAUploader(Uploader):
         if inspection['ownership'] == 'collision':
             self._raise_item_collision(inspection['ownership_reason'])
 
-        files_to_upload = {
-            name: BytesIO(desired.file_bytes[name])
-            for name, state in inspection['files'].items()
-            if not state['current']
-        }
-        if files_to_upload:
+        files_to_upload = [
+            name
+            for name in (
+                '{}.pdf'.format(desired.identifier),
+                '{}.json'.format(desired.identifier),
+            )
+            if not inspection['files'][name]['current']
+        ]
+        creating_item = not inspection['exists']
+        for index, name in enumerate(files_to_upload):
+            action = (
+                'upload_pdf_original' if name.endswith('.pdf')
+                else 'upload_json_original'
+            )
+            if progress is not None and creating_item and index == 0:
+                progress('create_archive_item', 'attempted')
+            if progress is not None:
+                progress(action, 'attempted')
             self._upload_files(
                 desired.identifier,
-                files_to_upload,
-                desired.metadata if not inspection['exists'] else None,
+                {name: BytesIO(desired.file_bytes[name])},
+                desired.metadata if creating_item and index == 0 else None,
                 access_key,
                 secret_key,
             )
+            if progress is not None and creating_item and index == 0:
+                progress('create_archive_item', 'completed')
+            if progress is not None:
+                progress(action, 'completed')
 
         if inspection['exists'] and inspection['metadata_patch']:
+            if progress is not None:
+                progress('update_archive_metadata', 'attempted')
             self._modify_metadata(
                 item,
                 inspection['metadata_patch'],
                 access_key,
                 secret_key,
             )
+            if progress is not None:
+                progress('update_archive_metadata', 'completed')
 
         return self._verify_final_state(
             item,

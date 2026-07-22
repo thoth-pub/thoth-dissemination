@@ -183,13 +183,17 @@ class TestIAUploader(unittest.TestCase):
     def test_new_item_creation_uploads_both_files_with_metadata(self):
         locations = self.uploader.upload_to_platform()
 
-        self.mock_upload.assert_called_once()
-        call = self.mock_upload.call_args.kwargs
-        self.assertEqual(set(call['files']), {PDF_NAME, JSON_NAME})
-        self.assertEqual(call['metadata'], self._desired_metadata())
-        self.assertTrue(call['checksum'])
-        self.assertTrue(call['verify'])
-        self.assertTrue(call['queue_derive'])
+        self.assertEqual(self.mock_upload.call_count, 2)
+        pdf_call, json_call = [
+            call.kwargs for call in self.mock_upload.call_args_list
+        ]
+        self.assertEqual(set(pdf_call['files']), {PDF_NAME})
+        self.assertEqual(pdf_call['metadata'], self._desired_metadata())
+        self.assertEqual(set(json_call['files']), {JSON_NAME})
+        self.assertIsNone(json_call['metadata'])
+        self.assertTrue(pdf_call['checksum'])
+        self.assertTrue(pdf_call['verify'])
+        self.assertTrue(pdf_call['queue_derive'])
         self.item.modify_metadata.assert_not_called()
         self._assert_location(locations[0])
 
@@ -470,7 +474,7 @@ class TestIAUploader(unittest.TestCase):
 
         locations = self.uploader.upload_to_platform()
 
-        self.mock_upload.assert_called_once()
+        self.assertEqual(self.mock_upload.call_count, 2)
         self.item.modify_metadata.assert_not_called()
         self.assertEqual(self.item.refresh.call_count, 2)
         self.mock_sleep.assert_called_once()
@@ -524,7 +528,7 @@ class TestIAUploader(unittest.TestCase):
 
         locations = self.uploader.upload_to_platform()
 
-        self.mock_upload.assert_called_once()
+        self.assertEqual(self.mock_upload.call_count, 2)
         self.item.modify_metadata.assert_not_called()
         self.assertEqual(self.item.refresh.call_count, 3)
         self.assertEqual(self.mock_sleep.call_count, 2)
