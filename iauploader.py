@@ -5,6 +5,7 @@ Retrieve and disseminate files and metadata to Internet Archive
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from io import BytesIO
 from time import sleep
 
@@ -13,10 +14,25 @@ from requests import exceptions as req_except
 
 from errors import (
     DisseminationError,
+    InternetArchiveDesiredStateError,
     InternetArchiveIdentifierCollisionError,
     InternetArchiveVerificationError,
 )
 from uploader import Uploader, Location
+
+
+@dataclass(frozen=True)
+class IADesiredState:
+    """Complete Thoth-managed state expected for one Archive item."""
+
+    identifier: str
+    publication_id: str
+    source_url: str
+    file_bytes: dict
+    expected_md5s: dict
+    metadata: dict
+    absent_metadata_fields: frozenset
+    location: Location
 
 
 class IAUploader(Uploader):
@@ -69,102 +85,265 @@ class IAUploader(Uploader):
         if item_exists:
             self._assert_item_owned_by_thoth(item)
 
-        metadata_bytes = self.get_formatted_metadata('json::thoth')
-        publication = self.get_publication_details('PDF')
-        pdf_bytes = publication.bytes
-        ia_metadata = self.parse_metadata()
-        absent_metadata_fields = (
-            self.MANAGED_METADATA_FIELDS - ia_metadata.keys())
+        desired = self.build_desired_state()
+        inspection = self.inspect_item(item, desired)
+        verified_md5s = self.apply_archive_repairs(
+            item,
+            desired,
+            inspection=inspection,
+            access_key=access_key,
+            secret_key=secret_key,
+        )
 
+        logging.info(
+            'Successfully verified Internet Archive item at {}'.format(
+                desired.location.landing_page))
+
+        location = desired.location
+        return [Location(
+            location.publication_id,
+            location.location_platform,
+            location.landing_page,
+            location.full_text_url,
+            verified_md5s['{}.pdf'.format(identifier)],
+            location.checksum_algorithm,
+        )]
+
+    def build_desired_state(self):
+        """Construct Archive and Thoth location state without mutating either."""
+        try:
+            metadata_bytes = self.get_formatted_metadata('json::thoth')
+        except Exception as error:
+            raise InternetArchiveDesiredStateError(
+                'json',
+                'JSON export unavailable for {}: {}'.format(
+                    self.work_id, error),
+            ) from error
+
+        try:
+            publication = self.get_publication_details('PDF')
+        except Exception as error:
+            raise InternetArchiveDesiredStateError(
+                'pdf',
+                'PDF source unavailable for {}: {}'.format(
+                    self.work_id, error),
+            ) from error
+
+        if not isinstance(metadata_bytes, bytes):
+            raise InternetArchiveDesiredStateError(
+                'json',
+                'JSON export unavailable for {}: response was not bytes'.format(
+                    self.work_id),
+            )
+        if not isinstance(publication.bytes, bytes) or not publication.bytes:
+            raise InternetArchiveDesiredStateError(
+                'pdf',
+                'PDF source unavailable for {}: response was empty or not bytes'
+                .format(self.work_id),
+            )
+
+        try:
+            ia_metadata = self.parse_metadata()
+            missing_metadata = [
+                field for field in ('title', 'publisher', 'mediatype',
+                                    'collection', 'thoth-work-id')
+                if field not in ia_metadata
+            ]
+            if missing_metadata:
+                raise ValueError(
+                    'missing required fields {}'.format(
+                        ', '.join(missing_metadata)))
+        except Exception as error:
+            raise InternetArchiveDesiredStateError(
+                'metadata',
+                'Malformed Thoth metadata for {}: {}'.format(
+                    self.work_id, error),
+            ) from error
+
+        identifier = self.work_id
         file_bytes = {
-            '{}.pdf'.format(identifier): pdf_bytes,
+            '{}.pdf'.format(identifier): publication.bytes,
             '{}.json'.format(identifier): metadata_bytes,
         }
         expected_md5s = {
             name: hashlib.md5(contents).hexdigest()
             for name, contents in file_bytes.items()
         }
-        files_to_upload = self._files_requiring_upload(
-            item, file_bytes, expected_md5s)
-
-        metadata_patch = {}
-        if item_exists:
-            metadata_patch = self._managed_metadata_patch(
-                item.metadata, ia_metadata)
-
-        if files_to_upload:
-            self._upload_files(
-                identifier,
-                files_to_upload,
-                ia_metadata if not item_exists else None,
-                access_key,
-                secret_key,
-            )
-
-        if item_exists and metadata_patch:
-            self._modify_metadata(
-                item, metadata_patch, access_key, secret_key)
-
-        verified_md5s = self._verify_final_state(
-            item,
-            expected_md5s,
-            ia_metadata,
-            absent_metadata_fields,
-        )
+        pdf_name = '{}.pdf'.format(identifier)
         landing_page = 'https://archive.org/details/{}'.format(identifier)
-        full_text_url = 'https://archive.org/download/{}/{}.pdf'.format(
-            identifier, identifier)
-
-        logging.info(
-            'Successfully verified Internet Archive item at {}'.format(
-                landing_page))
-
-        return [Location(
+        full_text_url = 'https://archive.org/download/{}/{}'.format(
+            identifier, pdf_name)
+        location = Location(
             publication.id,
             'INTERNET_ARCHIVE',
             landing_page,
             full_text_url,
-            verified_md5s['{}.pdf'.format(identifier)],
+            expected_md5s[pdf_name],
             'MD5',
-        )]
+        )
+        return IADesiredState(
+            identifier=identifier,
+            publication_id=publication.id,
+            source_url=publication.source_url,
+            file_bytes=file_bytes,
+            expected_md5s=expected_md5s,
+            metadata=ia_metadata,
+            absent_metadata_fields=frozenset(
+                self.MANAGED_METADATA_FIELDS - ia_metadata.keys()),
+            location=location,
+        )
 
-    def _assert_item_owned_by_thoth(self, item):
-        """Raise when an existing identifier cannot safely be linked to Thoth."""
+    def classify_item_ownership(self, item):
+        """Return an ownership classification shared by inspect and apply paths."""
+        if not item.exists:
+            return {'status': 'missing', 'reason': None}
+
         marker_values = self._as_metadata_list(
             item.metadata.get('thoth-work-id'))
         if marker_values:
             if all(value == self.work_id for value in marker_values):
-                return
-            raise InternetArchiveIdentifierCollisionError(
-                'Internet Archive identifier collision for {}: existing '
-                'thoth-work-id metadata is {!r}; refusing to modify the item'
-                .format(self.work_id, marker_values))
+                return {'status': 'owned', 'reason': None}
+            return {
+                'status': 'collision',
+                'reason': (
+                    'existing thoth-work-id metadata is {!r}'.format(
+                        marker_values)
+                ),
+            }
 
         collections = self._as_metadata_list(
             item.metadata.get('collection'))
         if (item.identifier == self.work_id
                 and self.THOTH_COLLECTION in collections):
+            return {
+                'status': 'legacy',
+                'reason': 'legacy Thoth collection item has no ownership marker',
+            }
+
+        return {
+            'status': 'collision',
+            'reason': (
+                'item has no matching thoth-work-id metadata and is not an '
+                'identifiable legacy member of the {} collection'.format(
+                    self.THOTH_COLLECTION)
+            ),
+        }
+
+    def inspect_item(self, item, desired):
+        """Compare one Archive item with desired state without mutating it."""
+        ownership = self.classify_item_ownership(item)
+        originals = self._original_files(item.files)
+        files = self.compare_original_files(
+            originals, desired.expected_md5s)
+        metadata_patch = {}
+        metadata_problems = []
+        if item.exists:
+            metadata_patch = self._managed_metadata_patch(
+                item.metadata, desired.metadata)
+            metadata_problems = self._metadata_verification_problems(
+                item.metadata,
+                desired.metadata,
+                desired.absent_metadata_fields,
+            )
+        return {
+            'exists': bool(item.exists),
+            'ownership': ownership['status'],
+            'ownership_reason': ownership['reason'],
+            'legacy': ownership['status'] == 'legacy',
+            'files': files,
+            'metadata_current': bool(item.exists) and not metadata_problems,
+            'metadata_problems': metadata_problems,
+            'metadata_patch': metadata_patch,
+        }
+
+    def apply_archive_repairs(
+            self, item, desired, inspection=None, access_key=None,
+            secret_key=None):
+        """Apply only the file and metadata differences found by inspection."""
+        access_key = access_key or self.get_variable_from_env(
+            'ia_s3_access', 'Internet Archive')
+        secret_key = secret_key or self.get_variable_from_env(
+            'ia_s3_secret', 'Internet Archive')
+        inspection = inspection or self.inspect_item(item, desired)
+        if inspection['ownership'] == 'collision':
+            self._raise_item_collision(inspection['ownership_reason'])
+
+        files_to_upload = {
+            name: BytesIO(desired.file_bytes[name])
+            for name, state in inspection['files'].items()
+            if not state['current']
+        }
+        if files_to_upload:
+            self._upload_files(
+                desired.identifier,
+                files_to_upload,
+                desired.metadata if not inspection['exists'] else None,
+                access_key,
+                secret_key,
+            )
+
+        if inspection['exists'] and inspection['metadata_patch']:
+            self._modify_metadata(
+                item,
+                inspection['metadata_patch'],
+                access_key,
+                secret_key,
+            )
+
+        return self._verify_final_state(
+            item,
+            desired.expected_md5s,
+            desired.metadata,
+            desired.absent_metadata_fields,
+        )
+
+    def _assert_item_owned_by_thoth(self, item):
+        """Raise when an existing identifier cannot safely be linked to Thoth."""
+        ownership = self.classify_item_ownership(item)
+        if ownership['status'] == 'owned':
+            return
+        if ownership['status'] == 'legacy':
             logging.warning(
                 'Internet Archive item %s is a legacy Thoth collection item '
                 'without thoth-work-id metadata; adding the ownership marker',
                 self.work_id)
             return
 
+        self._raise_item_collision(ownership['reason'])
+
+    def _raise_item_collision(self, reason):
         raise InternetArchiveIdentifierCollisionError(
-            'Internet Archive identifier collision for {}: the existing item '
-            'has no matching thoth-work-id metadata and is not an identifiable '
-            'legacy member of the {} collection; refusing to modify it'.format(
-                self.work_id, self.THOTH_COLLECTION))
+            'Internet Archive identifier collision for {}: {}; refusing to '
+            'modify the item'.format(self.work_id, reason))
 
     @classmethod
     def _files_requiring_upload(cls, item, file_bytes, expected_md5s):
-        originals = cls._original_files(item.files)
+        comparisons = cls.compare_original_files(
+            cls._original_files(item.files), expected_md5s)
         return {
             name: BytesIO(contents)
             for name, contents in file_bytes.items()
-            if name not in originals
-            or cls._file_value(originals[name], 'md5') != expected_md5s[name]
+            if not comparisons[name]['current']
         }
+
+    @classmethod
+    def compare_original_files(cls, originals, expected_md5s):
+        """Return deterministic managed-original comparisons by filename."""
+        comparisons = {}
+        for name in sorted(expected_md5s):
+            file_metadata = originals.get(name)
+            remote_md5 = None if file_metadata is None else cls._file_value(
+                file_metadata, 'md5')
+            comparisons[name] = {
+                'present': file_metadata is not None,
+                'remote_md5': remote_md5,
+                'expected_md5': expected_md5s[name],
+                'current': (
+                    file_metadata is not None
+                    and remote_md5 == expected_md5s[name]
+                ),
+            }
+        return comparisons
 
     @staticmethod
     def _file_value(file_metadata, key):

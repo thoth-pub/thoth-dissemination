@@ -80,10 +80,20 @@ class Location():
 
 class Publication():
     def __init__(self, publication_type, publication_id, publication_bytes,
-                 file_extension):
+                 file_extension, source_url=None):
         self.type = publication_type
         self.id = publication_id
         self.bytes = publication_bytes
+        self.file_ext = file_extension
+        self.source_url = source_url
+
+
+class PublicationSource():
+    def __init__(self, publication_type, publication_id, source_url,
+                 file_extension):
+        self.type = publication_type
+        self.id = publication_id
+        self.url = source_url
         self.file_ext = file_extension
 
 
@@ -243,8 +253,25 @@ class Uploader():
         Retrieve publication details for specified type from work metadata:
         Thoth ID, canonical content file (via location URL) and extension
         """
+        source = self.get_publication_source(publication_type)
+        try:
+            publication_bytes = self.get_data_from_url(
+                source.url, PUB_FORMATS[publication_type]['content_type'])
+        except DisseminationError:
+            raise
+
+        return Publication(
+            publication_type,
+            source.id,
+            publication_bytes,
+            source.file_ext,
+            source.url,
+        )
+
+    def get_publication_source(self, publication_type):
+        """Return the canonical source descriptor without downloading it."""
         publications = self.metadata.get(
-            'data').get('work').get('publications')
+            'data', {}).get('work', {}).get('publications') or []
         # There should be a maximum of one publication per type;
         # more than one would be a Thoth database error
         try:
@@ -258,22 +285,17 @@ class Uploader():
             publication_url = [n['fullTextUrl']
                                for n in publication['locations']
                                if n['canonical']][0]
-        except (IndexError, KeyError):
+        except (IndexError, KeyError, TypeError):
             raise DisseminationError(
                 'No {} Full Text URL found for Work'.format(publication_type))
-        try:
-            publication_bytes = self.get_data_from_url(
-                publication_url, PUB_FORMATS[publication_type]['content_type'])
-        except DisseminationError:
-            raise
 
         file_extension = PUB_FORMATS[publication_type]['file_extension']
 
-        return Publication(
+        return PublicationSource(
             publication_type,
             publication_id,
-            publication_bytes,
-            file_extension
+            publication_url,
+            file_extension,
         )
 
     def get_cover_url(self):

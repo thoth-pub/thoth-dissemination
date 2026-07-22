@@ -6,14 +6,13 @@ Call custom workflows to retrieve work-related files and metadata
 and upload them in the appropriate format to various platforms.
 """
 
-__version__ = '1.3.2'
-
 import argparse
 import logging
 import sys
 from dotenv import load_dotenv
 from pathlib import Path
 from errors import DisseminationError
+from version import __version__
 from iauploader import IAUploader
 from oapensworduploader import OAPENSWORDUploader
 from souploader import SOUploader

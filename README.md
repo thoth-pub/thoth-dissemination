@@ -36,3 +36,16 @@ docker run --rm --env-file config.env openbookpublishers/thoth-dissemination:lat
 `--platform` = Destination distribution/archiving platform (one of `InternetArchive`, `OAPEN`, `ScienceOpen`, `CUL`, `Crossref`, `Figshare`, `Zenodo`, `ProjectMUSE`, `JSTOR`, `EBSCOHost`, `ProQuest`, `GooglePlay`, `BKCI`)
 
 See also `--help`.
+
+### Reconcile Internet Archive state
+
+Inspect one or more works without write credentials or remote mutations:
+
+```sh
+python3 reconcile_internet_archive.py --work-id ${work_id}
+python3 reconcile_internet_archive.py --publisher-id ${publisher_id} --limit 100
+```
+
+Reports are deterministic JSON by default. Use `--format jsonl`, `--output
+<path>`, or `--apply` to select JSONL output, write an artifact, or apply safe
+repairs. Apply mode requires `ia_s3_access`, `ia_s3_secret`, and `THOTH_PAT`.

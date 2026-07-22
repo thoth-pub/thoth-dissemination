@@ -1,0 +1,753 @@
+import hashlib
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stderr
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from errors import DisseminationError, InternetArchiveVerificationError
+from iauploader import IAUploader
+from reconcile_internet_archive import (
+    InternetArchiveReconciler,
+    ReconciliationConfigurationError,
+    _base_result,
+    main,
+    parse_arguments,
+    render_report,
+    summarise,
+    validate_apply_credentials,
+)
+from uploader import Publication
+
+
+WORK_ID = '11111111-2222-3333-4444-555555555555'
+WORK_ID_2 = '22222222-3333-4444-5555-666666666666'
+WORK_ID_3 = '33333333-4444-5555-6666-777777777777'
+PUBLISHER_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+PUBLICATION_ID = '99999999-8888-7777-6666-555555555555'
+PDF_BYTES = b'current PDF bytes'
+JSON_BYTES = b'{"current":"metadata"}'
+PDF_MD5 = hashlib.md5(PDF_BYTES).hexdigest()
+PDF_NAME = '{}.pdf'.format(WORK_ID)
+JSON_NAME = '{}.json'.format(WORK_ID)
+LANDING_PAGE = 'https://archive.org/details/{}'.format(WORK_ID)
+FULL_TEXT_URL = 'https://archive.org/download/{}/{}'.format(
+    WORK_ID, PDF_NAME)
+
+
+def work_metadata(**overrides):
+    work = {
+        'workId': WORK_ID,
+        'workType': 'MONOGRAPH',
+        'workStatus': 'ACTIVE',
+        'fullTitle': 'A Test Book',
+        'title': 'A Test Book',
+        'publicationDate': '2026-01-02',
+        'longAbstract': 'A long description',
+        'pageCount': 250,
+        'lccn': '2026000001',
+        'license': 'https://creativecommons.org/licenses/by/4.0/',
+        'oclc': '12345',
+        'doi': 'https://doi.org/10.0000/test',
+        'contributions': [
+            {'fullName': 'First Author', 'mainContribution': True},
+        ],
+        'publications': [{
+            'publicationType': 'PDF',
+            'publicationId': PUBLICATION_ID,
+            'isbn': '978-1-234-56789-0',
+            'locations': [{
+                'canonical': True,
+                'fullTextUrl': 'https://source.example/book.pdf',
+            }],
+        }],
+        'subjects': [{'subjectCode': 'ABC123'}],
+        'languages': [{'languageCode': 'eng'}],
+        'issues': [],
+        'imprint': {
+            'publisher': {
+                'publisherId': PUBLISHER_ID,
+                'publisherName': 'Test Publisher',
+            },
+        },
+    }
+    work.update(overrides)
+    return {'data': {'work': work}}
+
+
+def original_file(name, contents):
+    return {
+        'name': name,
+        'source': 'original',
+        'md5': hashlib.md5(contents).hexdigest(),
+    }
+
+
+class FakeItem:
+    def __init__(self, exists=True, metadata=None, files=None):
+        self.identifier = WORK_ID
+        self.exists = exists
+        self.metadata = dict(metadata or {})
+        self.files = list(files or [])
+        self.refresh = MagicMock()
+        self.modify_metadata = MagicMock()
+
+
+def desired_metadata(metadata=None):
+    uploader = IAUploader.__new__(IAUploader)
+    uploader.work_id = WORK_ID
+    uploader.version = '1.3.2'
+    uploader.metadata = metadata or work_metadata()
+    return uploader.parse_metadata()
+
+
+def current_item(metadata=None, files=None):
+    return FakeItem(
+        metadata=metadata or desired_metadata(),
+        files=files or [
+            original_file(PDF_NAME, PDF_BYTES),
+            original_file(JSON_NAME, JSON_BYTES),
+        ],
+    )
+
+
+def current_location(**overrides):
+    location = {
+        'locationId': 'location-1',
+        'publicationId': PUBLICATION_ID,
+        'locationPlatform': 'INTERNET_ARCHIVE',
+        'landingPage': LANDING_PAGE,
+        'fullTextUrl': FULL_TEXT_URL,
+        'canonical': False,
+        'checksum': PDF_MD5,
+        'checksumAlgorithm': 'MD5',
+    }
+    location.update(overrides)
+    return location
+
+
+class InspectionHarness:
+    def inspect(self, item=None, locations=None, metadata=None,
+                json_bytes=JSON_BYTES, pdf_bytes=PDF_BYTES,
+                json_error=None, pdf_error=None):
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(metadata or work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        item = item if item is not None else current_item(metadata)
+        locations = [current_location()] if locations is None else locations
+        json_side_effect = json_error
+        pdf_side_effect = pdf_error
+        publication = Publication(
+            'PDF', PUBLICATION_ID, pdf_bytes, '.pdf',
+            'https://source.example/book.pdf')
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                return_value=json_bytes, side_effect=json_side_effect), \
+                patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=publication, side_effect=pdf_side_effect), \
+                patch(
+                    'reconcile_internet_archive.get_item',
+                    return_value=item) as get_item, \
+                patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=locations) as get_locations:
+            result, context = reconciler.inspect_work(WORK_ID)
+        return result, context, get_item, get_locations
+
+
+class TestSelectionAndCLI(unittest.TestCase):
+    def test_publisher_selection_is_stable_before_limit_and_offset(self):
+        thoth = MagicMock()
+        thoth.publisher.return_value = SimpleNamespace(publisherId=PUBLISHER_ID)
+        thoth.works.return_value = [
+            SimpleNamespace(
+                workId=WORK_ID_3,
+                publications=[SimpleNamespace(publicationType='PDF')]),
+            SimpleNamespace(
+                workId=WORK_ID,
+                publications=[SimpleNamespace(publicationType='PDF')]),
+            SimpleNamespace(
+                workId=WORK_ID_2,
+                publications=[SimpleNamespace(publicationType='PDF')]),
+        ]
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+
+        selected = reconciler.publisher_work_ids(PUBLISHER_ID, 1, 1)
+
+        self.assertEqual(selected, [WORK_ID_2])
+        kwargs = thoth.works.call_args.kwargs
+        self.assertEqual(kwargs['work_statuses'], '[ACTIVE]')
+        self.assertNotIn('CHAPTER', kwargs['work_types'])
+
+    def test_repeatable_explicit_work_ids_are_parsed(self):
+        arguments = parse_arguments([
+            '--work-id', WORK_ID, '--work-id', WORK_ID_2])
+
+        self.assertEqual(arguments.work_id, [WORK_ID, WORK_ID_2])
+
+    def test_combined_selection_is_deduplicated_and_sorted(self):
+        reconciler = InternetArchiveReconciler(thoth=MagicMock())
+        with patch.object(
+                reconciler, 'publisher_work_ids',
+                return_value=[WORK_ID_2, WORK_ID]):
+            selected = reconciler.select_work_ids(
+                PUBLISHER_ID, [WORK_ID_2, WORK_ID_3], 100, 0)
+
+        self.assertEqual(selected, [WORK_ID, WORK_ID_2, WORK_ID_3])
+
+    def test_invalid_uuid_is_rejected(self):
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                parse_arguments(['--work-id', 'not-a-uuid'])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_missing_selection_criteria_is_rejected(self):
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                parse_arguments([])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_invalid_limit_is_rejected(self):
+        for value in ('0', '-1'):
+            with self.subTest(value=value), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parse_arguments(['--work-id', WORK_ID, '--limit', value])
+
+    def test_invalid_offset_is_rejected(self):
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_arguments(['--work-id', WORK_ID, '--offset', '-1'])
+
+    def test_explicit_ineligible_work_is_reported(self):
+        result, _, _, _ = InspectionHarness().inspect(
+            metadata=work_metadata(workStatus='DRAFT'))
+
+        self.assertFalse(result['eligible'])
+        self.assertEqual(result['status'], 'ineligible')
+        self.assertIn('ineligible_status', result['issues'])
+
+    def test_publisher_selection_excludes_works_without_pdf(self):
+        thoth = MagicMock()
+        thoth.publisher.return_value = object()
+        thoth.works.return_value = [
+            SimpleNamespace(workId=WORK_ID, publications=[]),
+            SimpleNamespace(
+                workId=WORK_ID_2,
+                publications=[SimpleNamespace(publicationType='EPUB')]),
+            SimpleNamespace(
+                workId=WORK_ID_3,
+                publications=[SimpleNamespace(publicationType='PDF')]),
+        ]
+
+        selected = InternetArchiveReconciler(
+            thoth=thoth).publisher_work_ids(PUBLISHER_ID, 100, 0)
+
+        self.assertEqual(selected, [WORK_ID_3])
+
+    def test_unknown_publisher_fails_initial_selection(self):
+        thoth = MagicMock()
+        thoth.publisher.side_effect = RuntimeError('not found')
+
+        with self.assertRaises(ReconciliationConfigurationError):
+            InternetArchiveReconciler(thoth=thoth).publisher_work_ids(
+                PUBLISHER_ID, 100, 0)
+
+
+class TestDryRunInspection(unittest.TestCase):
+    def setUp(self):
+        self.harness = InspectionHarness()
+
+    def test_current_work(self):
+        result, _, _, _ = self.harness.inspect()
+
+        self.assertEqual(result['status'], 'current')
+        self.assertEqual(result['issues'], [])
+
+    def test_missing_archive_item(self):
+        result, _, _, _ = self.harness.inspect(
+            item=FakeItem(exists=False), locations=[])
+
+        self.assertEqual(result['status'], 'item_missing')
+        self.assertIn('create_archive_item', result['recommended_actions'])
+
+    def test_missing_pdf_original(self):
+        result, _, _, _ = self.harness.inspect(item=current_item(files=[
+            original_file(JSON_NAME, JSON_BYTES)]))
+
+        self.assertEqual(result['status'], 'item_incomplete')
+        self.assertIn('missing_pdf_original', result['issues'])
+
+    def test_missing_json_original(self):
+        result, _, _, _ = self.harness.inspect(item=current_item(files=[
+            original_file(PDF_NAME, PDF_BYTES)]))
+
+        self.assertIn('missing_json_original', result['issues'])
+
+    def test_stale_pdf_original(self):
+        result, _, _, _ = self.harness.inspect(item=current_item(files=[
+            original_file(PDF_NAME, b'old'),
+            original_file(JSON_NAME, JSON_BYTES),
+        ]))
+
+        self.assertEqual(result['status'], 'files_stale')
+        self.assertIn('upload_pdf_original', result['recommended_actions'])
+
+    def test_stale_json_original(self):
+        result, _, _, _ = self.harness.inspect(item=current_item(files=[
+            original_file(PDF_NAME, PDF_BYTES),
+            original_file(JSON_NAME, b'old'),
+        ]))
+
+        self.assertIn('stale_json_original', result['issues'])
+
+    def test_stale_metadata(self):
+        metadata = desired_metadata()
+        metadata['title'] = 'Old title'
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(result['status'], 'metadata_stale')
+        self.assertIn('title', result['internet_archive']['metadata'][
+            'patch_fields'])
+
+    def test_multiple_archive_discrepancies_are_ordered(self):
+        metadata = desired_metadata()
+        metadata['title'] = 'Old title'
+        result, _, _, _ = self.harness.inspect(item=current_item(
+            metadata=metadata,
+            files=[original_file(PDF_NAME, PDF_BYTES)],
+        ))
+
+        self.assertEqual(result['status'], 'item_incomplete')
+        self.assertEqual(result['issues'], [
+            'missing_json_original', 'archive_metadata_stale'])
+
+    def test_accepted_legacy_item_is_reported(self):
+        metadata = desired_metadata()
+        metadata.pop('thoth-work-id')
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertTrue(result['internet_archive']['accepted_legacy_item'])
+        self.assertIn('update_archive_metadata', result['recommended_actions'])
+
+    def test_conflicting_work_marker_is_collision(self):
+        metadata = desired_metadata()
+        metadata['thoth-work-id'] = 'another-work'
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata), locations=[])
+
+        self.assertEqual(result['status'], 'identifier_collision')
+        self.assertEqual(
+            result['recommended_actions'], ['resolve_identifier_collision'])
+        self.assertIn('location_missing', result['issues'])
+
+    def test_unknown_ownership_is_collision(self):
+        metadata = desired_metadata()
+        metadata.pop('thoth-work-id')
+        metadata['collection'] = 'not-thoth'
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(result['status'], 'identifier_collision')
+
+    def test_pdf_source_unavailable(self):
+        result, _, get_item, get_locations = self.harness.inspect(
+            pdf_error=DisseminationError('download failed'))
+
+        self.assertEqual(result['status'], 'source_unavailable')
+        self.assertEqual(result['issues'], ['pdf_source_unavailable'])
+        get_item.assert_not_called()
+        get_locations.assert_not_called()
+
+    def test_json_export_unavailable(self):
+        result, _, _, _ = self.harness.inspect(
+            json_error=DisseminationError('export failed'))
+
+        self.assertEqual(result['issues'], ['json_export_unavailable'])
+
+    def test_missing_thoth_location(self):
+        result, _, _, _ = self.harness.inspect(locations=[])
+
+        self.assertEqual(result['status'], 'location_missing')
+        self.assertEqual(result['thoth_location']['count'], 0)
+
+    def test_stale_thoth_location(self):
+        result, _, _, _ = self.harness.inspect(locations=[
+            current_location(landingPage='https://archive.org/details/old')])
+
+        self.assertEqual(result['status'], 'location_stale')
+        self.assertEqual(result['thoth_location']['location_id'], 'location-1')
+
+    def test_duplicate_thoth_locations(self):
+        result, _, _, _ = self.harness.inspect(locations=[
+            current_location(locationId='one'),
+            current_location(locationId='two'),
+        ])
+
+        self.assertEqual(result['status'], 'duplicate_locations')
+        self.assertEqual(
+            result['recommended_actions'], ['resolve_duplicate_locations'])
+
+    def test_archive_current_but_location_checksum_stale(self):
+        result, _, _, _ = self.harness.inspect(locations=[
+            current_location(checksum='old')])
+
+        self.assertEqual(result['status'], 'location_stale')
+        self.assertTrue(result['internet_archive']['metadata']['current'])
+
+    def test_unrelated_archive_data_is_ignored_but_reported(self):
+        metadata = desired_metadata()
+        metadata['unrelated-field'] = 'keep'
+        metadata['collection'] = [
+            IAUploader.THOTH_COLLECTION, 'another-collection']
+        result, _, _, _ = self.harness.inspect(item=current_item(
+            metadata=metadata,
+            files=[
+                original_file(PDF_NAME, PDF_BYTES),
+                original_file(JSON_NAME, JSON_BYTES),
+                original_file('unrelated.txt', b'keep'),
+            ],
+        ))
+
+        self.assertEqual(result['status'], 'current')
+        unrelated = result['internet_archive']['unrelated']
+        self.assertEqual(unrelated['original_files'], ['unrelated.txt'])
+        self.assertIn('unrelated-field', unrelated['metadata_fields'])
+        self.assertEqual(unrelated['collections'], ['another-collection'])
+
+    def test_dry_run_makes_zero_mutations(self):
+        item = current_item(files=[original_file(PDF_NAME, PDF_BYTES)])
+        result, _, _, _ = self.harness.inspect(item=item, locations=[])
+
+        self.assertNotEqual(result['status'], 'current')
+        item.modify_metadata.assert_not_called()
+
+    def test_dry_run_does_not_require_write_credentials(self):
+        with patch.dict('reconcile_internet_archive.environ', {}, clear=True):
+            result, _, _, _ = self.harness.inspect()
+
+        self.assertEqual(result['status'], 'current')
+
+    def test_location_lookup_failure_is_distinct(self):
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                return_value=JSON_BYTES), patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=Publication(
+                        'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+                        'https://source.example/book.pdf')), patch(
+                    'reconcile_internet_archive.get_item',
+                    return_value=current_item()), patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    side_effect=RuntimeError('graphql down')):
+            result, _ = reconciler.inspect_work(WORK_ID)
+
+        self.assertIn('thoth_location_lookup_failed', result['issues'])
+        self.assertEqual(result['status'], 'error')
+
+
+def repairable_result(actions, status='item_missing'):
+    result = _base_result(WORK_ID)
+    result.update({
+        'publisher_id': PUBLISHER_ID,
+        'title': 'A Test Book',
+        'publication_id': PUBLICATION_ID,
+        'pdf_source_url': 'https://source.example/book.pdf',
+        'eligible': True,
+        'status': status,
+        'issues': [status],
+        'recommended_actions': list(actions),
+        'error': None,
+    })
+    return result
+
+
+def current_result():
+    result = repairable_result([], status='current')
+    result['issues'] = []
+    return result
+
+
+def apply_context():
+    return {
+        'uploader': MagicMock(),
+        'desired': SimpleNamespace(publication_id=PUBLICATION_ID),
+        'item': object(),
+        'archive_inspection': {},
+        'location_input': object(),
+    }
+
+
+CREDENTIALS = {
+    'ia_s3_access': 'access',
+    'ia_s3_secret': 'secret',
+    'THOTH_PAT': 'token',
+}
+
+
+class TestApplyMode(unittest.TestCase):
+    def setUp(self):
+        self.reconciler = InternetArchiveReconciler(thoth=MagicMock())
+
+    def _apply(self, before, context, final=None):
+        final = final or current_result()
+        with patch.object(
+                self.reconciler, 'inspect_work',
+                return_value=(before, context)), patch.object(
+                    self.reconciler, '_inspect_remote',
+                    return_value=final) as inspect_remote, patch(
+                    'reconcile_internet_archive.upsert_location') as upsert:
+            result = self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+        return result, inspect_remote, upsert
+
+    def test_apply_without_credentials_fails_before_mutation(self):
+        with self.assertRaises(ReconciliationConfigurationError):
+            validate_apply_credentials({})
+
+    def test_missing_item_is_created_and_reinspected(self):
+        context = apply_context()
+        before = repairable_result(['create_archive_item'])
+
+        result, inspect_remote, _ = self._apply(before, context)
+
+        context['uploader'].apply_archive_repairs.assert_called_once()
+        inspect_remote.assert_called_once()
+        self.assertEqual(result['status'], 'current')
+
+    def test_partial_item_repairs_only_requested_original(self):
+        context = apply_context()
+        before = repairable_result(
+            ['upload_json_original'], status='item_incomplete')
+
+        result, _, _ = self._apply(before, context)
+
+        self.assertEqual(result['applied_actions'], ['upload_json_original'])
+        context['uploader'].apply_archive_repairs.assert_called_once()
+
+    def test_stale_metadata_is_updated(self):
+        context = apply_context()
+        before = repairable_result(
+            ['update_archive_metadata'], status='metadata_stale')
+
+        result, _, _ = self._apply(before, context)
+
+        self.assertEqual(result['applied_actions'], [
+            'update_archive_metadata'])
+
+    def test_missing_location_does_not_mutate_current_archive(self):
+        context = apply_context()
+        before = repairable_result(
+            ['create_thoth_location'], status='location_missing')
+
+        result, _, upsert = self._apply(before, context)
+
+        context['uploader'].apply_archive_repairs.assert_not_called()
+        upsert.assert_called_once_with(
+            self.reconciler.thoth, context['location_input'])
+        self.assertEqual(result['applied_actions'], ['create_thoth_location'])
+
+    def test_stale_location_does_not_mutate_current_archive(self):
+        context = apply_context()
+        before = repairable_result(
+            ['update_thoth_location'], status='location_stale')
+
+        _, _, upsert = self._apply(before, context)
+
+        context['uploader'].apply_archive_repairs.assert_not_called()
+        upsert.assert_called_once()
+
+    def test_collision_is_not_mutated(self):
+        context = apply_context()
+        before = repairable_result(
+            ['resolve_identifier_collision'], status='identifier_collision')
+        before['issues'] = ['identifier_collision']
+
+        with patch.object(
+                self.reconciler, 'inspect_work',
+                return_value=(before, context)), patch(
+                    'reconcile_internet_archive.upsert_location') as upsert:
+            result = self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        context['uploader'].apply_archive_repairs.assert_not_called()
+        upsert.assert_not_called()
+        self.assertEqual(result['status'], 'identifier_collision')
+
+    def test_duplicate_locations_are_not_mutated(self):
+        context = apply_context()
+        before = repairable_result(
+            ['resolve_duplicate_locations'], status='duplicate_locations')
+        before['issues'] = ['duplicate_locations']
+
+        with patch.object(
+                self.reconciler, 'inspect_work',
+                return_value=(before, context)), patch(
+                    'reconcile_internet_archive.upsert_location') as upsert:
+            self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        context['uploader'].apply_archive_repairs.assert_not_called()
+        upsert.assert_not_called()
+
+    def test_mixed_batch_continues_after_failed_result(self):
+        failed = repairable_result([], status='error')
+        failed['error'] = 'failed'
+        with patch.object(
+                self.reconciler, 'reconcile_one',
+                side_effect=[failed, current_result()]) as reconcile_one:
+            results = self.reconciler.reconcile(
+                [WORK_ID, WORK_ID_2], apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(reconcile_one.call_count, 2)
+
+    def test_failed_final_verification_reports_failure(self):
+        context = apply_context()
+        before = repairable_result(['upload_pdf_original'], 'files_stale')
+        final = repairable_result(['upload_pdf_original'], 'files_stale')
+
+        result, _, _ = self._apply(before, context, final=final)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('verification_failed', result['issues'])
+
+    def test_verification_timeout_reports_failure(self):
+        context = apply_context()
+        context['uploader'].apply_archive_repairs.side_effect = \
+            InternetArchiveVerificationError('timed out')
+        before = repairable_result(['upload_pdf_original'], 'files_stale')
+
+        result, _, _ = self._apply(before, context)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('verification_failed', result['issues'])
+
+    def test_second_identical_apply_run_makes_zero_mutations(self):
+        context = apply_context()
+        before = repairable_result(['update_archive_metadata'], 'metadata_stale')
+        current = current_result()
+        with patch.object(
+                self.reconciler, 'inspect_work',
+                side_effect=[(before, context), (current, context)]), \
+                patch.object(
+                    self.reconciler, '_inspect_remote',
+                    return_value=current), patch(
+                    'reconcile_internet_archive.upsert_location'):
+            first = self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+            second = self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(first['status'], 'current')
+        self.assertEqual(second['status'], 'current')
+        context['uploader'].apply_archive_repairs.assert_called_once()
+
+    def test_applied_result_records_before_actions_and_final_state(self):
+        context = apply_context()
+        before = repairable_result(['upload_pdf_original'], 'files_stale')
+
+        result, _, _ = self._apply(before, context)
+
+        self.assertEqual(result['before'], before)
+        self.assertEqual(result['applied_actions'], ['upload_pdf_original'])
+        self.assertEqual(result['status'], 'current')
+
+    def test_archive_mutation_failure_is_recorded(self):
+        context = apply_context()
+        context['uploader'].apply_archive_repairs.side_effect = \
+            DisseminationError('upload failed')
+        before = repairable_result(['upload_pdf_original'], 'files_stale')
+
+        result, _, _ = self._apply(before, context)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('archive_mutation_failed', result['issues'])
+
+
+class TestOutput(unittest.TestCase):
+    def test_json_output_is_deterministic(self):
+        results = [current_result()]
+
+        self.assertEqual(render_report(results), render_report(results))
+        parsed = json.loads(render_report(results))
+        self.assertEqual(parsed['results'][0]['work_id'], WORK_ID)
+
+    def test_jsonl_contains_one_work_per_line_and_summary(self):
+        report = render_report(
+            [current_result(), current_result()], output_format='jsonl')
+        lines = report.strip().splitlines()
+
+        self.assertEqual(len(lines), 3)
+        self.assertIn('work_id', json.loads(lines[0]))
+        self.assertIn('summary', json.loads(lines[-1]))
+
+    def test_summary_counts_are_correct(self):
+        repairable = repairable_result(
+            ['update_archive_metadata'], status='metadata_stale')
+        ambiguous = repairable_result(
+            ['resolve_identifier_collision'], status='identifier_collision')
+        failed = repairable_result([], status='error')
+        repaired = current_result()
+        repaired['applied_actions'] = ['update_archive_metadata']
+
+        summary = summarise([
+            current_result(), repairable, ambiguous, failed, repaired])
+
+        self.assertEqual(summary, {
+            'inspected': 5,
+            'current': 2,
+            'repairable': 1,
+            'ambiguous': 1,
+            'failed': 1,
+            'repaired': 1,
+            'by_status': {
+                'identifier_collision': 1,
+                'error': 1,
+                'metadata_stale': 1,
+                'current': 2,
+            },
+        })
+
+    def test_output_redacts_credential_values(self):
+        result = current_result()
+        result['error'] = 'request included super-secret-value'
+
+        report = render_report([result], secrets=['super-secret-value'])
+
+        self.assertNotIn('super-secret-value', report)
+        self.assertIn('[REDACTED]', report)
+
+    def test_report_is_written_when_some_works_fail(self):
+        failed = repairable_result([], status='error')
+        failed['error'] = 'remote failure'
+        reconciler = MagicMock()
+        reconciler.select_work_ids.return_value = [WORK_ID]
+        reconciler.reconcile.return_value = [failed]
+        reconciler.thoth = MagicMock()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch(
+                    'reconcile_internet_archive.InternetArchiveReconciler',
+                    return_value=reconciler):
+                status = main([
+                    '--work-id', WORK_ID,
+                    '--output', str(output),
+                ])
+
+            self.assertEqual(status, 1)
+            self.assertEqual(
+                json.loads(output.read_text())['results'][0]['error'],
+                'remote failure')
+
+
+if __name__ == '__main__':
+    unittest.main()

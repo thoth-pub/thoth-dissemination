@@ -17,3 +17,11 @@ class InternetArchiveIdentifierCollisionError(DisseminationError):
 
 class InternetArchiveVerificationError(DisseminationError):
     """Report an Internet Archive upload which could not be verified in time."""
+
+
+class InternetArchiveDesiredStateError(DisseminationError):
+    """Report which source failed while constructing Archive desired state."""
+
+    def __init__(self, source, message):
+        self.source = source
+        super().__init__(message)
