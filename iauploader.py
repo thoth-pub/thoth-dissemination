@@ -407,6 +407,35 @@ class IAUploader(Uploader):
             inspection['exists'] and bool(inspection['metadata_patch'])
         )
         if files_to_upload or metadata_update_required:
+            try:
+                item.refresh()
+            except req_except.RequestException as error:
+                raise DisseminationError(
+                    'Unable to refresh Internet Archive item {} immediately '
+                    'before mutation: {}'.format(
+                        desired.identifier, error)
+                ) from error
+
+            current_ownership = self.classify_item_ownership(item)
+            self._assert_item_owned_by_thoth(
+                item, ownership=current_ownership, warn_legacy=False)
+            inspection = self.inspect_item(
+                item, desired, ownership=current_ownership)
+            self._assert_restricted_metadata_current(item, desired)
+            files_to_upload = [
+                name
+                for name in (
+                    '{}.pdf'.format(desired.identifier),
+                    '{}.json'.format(desired.identifier),
+                )
+                if not inspection['files'][name]['current']
+            ]
+            creating_item = not inspection['exists']
+            metadata_update_required = (
+                inspection['exists'] and bool(inspection['metadata_patch'])
+            )
+
+        if files_to_upload or metadata_update_required:
             access_key = access_key or self.get_variable_from_env(
                 'ia_s3_access', 'Internet Archive')
             secret_key = secret_key or self.get_variable_from_env(
@@ -452,16 +481,18 @@ class IAUploader(Uploader):
             desired.absent_metadata_fields,
         )
 
-    def _assert_item_owned_by_thoth(self, item, ownership=None):
+    def _assert_item_owned_by_thoth(
+            self, item, ownership=None, warn_legacy=True):
         """Raise when an existing identifier cannot safely be linked to Thoth."""
         ownership = ownership or self.classify_item_ownership(item)
         if ownership['status'] in {'owned', 'missing'}:
             return
         if ownership['status'] == 'legacy':
-            logging.warning(
-                'Internet Archive item %s is an accepted legacy Thoth '
-                'collection item without thoth-work-id metadata',
-                self.work_id)
+            if warn_legacy:
+                logging.warning(
+                    'Internet Archive item %s is an accepted legacy Thoth '
+                    'collection item without thoth-work-id metadata',
+                    self.work_id)
             return
 
         self._raise_item_collision(ownership['reason'])

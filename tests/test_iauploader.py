@@ -201,7 +201,7 @@ class TestIAUploader(unittest.TestCase):
         self.assertTrue(pdf_call['verify'])
         self.assertTrue(pdf_call['queue_derive'])
         self.item.modify_metadata.assert_not_called()
-        self.item.identifier_available.assert_called_once_with()
+        self.assertEqual(self.item.identifier_available.call_count, 2)
         self._assert_location(locations[0])
 
     def test_new_item_initial_upload_sets_mediatype_texts(self):
@@ -464,6 +464,79 @@ class TestIAUploader(unittest.TestCase):
         self.item.modify_metadata.assert_not_called()
         self.item.refresh.assert_not_called()
 
+    def test_apply_archive_repairs_refreshes_owned_item_before_mutation(self):
+        self._set_existing_item(files=[])
+        desired = self.uploader.build_desired_state()
+        stale_inspection = self.uploader.inspect_item(self.item, desired)
+
+        def replace_ownership(item):
+            item.metadata['thoth-work-id'] = 'another-work-id'
+
+        self.item.refresh_hook = replace_ownership
+
+        with self.assertRaisesRegex(
+                InternetArchiveIdentifierCollisionError,
+                'another-work-id'):
+            self.uploader.apply_archive_repairs(
+                self.item,
+                desired,
+                inspection=stale_inspection,
+                access_key='access-key',
+                secret_key='secret-key',
+            )
+
+        self.item.refresh.assert_called_once_with()
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+
+    def test_apply_archive_repairs_rechecks_legacy_collection_before_mutation(
+            self):
+        metadata = self._desired_metadata()
+        metadata.pop('thoth-work-id')
+        self._set_existing_item(metadata=metadata, files=[])
+        desired = self.uploader.build_desired_state()
+        stale_inspection = self.uploader.inspect_item(self.item, desired)
+
+        def remove_collection(item):
+            item.metadata['collection'] = 'unrelated-collection'
+
+        self.item.refresh_hook = remove_collection
+
+        with self.assertRaisesRegex(
+                InternetArchiveIdentifierCollisionError,
+                'not an identifiable legacy member'):
+            self.uploader.apply_archive_repairs(
+                self.item,
+                desired,
+                inspection=stale_inspection,
+                access_key='access-key',
+                secret_key='secret-key',
+            )
+
+        self.item.refresh.assert_called_once_with()
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+
+    def test_apply_archive_repairs_refresh_failure_is_non_mutating(self):
+        self._set_existing_item(files=[])
+        desired = self.uploader.build_desired_state()
+        stale_inspection = self.uploader.inspect_item(self.item, desired)
+        self.item.refresh.side_effect = HTTPError('refresh failed')
+
+        with self.assertRaisesRegex(
+                DisseminationError,
+                'refresh.*immediately before mutation'):
+            self.uploader.apply_archive_repairs(
+                self.item,
+                desired,
+                inspection=stale_inspection,
+                access_key='access-key',
+                secret_key='secret-key',
+            )
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+
     def test_correct_mediatype_with_title_drift_updates_only_title(self):
         metadata = self._desired_metadata()
         metadata['title'] = 'Old title'
@@ -709,7 +782,7 @@ class TestIAUploader(unittest.TestCase):
                     'after 3 attempts'):
                 self.uploader.upload_to_platform()
 
-        self.assertEqual(self.item.refresh.call_count, 3)
+        self.assertEqual(self.item.refresh.call_count, 4)
         self.assertEqual(self.mock_sleep.call_count, 2)
 
     def test_derived_files_do_not_satisfy_final_verification(self):
@@ -741,14 +814,14 @@ class TestIAUploader(unittest.TestCase):
             make_response()
 
         def reveal_metadata(item):
-            if item.refresh.call_count >= 2:
+            if item.refresh.call_count >= 3:
                 item.metadata = dict(desired_metadata)
 
         self.item.refresh_hook = reveal_metadata
 
         locations = self.uploader.upload_to_platform()
 
-        self.assertEqual(self.item.refresh.call_count, 2)
+        self.assertEqual(self.item.refresh.call_count, 3)
         self.mock_sleep.assert_called_once()
         self.item.modify_metadata.assert_called_once()
         self._assert_location(locations[0])
@@ -767,7 +840,7 @@ class TestIAUploader(unittest.TestCase):
         self.assertIn('metadata discrepancies', str(raised.exception))
         self.assertIn('title', str(raised.exception))
         self.assertIn('Old title', str(raised.exception))
-        self.assertEqual(self.item.refresh.call_count, 3)
+        self.assertEqual(self.item.refresh.call_count, 4)
         self.assertEqual(self.mock_sleep.call_count, 2)
 
     def test_metadata_verification_times_out_when_removed_field_remains(self):
@@ -783,7 +856,7 @@ class TestIAUploader(unittest.TestCase):
 
         self.assertIn('description', str(raised.exception))
         self.assertIn('expected it to be absent', str(raised.exception))
-        self.assertEqual(self.item.refresh.call_count, 2)
+        self.assertEqual(self.item.refresh.call_count, 3)
         self.mock_sleep.assert_called_once()
 
     def test_unrelated_metadata_does_not_prevent_verification(self):
@@ -817,11 +890,13 @@ class TestIAUploader(unittest.TestCase):
             make_response() for _ in kwargs['files']]
 
         def reveal_new_item(item):
+            if item.refresh.call_count == 1:
+                return
             item.files = [
                 original_file(PDF_NAME, self.pdf_bytes),
                 original_file(JSON_NAME, self.json_bytes),
             ]
-            if item.refresh.call_count == 1:
+            if item.refresh.call_count == 2:
                 item.metadata = {'title': 'Stale title'}
             else:
                 item.metadata = dict(desired_metadata)
@@ -832,7 +907,7 @@ class TestIAUploader(unittest.TestCase):
 
         self.assertEqual(self.mock_upload.call_count, 2)
         self.item.modify_metadata.assert_not_called()
-        self.assertEqual(self.item.refresh.call_count, 2)
+        self.assertEqual(self.item.refresh.call_count, 3)
         self.mock_sleep.assert_called_once()
         self._assert_location(locations[0])
 
@@ -870,6 +945,8 @@ class TestIAUploader(unittest.TestCase):
             if item.refresh.call_count == 1:
                 item.files = []
             elif item.refresh.call_count == 2:
+                item.files = []
+            elif item.refresh.call_count == 3:
                 item.files = [
                     original_file(PDF_NAME, b'stale PDF'),
                     original_file(JSON_NAME, self.json_bytes),
@@ -886,7 +963,7 @@ class TestIAUploader(unittest.TestCase):
 
         self.assertEqual(self.mock_upload.call_count, 2)
         self.item.modify_metadata.assert_not_called()
-        self.assertEqual(self.item.refresh.call_count, 3)
+        self.assertEqual(self.item.refresh.call_count, 4)
         self.assertEqual(self.mock_sleep.call_count, 2)
         self._assert_location(locations[0])
 

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Set the dissemination service version to the next feature release, 1.5.0
 
 ### Fixed
+  - Refresh and reclassify Internet Archive item ownership immediately before the first repair mutation
   - Send explicit GraphQL nulls when clearing nullable location full-text URLs
   - Keep reconciliation JSON/JSONL stdout machine-readable during Thoth location mutations while preserving explicit standalone location ID output
   - Load local `config.env` values before reconciliation apply credential validation without overriding exported environment variables
