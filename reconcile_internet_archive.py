@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 from uuid import UUID
 
+from dotenv import load_dotenv
 from internetarchive import get_item
 from thothlibrary import ThothError
 
@@ -869,6 +870,7 @@ class InternetArchiveReconciler:
                     self.thoth,
                     context['location_input'],
                     progress=record_progress,
+                    emit_location_id=False,
                 )
                 # A successful alternate implementation without progress
                 # callbacks still indicates a mutation when it returns an ID.
@@ -977,6 +979,11 @@ def validate_apply_credentials(environment=None):
         raise ReconciliationConfigurationError(
             'Apply mode requires: {}'.format(', '.join(missing)))
     return {name: values[name] for name in required}
+
+
+def load_local_environment(path=Path('./config.env')):
+    """Load local CLI configuration without overriding process values."""
+    load_dotenv(dotenv_path=path, override=False)
 
 
 def summarise(results):
@@ -1102,6 +1109,7 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     credentials = None
     try:
+        load_local_environment()
         if arguments.apply:
             credentials = validate_apply_credentials()
         reconciler = InternetArchiveReconciler()

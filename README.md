@@ -48,7 +48,15 @@ python3 reconcile_internet_archive.py --publisher-id ${publisher_id} --limit 100
 
 Reports are deterministic JSON by default. Use `--format jsonl`, `--output
 <path>`, or `--apply` to select JSONL output, write an artifact, or apply safe
-repairs. Apply mode requires `ia_s3_access`, `ia_s3_secret`, and `THOTH_PAT`.
+repairs. JSON and JSONL stdout contain report data only; operational messages
+and successful location mutation IDs are logged to stderr. With `--output`, the
+report is written only to the requested file and stdout remains empty.
+
+Local CLI runs load `ia_s3_access`, `ia_s3_secret`, and `THOTH_PAT` from
+`./config.env`; already-exported process environment values take precedence.
+Apply mode requires all three credentials, while dry-run requires none. GitHub
+Actions continues to supply write credentials through the protected
+`disseminate` environment rather than a local configuration file.
 
 New Archive items are created with initial `mediatype: texts` metadata and
 membership in the `thoth-archiving-network` collection; final verification

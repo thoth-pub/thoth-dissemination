@@ -1903,7 +1903,8 @@ class TestOutput(unittest.TestCase):
             output = Path(directory) / 'report.json'
             with patch(
                     'reconcile_internet_archive.InternetArchiveReconciler',
-                    return_value=reconciler):
+                    return_value=reconciler), patch(
+                    'reconcile_internet_archive.load_local_environment'):
                 status = main([
                     '--work-id', WORK_ID,
                     '--output', str(output),

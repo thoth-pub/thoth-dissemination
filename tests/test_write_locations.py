@@ -1,6 +1,8 @@
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +22,7 @@ from write_locations import (
     main,
     parse_location_line,
     upsert_location,
+    write_thoth_location,
 )
 
 
@@ -79,6 +82,46 @@ def mock_thoth_with_locations(*responses):
 
 
 class TestLocationUpsert(unittest.TestCase):
+    def test_upsert_returns_created_id_without_printing_by_default(self):
+        thoth = mock_thoth_with_locations([])
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            result = upsert_location(thoth, location_input())
+
+        self.assertEqual(result, 'created-location')
+        self.assertEqual(stdout.getvalue(), '')
+
+    def test_successful_mutation_logs_action_id_publication_and_platform(self):
+        thoth = mock_thoth_with_locations([])
+
+        with self.assertLogs(level='INFO') as logs:
+            upsert_location(thoth, location_input())
+
+        message = '\n'.join(logs.output)
+        self.assertIn('create', message)
+        self.assertIn('created-location', message)
+        self.assertIn(PUBLICATION_ID, message)
+        self.assertIn('INTERNET_ARCHIVE', message)
+
+    def test_compatibility_entrypoint_explicitly_emits_location_id(self):
+        thoth = mock_thoth_with_locations([])
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            result = write_thoth_location(
+                PUBLICATION_ID,
+                'INTERNET_ARCHIVE',
+                LANDING_PAGE,
+                FULL_TEXT_URL,
+                CHECKSUM,
+                'MD5',
+                thoth=thoth,
+            )
+
+        self.assertEqual(result, 'created-location')
+        self.assertEqual(stdout.getvalue(), 'created-location\n')
+
     def test_no_existing_platform_location_creates(self):
         thoth = mock_thoth_with_locations([])
 
@@ -447,6 +490,34 @@ class TestLocationParsingAndConfiguration(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertIn('Line 1', str(log_error.call_args))
+
+    def test_standalone_cli_explicitly_emits_each_successful_location_id(self):
+        thoth = mock_thoth_with_locations([], [])
+        thoth.create_location.side_effect = [
+            'first-location',
+            'second-location',
+        ]
+        line = '{} INTERNET_ARCHIVE {} {} {} MD5\n'.format(
+            PUBLICATION_ID,
+            LANDING_PAGE,
+            FULL_TEXT_URL,
+            CHECKSUM,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'locations.txt'
+            path.write_text(line + line)
+            stdout = io.StringIO()
+            with patch(
+                    'write_locations.configure_thoth_client',
+                    return_value=thoth), redirect_stdout(stdout):
+                status = main([str(path)])
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            stdout.getvalue().splitlines(),
+            ['first-location', 'second-location'],
+        )
 
 
 if __name__ == '__main__':

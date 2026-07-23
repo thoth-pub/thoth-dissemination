@@ -264,7 +264,8 @@ def decide_location_action(location_input, existing_locations):
     return LocationPlan('update', desired)
 
 
-def perform_location_plan(thoth, plan, progress=None):
+def perform_location_plan(
+        thoth, plan, progress=None, emit_location_id=False):
     """Perform the planned mutation, if any, and return its location ID."""
     if plan.action == 'noop':
         logging.info(
@@ -306,14 +307,28 @@ def perform_location_plan(thoth, plan, progress=None):
 
     if progress is not None:
         progress(action, 'completed')
-    print(location_id)
+    logging.info(
+        'Thoth location %s succeeded: location_id=%s publication_id=%s platform=%s',
+        plan.action,
+        location_id,
+        plan.data['publicationId'],
+        plan.data['locationPlatform'],
+    )
+    if emit_location_id:
+        print(location_id)
     return location_id
 
 
-def upsert_location(thoth, location_input, progress=None):
+def upsert_location(
+        thoth, location_input, progress=None, emit_location_id=False):
     existing = retrieve_existing_locations(thoth, location_input.publication_id)
     plan = decide_location_action(location_input, existing)
-    return perform_location_plan(thoth, plan, progress=progress)
+    return perform_location_plan(
+        thoth,
+        plan,
+        progress=progress,
+        emit_location_id=emit_location_id,
+    )
 
 
 def write_thoth_location(publication_id, location_platform, landing_page,
@@ -328,7 +343,11 @@ def write_thoth_location(publication_id, location_platform, landing_page,
         checksum,
         checksum_algorithm,
     )
-    return upsert_location(thoth or configure_thoth_client(), location_input)
+    return upsert_location(
+        thoth or configure_thoth_client(),
+        location_input,
+        emit_location_id=True,
+    )
 
 
 def process_locations_file(locations_file):
@@ -340,7 +359,7 @@ def process_locations_file(locations_file):
                 continue
             if thoth is None:
                 thoth = configure_thoth_client()
-            upsert_location(thoth, location_input)
+            upsert_location(thoth, location_input, emit_location_id=True)
 
 
 def main(argv=None):
