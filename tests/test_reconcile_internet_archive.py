@@ -833,36 +833,69 @@ class TestApplyMode(unittest.TestCase):
         self.assertEqual(result['status'], 'error')
         self.assertIn('verification_failed', result['issues'])
 
-    def test_verification_timeout_reports_failure(self):
+    def test_archive_verification_timeout_does_not_attempt_location(self):
         context = apply_context()
-        context['uploader'].apply_archive_repairs.side_effect = \
-            InternetArchiveVerificationError('timed out')
-        before = repairable_result(['upload_pdf_original'], 'files_stale')
+        before = repairable_result([
+            'upload_pdf_original',
+            'create_thoth_location',
+        ], 'files_stale')
 
-        result, _, _ = self._apply(before, context)
+        def fail_verification(*args, **kwargs):
+            progress = kwargs['progress']
+            progress('upload_pdf_original', 'attempted')
+            progress('upload_pdf_original', 'completed')
+            raise InternetArchiveVerificationError('timed out')
+
+        context['uploader'].apply_archive_repairs.side_effect = \
+            fail_verification
+
+        result, _, upsert = self._apply(before, context)
 
         self.assertEqual(result['status'], 'error')
+        self.assertEqual(
+            result['attempted_actions'], ['upload_pdf_original'])
+        self.assertEqual(result['applied_actions'], [])
+        self.assertEqual(
+            result['uncertain_actions'], ['upload_pdf_original'])
         self.assertIn('verification_failed', result['issues'])
+        self.assertNotIn(
+            'create_thoth_location', result['attempted_actions'])
+        upsert.assert_not_called()
 
     def test_second_identical_apply_run_makes_zero_mutations(self):
         context = apply_context()
-        before = repairable_result(['update_archive_metadata'], 'metadata_stale')
-        current = current_result()
+        before = repairable_result([
+            'update_archive_metadata',
+            'create_thoth_location',
+        ], 'metadata_stale')
+        verification_current = current_result()
+        second_current = current_result()
         with patch.object(
                 self.reconciler, 'inspect_work',
-                side_effect=[(before, context), (current, context)]), \
+                side_effect=[
+                    (before, context),
+                    (second_current, context),
+                ]), \
                 patch.object(
                     self.reconciler, '_inspect_remote',
-                    return_value=current), patch(
-                    'reconcile_internet_archive.upsert_location'):
+                    return_value=verification_current), patch(
+                    'reconcile_internet_archive.upsert_location',
+                    return_value='location-id') as upsert:
             first = self.reconciler.reconcile_one(
                 WORK_ID, apply=True, credentials=CREDENTIALS)
             second = self.reconciler.reconcile_one(
                 WORK_ID, apply=True, credentials=CREDENTIALS)
 
         self.assertEqual(first['status'], 'current')
+        self.assertEqual(first['applied_actions'], [
+            'update_archive_metadata',
+            'create_thoth_location',
+        ])
         self.assertEqual(second['status'], 'current')
+        self.assertEqual(second['attempted_actions'], [])
+        self.assertEqual(second['applied_actions'], [])
         context['uploader'].apply_archive_repairs.assert_called_once()
+        upsert.assert_called_once()
 
     def test_applied_result_records_before_actions_and_final_state(self):
         context = apply_context()
@@ -874,16 +907,106 @@ class TestApplyMode(unittest.TestCase):
         self.assertEqual(result['applied_actions'], ['upload_pdf_original'])
         self.assertEqual(result['status'], 'current')
 
-    def test_archive_mutation_failure_is_recorded(self):
+    def test_archive_dissemination_error_does_not_attempt_location(self):
         context = apply_context()
         context['uploader'].apply_archive_repairs.side_effect = \
             DisseminationError('upload failed')
-        before = repairable_result(['upload_pdf_original'], 'files_stale')
+        before = repairable_result([
+            'upload_pdf_original',
+            'create_thoth_location',
+        ], 'files_stale')
 
-        result, _, _ = self._apply(before, context)
+        result, _, upsert = self._apply(before, context)
 
         self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['attempted_actions'], [])
         self.assertIn('archive_mutation_failed', result['issues'])
+        self.assertNotIn(
+            'thoth_location_mutation_failed', result['issues'])
+        upsert.assert_not_called()
+
+    def test_archive_unexpected_error_does_not_attempt_location(self):
+        context = apply_context()
+        context['uploader'].apply_archive_repairs.side_effect = \
+            RuntimeError('unexpected archive failure')
+        before = repairable_result([
+            'upload_pdf_original',
+            'create_thoth_location',
+        ], 'files_stale')
+
+        result, _, upsert = self._apply(before, context)
+
+        self.assertEqual(result['attempted_actions'], [])
+        self.assertEqual(result['applied_actions'], [])
+        self.assertIn('archive_mutation_failed', result['issues'])
+        self.assertNotIn(
+            'thoth_location_mutation_failed', result['issues'])
+        upsert.assert_not_called()
+
+    def test_archive_only_unexpected_error_is_archive_failure(self):
+        context = apply_context()
+        context['uploader'].apply_archive_repairs.side_effect = \
+            RuntimeError('unexpected archive failure')
+        before = repairable_result(
+            ['upload_pdf_original'], 'files_stale')
+
+        result, _, upsert = self._apply(before, context)
+
+        self.assertEqual(result['attempted_actions'], [])
+        self.assertIn('archive_mutation_failed', result['issues'])
+        upsert.assert_not_called()
+
+    def test_archive_success_then_location_failure_preserves_progress(self):
+        before = repairable_result([
+            'upload_pdf_original',
+            'create_thoth_location',
+        ], status='files_stale')
+        context = apply_context()
+
+        def fail_location(*args, **kwargs):
+            kwargs['progress']('create_thoth_location', 'attempted')
+            raise RuntimeError('location failed')
+
+        with patch.object(
+                self.reconciler, 'inspect_work',
+                return_value=(before, context)), patch(
+                    'reconcile_internet_archive.upsert_location',
+                    side_effect=fail_location) as upsert:
+            result = self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(result['attempted_actions'], [
+            'upload_pdf_original',
+            'create_thoth_location',
+        ])
+        self.assertEqual(
+            result['applied_actions'], ['upload_pdf_original'])
+        self.assertIn(
+            'thoth_location_mutation_failed', result['issues'])
+        self.assertNotIn('archive_mutation_failed', result['issues'])
+        upsert.assert_called_once()
+
+    def test_successful_mixed_repair_runs_both_phases_and_verification(self):
+        context = apply_context()
+        before = repairable_result([
+            'upload_pdf_original',
+            'create_thoth_location',
+        ], 'files_stale')
+
+        result, inspect_remote, upsert = self._apply(before, context)
+
+        context['uploader'].apply_archive_repairs.assert_called_once()
+        upsert.assert_called_once()
+        inspect_remote.assert_called_once()
+        self.assertEqual(result['attempted_actions'], [
+            'upload_pdf_original',
+            'create_thoth_location',
+        ])
+        self.assertEqual(result['applied_actions'], [
+            'upload_pdf_original',
+            'create_thoth_location',
+        ])
+        self.assertEqual(result['status'], 'current')
 
     def test_ineligible_explicit_work_is_never_mutated(self):
         metadata = work_metadata(workStatus='DRAFT')
@@ -1020,11 +1143,16 @@ class TestApplyMode(unittest.TestCase):
         before = repairable_result(
             ['create_thoth_location'], status='location_missing')
         context = apply_context()
+
+        def fail_location(*args, **kwargs):
+            kwargs['progress']('create_thoth_location', 'attempted')
+            raise RuntimeError('location failed')
+
         with patch.object(
                 self.reconciler, 'inspect_work',
                 return_value=(before, context)), patch(
                     'reconcile_internet_archive.upsert_location',
-                    side_effect=RuntimeError('location failed')):
+                    side_effect=fail_location):
             result = self.reconciler.reconcile_one(
                 WORK_ID, apply=True, credentials=CREDENTIALS)
 
@@ -1032,6 +1160,7 @@ class TestApplyMode(unittest.TestCase):
             'create_thoth_location'])
         self.assertEqual(result['applied_actions'], [])
         self.assertIn('thoth_location_mutation_failed', result['issues'])
+        context['uploader'].apply_archive_repairs.assert_not_called()
 
 
 class TestOutput(unittest.TestCase):

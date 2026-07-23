@@ -747,11 +747,16 @@ class InternetArchiveReconciler:
             elif state == 'completed':
                 applied_actions.append(action)
 
+        archive_actions = [
+            action for action in before['auto_applicable_actions']
+            if action in ARCHIVE_ACTIONS
+        ]
+        location_actions = [
+            action for action in before['auto_applicable_actions']
+            if action in LOCATION_ACTIONS
+        ]
+
         try:
-            archive_actions = [
-                action for action in before['auto_applicable_actions']
-                if action in ARCHIVE_ACTIONS
-            ]
             if archive_actions:
                 context['uploader'].apply_archive_repairs(
                     context['item'],
@@ -768,25 +773,6 @@ class InternetArchiveReconciler:
                         attempted_actions.append(action)
                     if action not in applied_actions:
                         applied_actions.append(action)
-
-            location_actions = [
-                action for action in before['auto_applicable_actions']
-                if action in LOCATION_ACTIONS
-            ]
-            if location_actions:
-                location_result = upsert_location(
-                    self.thoth,
-                    context['location_input'],
-                    progress=record_progress,
-                )
-                # A successful alternate implementation without progress
-                # callbacks still indicates a mutation when it returns an ID.
-                if location_result is not None:
-                    for action in location_actions:
-                        if action not in attempted_actions:
-                            attempted_actions.append(action)
-                        if action not in applied_actions:
-                            applied_actions.append(action)
         except InternetArchiveVerificationError as error:
             uncertain_actions = [
                 action for action in applied_actions
@@ -804,24 +790,30 @@ class InternetArchiveReconciler:
                 before, attempted_actions, applied_actions,
                 uncertain_actions, 'archive_mutation_failed', str(error))
         except Exception as error:
-            selected_location_actions = [
-                action for action in before['auto_applicable_actions']
-                if action in LOCATION_ACTIONS
-            ]
-            if selected_location_actions and not any(
-                    action in attempted_actions
-                    for action in selected_location_actions):
-                attempted_actions.extend(selected_location_actions)
-            issue = (
-                'thoth_location_mutation_failed'
-                if any(
-                    action in LOCATION_ACTIONS
-                    for action in attempted_actions)
-                else 'archive_mutation_failed'
-            )
             return self._failed_apply_result(
                 before, attempted_actions, applied_actions,
-                uncertain_actions, issue, str(error))
+                uncertain_actions, 'archive_mutation_failed', str(error))
+
+        try:
+            if location_actions:
+                location_result = upsert_location(
+                    self.thoth,
+                    context['location_input'],
+                    progress=record_progress,
+                )
+                # A successful alternate implementation without progress
+                # callbacks still indicates a mutation when it returns an ID.
+                if location_result is not None:
+                    for action in location_actions:
+                        if action not in attempted_actions:
+                            attempted_actions.append(action)
+                        if action not in applied_actions:
+                            applied_actions.append(action)
+        except Exception as error:
+            return self._failed_apply_result(
+                before, attempted_actions, applied_actions,
+                uncertain_actions, 'thoth_location_mutation_failed',
+                str(error))
 
         verification_base = deepcopy(before)
         verification_base.update({
