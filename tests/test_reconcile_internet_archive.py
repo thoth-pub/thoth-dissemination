@@ -406,6 +406,135 @@ class TestDryRunInspection(unittest.TestCase):
         self.assertIn('title', result['internet_archive']['metadata'][
             'patch_fields'])
 
+    def test_immutable_mediatype_conflict_is_reported_for_manual_action(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(result['status'], 'metadata_conflict')
+        self.assertIn(
+            'archive_immutable_metadata_conflict', result['issues'])
+        self.assertIn(
+            'resolve_archive_immutable_metadata',
+            result['recommended_actions'],
+        )
+        archive_metadata = result['internet_archive']['metadata']
+        self.assertEqual(archive_metadata['mutable_problems'], [])
+        self.assertEqual(archive_metadata['immutable_problems'], [
+            "mediatype is 'data', expected 'texts'",
+        ])
+        self.assertNotIn('mediatype', archive_metadata['patch_fields'])
+
+    def test_immutable_only_conflict_is_not_mutable_metadata_drift(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertNotIn('archive_metadata_stale', result['issues'])
+        self.assertNotIn(
+            'update_archive_metadata', result['recommended_actions'])
+
+    def test_immutable_and_mutable_metadata_drift_retain_both_actions(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+        metadata['title'] = 'Old title'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertIn(
+            'archive_immutable_metadata_conflict', result['issues'])
+        self.assertIn('archive_metadata_stale', result['issues'])
+        self.assertEqual(result['recommended_actions'], [
+            'resolve_archive_immutable_metadata',
+            'update_archive_metadata',
+        ])
+        archive_metadata = result['internet_archive']['metadata']
+        self.assertEqual(archive_metadata['immutable_problems'], [
+            "mediatype is 'data', expected 'texts'",
+        ])
+        self.assertIn('title', archive_metadata['patch_fields'])
+        self.assertNotIn('mediatype', archive_metadata['patch_fields'])
+
+    def test_immutable_conflict_retains_missing_file_recommendations(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+
+        result, _, _, _ = self.harness.inspect(item=FakeItem(
+            exists=True,
+            metadata=metadata,
+            files=[],
+        ))
+
+        self.assertEqual(result['recommended_actions'], [
+            'resolve_archive_immutable_metadata',
+            'upload_pdf_original',
+            'upload_json_original',
+        ])
+        self.assertIn('missing_pdf_original', result['issues'])
+        self.assertIn('missing_json_original', result['issues'])
+
+    def test_immutable_conflict_retains_missing_location_recommendation(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata),
+            locations=[],
+        )
+
+        self.assertEqual(result['recommended_actions'], [
+            'resolve_archive_immutable_metadata',
+            'create_thoth_location',
+        ])
+        self.assertIn('location_missing', result['issues'])
+
+    def test_immutable_conflict_blocks_all_auto_applicable_actions(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+        metadata['title'] = 'Old title'
+
+        result, _, _, _ = self.harness.inspect(
+            item=FakeItem(exists=True, metadata=metadata, files=[]),
+            locations=[],
+        )
+
+        self.assertEqual(result['auto_applicable_actions'], [])
+        self.assertIn('update_archive_metadata', result[
+            'recommended_actions'])
+        self.assertIn('upload_pdf_original', result['recommended_actions'])
+        self.assertIn('create_thoth_location', result[
+            'recommended_actions'])
+
+    def test_correct_mediatype_with_mutable_drift_is_auto_repairable(self):
+        metadata = desired_metadata()
+        metadata['title'] = 'Old title'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(result['status'], 'metadata_stale')
+        self.assertEqual(
+            result['auto_applicable_actions'],
+            ['update_archive_metadata'],
+        )
+        self.assertEqual(
+            result['internet_archive']['metadata']['immutable_problems'], [])
+
+    def test_immutable_conflict_report_is_deterministic_across_inspections(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+        item = current_item(metadata=metadata)
+
+        first, _, _, _ = self.harness.inspect(item=item, locations=[])
+        second, _, _, _ = self.harness.inspect(item=item, locations=[])
+
+        self.assertEqual(first, second)
+
     def test_multiple_archive_discrepancies_are_ordered(self):
         metadata = desired_metadata()
         metadata['title'] = 'Old title'
@@ -1062,6 +1191,41 @@ class TestApplyMode(unittest.TestCase):
         upsert.assert_not_called()
         item.modify_metadata.assert_not_called()
 
+    def test_immutable_conflict_apply_performs_zero_mutations(self):
+        metadata = desired_metadata()
+        metadata['mediatype'] = 'data'
+        metadata.pop('thoth-work-id')
+        item = FakeItem(exists=True, metadata=metadata, files=[])
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        publication = Publication(
+            'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+            'https://source.example/book.pdf')
+
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                return_value=JSON_BYTES), patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=publication), patch(
+                    'reconcile_internet_archive.get_item',
+                    return_value=item), patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=[]), patch.object(
+                    IAUploader, 'apply_archive_repairs') as archive_repair, \
+                patch('iauploader.upload') as upload, patch(
+                    'reconcile_internet_archive.upsert_location') as upsert:
+            result = reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(result['status'], 'metadata_conflict')
+        self.assertEqual(result['auto_applicable_actions'], [])
+        self.assertEqual(result['attempted_actions'], [])
+        archive_repair.assert_not_called()
+        upload.assert_not_called()
+        item.modify_metadata.assert_not_called()
+        upsert.assert_not_called()
+
     def test_availability_failure_mixed_batch_continues(self):
         failed = repairable_result([], status='error')
         failed['issues'] = ['archive_request_failed']
@@ -1219,6 +1383,22 @@ class TestOutput(unittest.TestCase):
         self.assertEqual(summary['failed'], 1)
         self.assertEqual(summary['repairable'], 0)
         self.assertEqual(summary['ambiguous'], 0)
+
+    def test_metadata_conflict_is_ambiguous_not_repairable(self):
+        result = repairable_result(
+            ['resolve_archive_immutable_metadata'],
+            status='metadata_conflict',
+        )
+        result['issues'] = ['archive_immutable_metadata_conflict']
+        result['auto_applicable_actions'] = []
+
+        summary = summarise([result])
+
+        self.assertEqual(summary['repairable'], 0)
+        self.assertEqual(summary['ambiguous'], 1)
+        self.assertEqual(summary['failed'], 0)
+        self.assertEqual(summary['repaired'], 0)
+        self.assertEqual(summary['by_status'], {'metadata_conflict': 1})
 
     def test_output_redacts_credential_values(self):
         result = current_result()

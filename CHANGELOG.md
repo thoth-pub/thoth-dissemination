@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
   - Made Internet Archive dissemination idempotently converge managed originals and metadata, verify their final remote state in one bounded polling loop, and preserve unrelated Archive data
+  - Distinguished mutable Internet Archive metadata from initial-only `mediatype` state in reconciliation reports
   - Made Thoth location write-back converge create, update, and no-op states while preserving canonical and checksum data
   - Report all reconciliation recommendations separately from safe automatic, attempted, applied, and uncertain actions
   - Set the dissemination service version to the next feature release, 1.5.0
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
   - Send explicit GraphQL nulls when clearing nullable location full-text URLs
   - Refuse to create or repair an Internet Archive item unless its missing identifier is explicitly reported as available
+  - Block automatic Archive and Thoth mutations when an existing item has missing or incompatible initial-only `mediatype` metadata
 
 ## [[1.4.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.4.1) - 2026-07-20
 ### Fixed

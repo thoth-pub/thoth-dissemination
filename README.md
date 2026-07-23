@@ -50,6 +50,16 @@ Reports are deterministic JSON by default. Use `--format jsonl`, `--output
 <path>`, or `--apply` to select JSONL output, write an artifact, or apply safe
 repairs. Apply mode requires `ia_s3_access`, `ia_s3_secret`, and `THOTH_PAT`.
 
+New Archive items are created with the initial-only `mediatype` metadata set to
+`texts`, and final verification confirms that value. If an existing item has a
+missing or incompatible `mediatype`, reconciliation reports a
+`metadata_conflict` with separate immutable metadata details and a manual
+recommendation. Direct dissemination and apply mode do not upload files,
+modify Archive metadata, add ownership markers, or write Thoth locations for
+that work while the conflict remains. Remediation requires manual coordination
+with Internet Archive; the reconciler does not prescribe deleting or
+recreating the item.
+
 The **internet-archive-reconciliation** workflow can also be launched manually
 from the repository's **Actions** tab. Dry-run is the default and receives no
 Archive or Thoth write credentials. Select works with an optional publisher

@@ -69,6 +69,7 @@ ISSUE_ORDER = (
     'missing_json_original',
     'stale_pdf_original',
     'stale_json_original',
+    'archive_immutable_metadata_conflict',
     'archive_metadata_stale',
     'thoth_location_lookup_failed',
     'location_missing',
@@ -81,6 +82,7 @@ ISSUE_ORDER = (
 
 ACTION_ORDER = (
     'resolve_identifier_collision',
+    'resolve_archive_immutable_metadata',
     'restore_pdf_source',
     'restore_json_export',
     'fix_work_eligibility',
@@ -95,6 +97,7 @@ ACTION_ORDER = (
 
 STATUS_ORDER = (
     'identifier_collision',
+    'metadata_conflict',
     'error',
     'source_unavailable',
     'duplicate_locations',
@@ -125,6 +128,7 @@ ISSUE_STATUS = {
     'missing_json_original': 'item_incomplete',
     'stale_pdf_original': 'files_stale',
     'stale_json_original': 'files_stale',
+    'archive_immutable_metadata_conflict': 'metadata_conflict',
     'archive_metadata_stale': 'metadata_stale',
     'thoth_location_lookup_failed': 'error',
     'location_missing': 'location_missing',
@@ -267,6 +271,9 @@ def _archive_report(item, desired, inspection):
         'metadata': {
             'current': inspection['metadata_current'],
             'problems': inspection['metadata_problems'],
+            'mutable_problems': inspection['mutable_metadata_problems'],
+            'immutable_problems': inspection[
+                'immutable_metadata_problems'],
             'patch_fields': sorted(inspection['metadata_patch']),
         },
         'unrelated': {
@@ -665,7 +672,10 @@ class InternetArchiveReconciler:
                     elif not state['current']:
                         issues.append(stale_issue)
                         actions.append(action)
-                if not inspection['metadata_current']:
+                if inspection['immutable_metadata_problems']:
+                    issues.append('archive_immutable_metadata_conflict')
+                    actions.append('resolve_archive_immutable_metadata')
+                if inspection['mutable_metadata_problems']:
                     issues.append('archive_metadata_stale')
                     actions.append('update_archive_metadata')
         except Exception as error:
@@ -716,6 +726,7 @@ class InternetArchiveReconciler:
             'malformed_metadata',
             'archive_request_failed',
             'identifier_collision',
+            'archive_immutable_metadata_conflict',
             'thoth_location_lookup_failed',
             'duplicate_locations',
         }
@@ -910,7 +921,11 @@ def validate_apply_credentials(environment=None):
 
 
 def summarise(results):
-    ambiguous_statuses = {'identifier_collision', 'duplicate_locations'}
+    ambiguous_statuses = {
+        'identifier_collision',
+        'metadata_conflict',
+        'duplicate_locations',
+    }
     failed_statuses = {'error', 'source_unavailable', 'ineligible'}
     return {
         'inspected': len(results),

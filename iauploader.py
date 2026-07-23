@@ -16,6 +16,7 @@ from errors import (
     DisseminationError,
     InternetArchiveDesiredStateError,
     InternetArchiveIdentifierCollisionError,
+    InternetArchiveImmutableMetadataError,
     InternetArchiveVerificationError,
 )
 from uploader import Uploader, Location
@@ -65,6 +66,12 @@ class IAUploader(Uploader):
         'thoth-work-id',
         'thoth-dissemination-service',
     }
+    INITIAL_ONLY_METADATA_FIELDS = {
+        'mediatype',
+    }
+    MUTABLE_MANAGED_METADATA_FIELDS = (
+        MANAGED_METADATA_FIELDS - INITIAL_ONLY_METADATA_FIELDS
+    )
 
     def upload_to_platform(self):
         """Create or idempotently update a work in Internet Archive."""
@@ -272,15 +279,27 @@ class IAUploader(Uploader):
         files = self.compare_original_files(
             originals, desired.expected_md5s)
         metadata_patch = {}
-        metadata_problems = []
+        mutable_metadata_problems = []
+        immutable_metadata_problems = []
         if item.exists:
             metadata_patch = self._managed_metadata_patch(
                 item.metadata, desired.metadata)
-            metadata_problems = self._metadata_verification_problems(
+            mutable_metadata_problems = self._metadata_verification_problems(
                 item.metadata,
                 desired.metadata,
                 desired.absent_metadata_fields,
+                fields=self.MUTABLE_MANAGED_METADATA_FIELDS,
             )
+            immutable_metadata_problems = \
+                self._metadata_verification_problems(
+                    item.metadata,
+                    desired.metadata,
+                    desired.absent_metadata_fields,
+                    fields=self.INITIAL_ONLY_METADATA_FIELDS,
+                )
+        metadata_problems = (
+            mutable_metadata_problems + immutable_metadata_problems
+        )
         return {
             'exists': bool(item.exists),
             'ownership': ownership['status'],
@@ -290,20 +309,49 @@ class IAUploader(Uploader):
             'files': files,
             'metadata_current': bool(item.exists) and not metadata_problems,
             'metadata_problems': metadata_problems,
+            'mutable_metadata_problems': mutable_metadata_problems,
+            'immutable_metadata_problems': immutable_metadata_problems,
             'metadata_patch': metadata_patch,
         }
+
+    def _assert_initial_only_metadata_current(self, item, desired):
+        if not item.exists:
+            return
+
+        current_metadata = item.metadata or {}
+        conflicts = []
+        for field in sorted(self.INITIAL_ONLY_METADATA_FIELDS):
+            if field not in desired.metadata:
+                continue
+            current_value = current_metadata.get(field)
+            required_value = desired.metadata[field]
+            if not self._metadata_values_equal(
+                    field, current_value, required_value):
+                conflicts.append(
+                    '{} is {!r}, required {!r}'.format(
+                        field, current_value, required_value)
+                )
+
+        if conflicts:
+            raise InternetArchiveImmutableMetadataError(
+                'Internet Archive item {} has incompatible initial-only '
+                'metadata: {}. These fields can only be set during item '
+                'creation; no automatic mutation was attempted.'.format(
+                    desired.identifier, '; '.join(conflicts))
+            )
 
     def apply_archive_repairs(
             self, item, desired, inspection=None, access_key=None,
             secret_key=None, progress=None):
         """Apply only the file and metadata differences found by inspection."""
+        inspection = inspection or self.inspect_item(item, desired)
+        if inspection['ownership'] == 'collision':
+            self._raise_item_collision(inspection['ownership_reason'])
+        self._assert_initial_only_metadata_current(item, desired)
         access_key = access_key or self.get_variable_from_env(
             'ia_s3_access', 'Internet Archive')
         secret_key = secret_key or self.get_variable_from_env(
             'ia_s3_secret', 'Internet Archive')
-        inspection = inspection or self.inspect_item(item, desired)
-        if inspection['ownership'] == 'collision':
-            self._raise_item_collision(inspection['ownership_reason'])
 
         files_to_upload = [
             name
@@ -361,8 +409,8 @@ class IAUploader(Uploader):
             return
         if ownership['status'] == 'legacy':
             logging.warning(
-                'Internet Archive item %s is a legacy Thoth collection item '
-                'without thoth-work-id metadata; adding the ownership marker',
+                'Internet Archive item %s is an accepted legacy Thoth '
+                'collection item without thoth-work-id metadata',
                 self.work_id)
             return
 
@@ -522,7 +570,7 @@ class IAUploader(Uploader):
                 desired_metadata['collection'].append(self.THOTH_COLLECTION)
 
         patch = {}
-        for field in self.MANAGED_METADATA_FIELDS:
+        for field in self.MUTABLE_MANAGED_METADATA_FIELDS:
             if field not in desired_metadata:
                 if field in current_metadata:
                     patch[field] = 'REMOVE_TAG'
@@ -534,10 +582,14 @@ class IAUploader(Uploader):
         return patch
 
     def _metadata_verification_problems(
-            self, current_metadata, desired_metadata, absent_fields):
+            self, current_metadata, desired_metadata, absent_fields,
+            fields=None):
         current_metadata = current_metadata or {}
+        fields = self.MANAGED_METADATA_FIELDS if fields is None else fields
         problems = []
         for field, desired_value in desired_metadata.items():
+            if field not in fields:
+                continue
             current_value = current_metadata.get(field)
             if field == 'collection':
                 if self.THOTH_COLLECTION not in self._as_metadata_list(
@@ -552,7 +604,7 @@ class IAUploader(Uploader):
                         field, current_value, desired_value))
 
         for field in sorted(absent_fields):
-            if field in current_metadata:
+            if field in fields and field in current_metadata:
                 problems.append(
                     '{} is still present with value {!r}, expected it to be '
                     'absent'.format(field, current_metadata[field]))

@@ -15,6 +15,10 @@ class InternetArchiveIdentifierCollisionError(DisseminationError):
     """Refuse to modify an Internet Archive item not known to belong to Thoth."""
 
 
+class InternetArchiveImmutableMetadataError(DisseminationError):
+    """Refuse to mutate an item with incompatible initial-only metadata."""
+
+
 class InternetArchiveVerificationError(DisseminationError):
     """Report an Internet Archive upload which could not be verified in time."""
 

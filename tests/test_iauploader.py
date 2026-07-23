@@ -12,6 +12,7 @@ from requests.exceptions import HTTPError
 from errors import (
     DisseminationError,
     InternetArchiveIdentifierCollisionError,
+    InternetArchiveImmutableMetadataError,
     InternetArchiveVerificationError,
 )
 from iauploader import IAUploader
@@ -201,6 +202,152 @@ class TestIAUploader(unittest.TestCase):
         self.item.modify_metadata.assert_not_called()
         self.item.identifier_available.assert_called_once_with()
         self._assert_location(locations[0])
+
+    def test_new_item_initial_upload_sets_mediatype_texts(self):
+        self.uploader.upload_to_platform()
+
+        initial_metadata = self.mock_upload.call_args_list[0].kwargs[
+            'metadata']
+        self.assertEqual(initial_metadata['mediatype'], 'texts')
+
+    def test_new_item_final_verification_requires_mediatype(self):
+        desired_metadata = self._desired_metadata()
+
+        def upload_without_mediatype(**kwargs):
+            for name, file_object in kwargs['files'].items():
+                self.item.set_original(name, file_object.read())
+            if kwargs.get('metadata') is not None:
+                self.item.metadata = dict(desired_metadata)
+                self.item.metadata.pop('mediatype')
+            self.item.exists = True
+            return [make_response() for _ in kwargs['files']]
+
+        self.mock_upload.side_effect = upload_without_mediatype
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 1):
+            with self.assertRaisesRegex(
+                    InternetArchiveVerificationError,
+                    "mediatype is None, expected 'texts'"):
+                self.uploader.upload_to_platform()
+
+    def test_existing_correct_mediatype_remains_repairable(self):
+        metadata = self._desired_metadata()
+        metadata['title'] = 'Old title'
+        self._set_existing_item(metadata=metadata)
+        desired = self.uploader.build_desired_state()
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertEqual(inspection['immutable_metadata_problems'], [])
+        self.assertEqual(
+            inspection['metadata_patch'], {'title': 'A Test Book'})
+        self.assertIn('title', inspection['mutable_metadata_problems'][0])
+
+    def test_existing_different_mediatype_reports_immutable_conflict(self):
+        metadata = self._desired_metadata()
+        metadata['mediatype'] = 'data'
+        self._set_existing_item(metadata=metadata)
+        desired = self.uploader.build_desired_state()
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertEqual(inspection['immutable_metadata_problems'], [
+            "mediatype is 'data', expected 'texts'",
+        ])
+        self.assertEqual(inspection['mutable_metadata_problems'], [])
+        self.assertNotIn('mediatype', inspection['metadata_patch'])
+
+    def test_existing_missing_mediatype_reports_immutable_conflict(self):
+        metadata = self._desired_metadata()
+        metadata.pop('mediatype')
+        self._set_existing_item(metadata=metadata)
+        desired = self.uploader.build_desired_state()
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertEqual(inspection['immutable_metadata_problems'], [
+            "mediatype is None, expected 'texts'",
+        ])
+        self.assertNotIn('mediatype', inspection['metadata_patch'])
+
+    def test_immutable_mediatype_is_never_in_metadata_patch(self):
+        current = self._desired_metadata()
+        current['mediatype'] = 'data'
+
+        patch = self.uploader._managed_metadata_patch(
+            current, self._desired_metadata())
+
+        self.assertNotIn('mediatype', patch)
+
+    def test_immutable_mediatype_is_never_removed(self):
+        current = self._desired_metadata()
+        desired = self._desired_metadata()
+        desired.pop('mediatype')
+
+        patch = self.uploader._managed_metadata_patch(current, desired)
+
+        self.assertNotIn('mediatype', patch)
+        self.assertNotIn('REMOVE_TAG', [
+            value for field, value in patch.items()
+            if field == 'mediatype'
+        ])
+
+    def test_direct_dissemination_rejects_immutable_mediatype_conflict(self):
+        metadata = self._desired_metadata()
+        metadata['mediatype'] = 'data'
+        self._set_existing_item(metadata=metadata)
+
+        with self.assertRaisesRegex(
+                InternetArchiveImmutableMetadataError,
+                "item {}.*mediatype is 'data', required 'texts'.*"
+                "only be set during item creation.*"
+                "no automatic mutation was attempted".format(WORK_ID)):
+            self.uploader.upload_to_platform()
+
+    def test_direct_immutable_conflict_performs_zero_mutations(self):
+        metadata = self._desired_metadata()
+        metadata.pop('mediatype')
+        metadata.pop('thoth-work-id')
+        self._set_existing_item(metadata=metadata, files=[])
+
+        with self.assertRaises(InternetArchiveImmutableMetadataError):
+            self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.item.refresh.assert_not_called()
+
+    def test_apply_archive_repairs_rechecks_initial_only_metadata(self):
+        self._set_existing_item()
+        desired = self.uploader.build_desired_state()
+        stale_inspection = self.uploader.inspect_item(self.item, desired)
+        self.item.metadata['mediatype'] = 'data'
+
+        with self.assertRaises(InternetArchiveImmutableMetadataError):
+            self.uploader.apply_archive_repairs(
+                self.item,
+                desired,
+                inspection=stale_inspection,
+                access_key='access-key',
+                secret_key='secret-key',
+            )
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.item.refresh.assert_not_called()
+
+    def test_correct_mediatype_with_title_drift_updates_only_title(self):
+        metadata = self._desired_metadata()
+        metadata['title'] = 'Old title'
+        self._set_existing_item(metadata=metadata)
+
+        self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_not_called()
+        self.assertEqual(
+            self.item.modify_metadata.call_args.args[0],
+            {'title': 'A Test Book'},
+        )
 
     def test_unavailable_missing_identifier_fast_fails_before_sources(self):
         self.item.identifier_available.return_value = False
