@@ -37,6 +37,39 @@ docker run --rm --env-file config.env openbookpublishers/thoth-dissemination:lat
 
 See also `--help`.
 
+### Scheduled Internet Archive dissemination
+
+The **ia-bulk-disseminate** workflow runs daily at 04:40 UTC. It selects
+configured-publisher works whose `updatedAtWithRelations` timestamp is within
+one captured UTC window: greater than the start and less than or equal to the
+end. The default 30-hour lookback creates a six-hour overlap between ordinary
+daily runs; manual runs may use a positive lookback up to 168 hours.
+
+Selection requires `IA_ENV_PUBLISHERS` to be a non-empty JSON array of
+publisher UUIDs. `IA_ENV_EXCEPTIONS` is an optional JSON array of work UUIDs
+to exclude. Configured publishers and exceptions are validated and normalised
+before the read-only query runs.
+
+Only active `MONOGRAPH`, `EDITED_BOOK`, `JOURNAL_ISSUE`, `TEXTBOOK`, and
+`BOOK_SET` records with a PDF publication and a non-empty canonical PDF
+`fullTextUrl` are eligible. Selection does not download the PDF, request an
+export, or make a request to the source URL. Eligible records are ordered by
+oldest relation-aware update and then work UUID. At most 200 are selected and
+four different works disseminate concurrently.
+
+Every run writes a concise Step Summary and retains a 30-day
+`ia-selection-<run>-<attempt>` artifact containing the machine-readable report
+and sanitised selection log. If more than 200 works are eligible, all omitted
+records are reported; the bounded selected batch finishes, then the final
+workflow job fails visibly. Inspect the artifact and use bounded manual
+reconciliation or another reviewed bounded operation for omitted or ambiguous
+records.
+
+The reusable dissemination workflow prevents simultaneous ordinary runs for
+the same platform/work pair. Different works and platforms remain independent.
+Because Internet Archive upload and Thoth location write-back are idempotent,
+an unchanged selected work safely converges as a no-op.
+
 ### Reconcile Internet Archive state
 
 Inspect one or more works without write credentials or remote mutations:

@@ -20,6 +20,7 @@ from errors import (
     InternetArchiveVerificationError,
 )
 from iauploader import IAUploader
+from internet_archive_policy import ACTIVE_WORK_STATUSES, SUPPORTED_WORK_TYPES
 from thothapi import get_thoth_client
 from uploader import Uploader
 from version import __version__
@@ -34,14 +35,6 @@ from write_locations import (
 
 DEFAULT_LIMIT = 100
 DEFAULT_EXPORT_URL = 'https://export.thoth.pub'
-SUPPORTED_WORK_TYPES = (
-    'MONOGRAPH',
-    'EDITED_BOOK',
-    'JOURNAL_ISSUE',
-    'TEXTBOOK',
-    'BOOK_SET',
-)
-ACTIVE_WORK_STATUSES = ('ACTIVE',)
 ARCHIVE_ACTIONS = {
     'create_archive_item',
     'upload_pdf_original',

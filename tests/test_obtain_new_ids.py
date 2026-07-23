@@ -1,7 +1,605 @@
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, UTC
+from io import StringIO
+import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 
+from internet_archive_policy import SUPPORTED_WORK_TYPES
+from obtain_new_ids import (
+    DEFAULT_IA_LOOKBACK_HOURS,
+    DEFAULT_IA_MAX_IDS,
+    IA_QUERY_PAGE_SIZE,
+    InternetArchiveIDFinder,
+    InternetArchiveSelectionError,
+    MonthlyIDFinder,
+    WeeklyIDFinder,
+    canonical_utc_timestamp,
+    get_arguments,
+    get_id_finder,
+    lookback_hours_type,
+    main,
+    max_ids_type,
+    parse_api_timestamp,
+)
+from thothapi import (
+    INTERNET_ARCHIVE_SELECTION_QUERY,
+    ThothGraphQLResponseError,
+    get_internet_archive_selection_works,
+)
+
+
+NOW = datetime(2026, 7, 23, 4, 40, tzinfo=UTC)
+PUBLISHER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+WORK_ID = '11111111-1111-4111-8111-111111111111'
+
+
+def selection_work(
+        work_id=WORK_ID, updated_at='2026-07-23T04:00:00Z',
+        status='ACTIVE', work_type='MONOGRAPH', publications=None):
+    if publications is None:
+        publications = [{
+            'publicationType': 'PDF',
+            'locations': [{
+                'canonical': True,
+                'fullTextUrl': 'https://example.test/book.pdf',
+            }],
+        }]
+    return {
+        'workId': work_id,
+        'updatedAtWithRelations': updated_at,
+        'workStatus': status,
+        'workType': work_type,
+        'publications': publications,
+    }
+
+
+def numbered_work(number, updated_at=None):
+    work_id = '00000000-0000-4000-8000-{:012x}'.format(number)
+    if updated_at is None:
+        updated_at = (
+            NOW - timedelta(hours=29) + timedelta(minutes=number)
+        ).isoformat().replace('+00:00', 'Z')
+    return selection_work(work_id=work_id, updated_at=updated_at)
+
+
+class InternetArchiveFinderTestCase(unittest.TestCase):
+
+    def setUp(self):
+        self.thoth = MagicMock()
+        self.thoth.publisher.return_value = SimpleNamespace(
+            publisherId=PUBLISHER_ID)
+        self.environment = patch.dict(os.environ, {
+            'ENV_PUBLISHERS': json.dumps([PUBLISHER_ID]),
+            'ENV_EXCEPTIONS': '',
+        })
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def finder(self, works=None, **kwargs):
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth,
+            now_provider=lambda: NOW,
+            **kwargs,
+        )
+        finder_patch = patch(
+            'obtain_new_ids.get_internet_archive_selection_works',
+            return_value=list(works or []),
+        )
+        query = finder_patch.start()
+        self.addCleanup(finder_patch.stop)
+        return finder, query
+
+
+class TestInternetArchiveArgumentsAndMapping(
+        InternetArchiveFinderTestCase):
+
+    def test_internet_archive_maps_to_dedicated_finder(self):
+        args = get_arguments(['--platform', 'InternetArchive'])
+        self.assertIsInstance(
+            get_id_finder(args, thoth=self.thoth),
+            InternetArchiveIDFinder,
+        )
+
+    def test_other_monthly_platforms_stay_monthly(self):
+        for platform in ('Figshare', 'Zenodo', 'CUL'):
+            with self.subTest(platform=platform), patch(
+                    'obtain_new_ids.get_thoth_client',
+                    return_value=self.thoth):
+                args = get_arguments(['--platform', platform])
+                self.assertIsInstance(get_id_finder(args), MonthlyIDFinder)
+
+    def test_weekly_platforms_stay_weekly(self):
+        for platform in (
+                'OAPEN', 'EBSCOHost', 'JSTOR', 'ProjectMUSE', 'ProQuest'):
+            with self.subTest(platform=platform), patch(
+                    'obtain_new_ids.get_thoth_client',
+                    return_value=self.thoth):
+                args = get_arguments(['--platform', platform])
+                self.assertIsInstance(get_id_finder(args), WeeklyIDFinder)
+
+    def test_default_lookback_and_limit(self):
+        args = get_arguments(['--platform', 'InternetArchive'])
+        self.assertEqual(args.lookback_hours, DEFAULT_IA_LOOKBACK_HOURS)
+        self.assertEqual(args.max_ids, DEFAULT_IA_MAX_IDS)
+
+    def test_maximum_lookback_is_accepted(self):
+        self.assertEqual(lookback_hours_type('168'), 168)
+
+    def test_invalid_lookbacks_are_rejected(self):
+        for value in ('0', '-1', 'nan', 'inf', '-inf', '169', 'not-a-number'):
+            with self.subTest(value=value), self.assertRaises(
+                    Exception):
+                lookback_hours_type(value)
+
+    def test_fractional_positive_lookback_is_accepted(self):
+        self.assertEqual(lookback_hours_type('1.5'), 1.5)
+
+    def test_max_ids_bounds(self):
+        self.assertEqual(max_ids_type('1'), 1)
+        self.assertEqual(max_ids_type('200'), 200)
+        for value in ('0', '201', '1.5', 'nan'):
+            with self.subTest(value=value), self.assertRaises(Exception):
+                max_ids_type(value)
+
+
+class TestInternetArchiveConfiguration(InternetArchiveFinderTestCase):
+
+    def test_publisher_ids_are_normalised_deduplicated_and_sorted(self):
+        os.environ['ENV_PUBLISHERS'] = json.dumps([
+            PUBLISHER_ID.upper(), PUBLISHER_ID])
+        finder, _query = self.finder()
+        finder.select()
+        self.assertEqual(finder.publisher_ids, [PUBLISHER_ID])
+        self.thoth.publisher.assert_called_once_with(
+            publisher_id=PUBLISHER_ID)
+
+    def test_empty_publisher_list_fails_safely(self):
+        os.environ['ENV_PUBLISHERS'] = '[]'
+        finder, _query = self.finder()
+        with self.assertRaises(InternetArchiveSelectionError):
+            finder.select()
+
+    def test_malformed_publisher_uuid_fails(self):
+        os.environ['ENV_PUBLISHERS'] = '["not-a-uuid"]'
+        finder, _query = self.finder()
+        with self.assertRaises(InternetArchiveSelectionError):
+            finder.select()
+
+    def test_non_array_publishers_fail(self):
+        os.environ['ENV_PUBLISHERS'] = '"{}"'.format(PUBLISHER_ID)
+        finder, _query = self.finder()
+        with self.assertRaises(InternetArchiveSelectionError):
+            finder.select()
+
+    def test_unknown_publisher_fails(self):
+        self.thoth.publisher.return_value = None
+        finder, _query = self.finder()
+        with self.assertRaises(InternetArchiveSelectionError):
+            finder.select()
+
+    def test_publisher_lookup_error_is_sanitised(self):
+        self.thoth.publisher.side_effect = RuntimeError(
+            'upstream response with irrelevant internals')
+        finder, _query = self.finder()
+        with self.assertRaisesRegex(
+                InternetArchiveSelectionError,
+                'could not be confirmed'):
+            finder.select()
+
+    def test_exceptions_are_normalised_and_deduplicated(self):
+        os.environ['ENV_EXCEPTIONS'] = json.dumps([
+            WORK_ID.upper(), WORK_ID])
+        finder, _query = self.finder([selection_work()])
+        report = finder.select()
+        self.assertEqual(report['exception_ids'], [WORK_ID])
+        self.assertEqual(
+            report['excluded_counts'], {'configured_exception': 1})
+
+    def test_invalid_exception_configuration_fails(self):
+        for value in ('{}', '["bad"]', '[1]', 'null'):
+            with self.subTest(value=value):
+                os.environ['ENV_EXCEPTIONS'] = value
+                finder, _query = self.finder()
+                with self.assertRaises(InternetArchiveSelectionError):
+                    finder.select()
+
+
+class TestInternetArchiveWindowAndQuery(InternetArchiveFinderTestCase):
+
+    def test_one_injected_now_is_used_for_entire_run(self):
+        now_provider = MagicMock(return_value=NOW)
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth, now_provider=now_provider)
+        with patch(
+                'obtain_new_ids.get_internet_archive_selection_works',
+                return_value=[selection_work()]):
+            finder.select()
+        now_provider.assert_called_once_with()
+
+    def test_window_is_deterministic(self):
+        finder, _query = self.finder([selection_work()])
+        report = finder.select()
+        self.assertEqual(report['window'], {
+            'start': '2026-07-21T22:40:00Z',
+            'end': '2026-07-23T04:40:00Z',
+            'lookback_hours': 30,
+        })
+        self.assertEqual(report['generated_at'], report['window']['end'])
+
+    def test_query_uses_relation_update_start_and_policy(self):
+        finder, query = self.finder()
+        finder.select()
+        query.assert_called_once_with(
+            self.thoth,
+            [PUBLISHER_ID],
+            SUPPORTED_WORK_TYPES,
+            '2026-07-21T22:40:00Z',
+            page_size=IA_QUERY_PAGE_SIZE,
+        )
+
+    def test_relation_only_update_is_included(self):
+        work = selection_work()
+        work['updatedAt'] = '2020-01-01T00:00:00Z'
+        finder, _query = self.finder([work])
+        self.assertEqual(finder.select()['selected_count'], 1)
+
+    def test_update_equal_to_window_start_is_excluded(self):
+        finder, _query = self.finder([
+            selection_work(updated_at='2026-07-21T22:40:00Z')])
+        report = finder.select()
+        self.assertEqual(report['selected_count'], 0)
+        self.assertEqual(report['excluded'][0]['reason'], 'outside_window')
+
+    def test_update_before_window_start_is_excluded(self):
+        finder, _query = self.finder([
+            selection_work(updated_at='2026-07-21T22:39:59Z')])
+        self.assertEqual(
+            finder.select()['excluded'][0]['reason'], 'outside_window')
+
+    def test_update_at_window_end_is_included(self):
+        finder, _query = self.finder([
+            selection_work(updated_at='2026-07-23T04:40:00Z')])
+        self.assertEqual(finder.select()['selected_count'], 1)
+
+    def test_update_after_window_end_is_reported(self):
+        finder, _query = self.finder([
+            selection_work(updated_at='2026-07-23T04:40:01Z')])
+        report = finder.select()
+        self.assertEqual(report['selected_count'], 0)
+        self.assertEqual(report['excluded'][0]['reason'], 'after_window_end')
+
+    def test_missing_timestamp_is_reported(self):
+        finder, _query = self.finder([
+            selection_work(updated_at=None)])
+        self.assertEqual(
+            finder.select()['excluded'][0]['reason'],
+            'missing_update_timestamp',
+        )
+
+    def test_malformed_and_naive_timestamps_are_reported(self):
+        finder, _query = self.finder([
+            selection_work(
+                work_id=WORK_ID, updated_at='not-a-timestamp'),
+            selection_work(
+                work_id='22222222-2222-4222-8222-222222222222',
+                updated_at='2026-07-23T04:00:00'),
+        ])
+        report = finder.select()
+        self.assertEqual(
+            report['excluded_counts'], {'malformed_update_timestamp': 2})
+
+    def test_utc_and_offset_timestamps_normalise(self):
+        self.assertEqual(
+            canonical_utc_timestamp(
+                parse_api_timestamp('2026-07-23T05:00:00+01:00')),
+            '2026-07-23T04:00:00Z',
+        )
+        self.assertEqual(
+            canonical_utc_timestamp(
+                parse_api_timestamp('2026-07-23T04:00:00Z')),
+            '2026-07-23T04:00:00Z',
+        )
+
+
+class TestInternetArchiveEligibility(InternetArchiveFinderTestCase):
+
+    def assert_excluded(self, work, reason):
+        finder, _query = self.finder([work])
+        report = finder.select()
+        self.assertEqual(report['selected_count'], 0)
+        self.assertEqual(report['excluded'][0]['reason'], reason)
+
+    def test_active_supported_work_with_source_is_included(self):
+        finder, _query = self.finder([selection_work()])
+        self.assertEqual(finder.select()['selected_count'], 1)
+
+    def test_inactive_work_is_excluded(self):
+        self.assert_excluded(
+            selection_work(status='FORTHCOMING'), 'inactive')
+
+    def test_unsupported_work_type_is_excluded(self):
+        self.assert_excluded(
+            selection_work(work_type='BOOK_CHAPTER'),
+            'unsupported_work_type',
+        )
+
+    def test_work_without_pdf_is_excluded(self):
+        self.assert_excluded(
+            selection_work(publications=[]), 'no_pdf_publication')
+
+    def test_pdf_without_canonical_location_is_excluded(self):
+        self.assert_excluded(selection_work(publications=[{
+            'publicationType': 'PDF',
+            'locations': [{
+                'canonical': False,
+                'fullTextUrl': 'https://example.test/book.pdf',
+            }],
+        }]), 'no_canonical_pdf_location')
+
+    def test_canonical_pdf_without_url_is_excluded(self):
+        for value in (None, '', '   '):
+            with self.subTest(value=value):
+                self.assert_excluded(selection_work(publications=[{
+                    'publicationType': 'PDF',
+                    'locations': [{
+                        'canonical': True,
+                        'fullTextUrl': value,
+                    }],
+                }]), 'canonical_pdf_location_missing_full_text_url')
+
+    def test_source_eligibility_does_not_make_network_requests(self):
+        finder, _query = self.finder([selection_work()])
+        with patch('requests.get') as get, patch('requests.head') as head:
+            finder.select()
+        get.assert_not_called()
+        head.assert_not_called()
+
+    def test_exceptions_are_applied_before_capacity(self):
+        exception_id = numbered_work(1)['workId']
+        os.environ['ENV_EXCEPTIONS'] = json.dumps([exception_id])
+        finder, _query = self.finder(
+            [numbered_work(1), numbered_work(2)],
+            max_ids=1,
+        )
+        report = finder.select()
+        self.assertEqual(
+            [entry['work_id'] for entry in report['selected']],
+            [numbered_work(2)['workId']],
+        )
+        self.assertFalse(report['truncated'])
+
+
+class TestInternetArchiveOrderingAndCap(InternetArchiveFinderTestCase):
+
+    def test_duplicate_work_ids_retain_newest_valid_timestamp(self):
+        finder, _query = self.finder([
+            selection_work(updated_at='2026-07-23T01:00:00Z'),
+            selection_work(updated_at='2026-07-23T03:00:00Z'),
+        ])
+        report = finder.select()
+        self.assertEqual(report['eligible_count'], 1)
+        self.assertEqual(
+            report['selected'][0]['updated_at_with_relations'],
+            '2026-07-23T03:00:00Z',
+        )
+
+    def test_oldest_updates_sort_first(self):
+        finder, _query = self.finder([
+            numbered_work(2, '2026-07-23T03:00:00Z'),
+            numbered_work(1, '2026-07-23T01:00:00Z'),
+        ])
+        report = finder.select()
+        self.assertEqual(
+            [entry['work_id'] for entry in report['selected']],
+            [numbered_work(1)['workId'], numbered_work(2)['workId']],
+        )
+
+    def test_equal_timestamps_sort_by_work_id(self):
+        timestamp = '2026-07-23T03:00:00Z'
+        finder, _query = self.finder([
+            numbered_work(2, timestamp), numbered_work(1, timestamp)])
+        report = finder.select()
+        self.assertEqual(
+            [entry['work_id'] for entry in report['selected']],
+            sorted([numbered_work(2)['workId'], numbered_work(1)['workId']]),
+        )
+
+    def test_cap_selects_200_and_reports_every_overflow(self):
+        works = [numbered_work(number) for number in range(1, 204)]
+        finder, _query = self.finder(works)
+        report = finder.select()
+        self.assertEqual(report['selected_count'], 200)
+        self.assertEqual(report['omitted_count'], 3)
+        self.assertTrue(report['truncated'])
+        self.assertEqual(len(report['omitted']), 3)
+        self.assertEqual(
+            report['selected'] + report['omitted'],
+            sorted(
+                report['selected'] + report['omitted'],
+                key=lambda entry: (
+                    entry['updated_at_with_relations'], entry['work_id']),
+            ),
+        )
+
+    def test_custom_cap_is_applied_after_eligibility(self):
+        works = [
+            numbered_work(1),
+            selection_work(
+                work_id=numbered_work(2)['workId'],
+                updated_at=numbered_work(2)['updatedAtWithRelations'],
+                publications=[]),
+            numbered_work(3),
+        ]
+        finder, _query = self.finder(works, max_ids=1)
+        report = finder.select()
+        self.assertEqual(report['eligible_count'], 2)
+        self.assertEqual(report['selected_count'], 1)
+        self.assertEqual(report['omitted_count'], 1)
+
+    def test_selected_and_omitted_timestamps_are_canonical_utc(self):
+        finder, _query = self.finder([
+            numbered_work(1, '2026-07-23T03:00:00+01:00'),
+            numbered_work(2, '2026-07-23T04:00:00+01:00'),
+        ], max_ids=1)
+        report = finder.select()
+        self.assertEqual(
+            report['selected'][0]['updated_at_with_relations'],
+            '2026-07-23T02:00:00Z',
+        )
+        self.assertEqual(
+            report['omitted'][0]['updated_at_with_relations'],
+            '2026-07-23T03:00:00Z',
+        )
+
+
+class TestInternetArchiveOutputAndFailure(InternetArchiveFinderTestCase):
+
+    def test_empty_selection_outputs_exact_json_array(self):
+        finder, _query = self.finder([])
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            finder.run()
+        self.assertEqual(stdout.getvalue(), '[]\n')
+
+    def test_selected_stdout_is_compact_json_and_logs_stay_off_stdout(self):
+        finder, _query = self.finder([selection_work()])
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            finder.run()
+        self.assertEqual(json.loads(stdout.getvalue()), [WORK_ID])
+        self.assertEqual(stdout.getvalue(), '["{}"]\n'.format(WORK_ID))
+
+    def test_report_output_is_deterministic(self):
+        first, _query = self.finder([selection_work()])
+        second, _query = self.finder([selection_work()])
+        self.assertEqual(first.select(), second.select())
+
+    def test_report_file_is_sorted_json_with_trailing_newline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'selection.json'
+            finder, _query = self.finder(
+                [selection_work()], report_path=path)
+            with redirect_stdout(StringIO()):
+                finder.run()
+            content = path.read_text(encoding='utf-8')
+            self.assertTrue(content.endswith('\n'))
+            self.assertEqual(json.loads(content), finder.report)
+
+    def test_query_failure_returns_nonzero_and_writes_failure_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / 'failure.json'
+            with patch(
+                    'obtain_new_ids.get_internet_archive_selection_works',
+                    side_effect=RuntimeError('query unavailable')):
+                status = main([
+                    '--platform', 'InternetArchive',
+                    '--report', str(report_path),
+                ], now_provider=lambda: NOW, thoth=self.thoth)
+            self.assertEqual(status, 1)
+            report = json.loads(report_path.read_text(encoding='utf-8'))
+            self.assertEqual(report['status'], 'failed')
+            self.assertNotIn('environ', json.dumps(report).lower())
+
+    def test_truncation_warns_to_stderr_but_outputs_valid_json(self):
+        finder, _query = self.finder(
+            [numbered_work(1), numbered_work(2)], max_ids=1)
+        stdout = StringIO()
+        with redirect_stdout(stdout), self.assertLogs(level='WARNING') as logs:
+            finder.run()
+        self.assertEqual(json.loads(stdout.getvalue()), [
+            numbered_work(1)['workId']])
+        self.assertIn('selection artifact', '\n'.join(logs.output))
+
+
+class TestInternetArchiveGraphQLHelper(unittest.TestCase):
+
+    def test_query_requests_only_selection_fields_and_relation_order(self):
+        self.assertIn('updatedAtWithRelations', INTERNET_ARCHIVE_SELECTION_QUERY)
+        self.assertIn('UPDATED_AT_WITH_RELATIONS', INTERNET_ARCHIVE_SELECTION_QUERY)
+        self.assertIn('publications {', INTERNET_ARCHIVE_SELECTION_QUERY)
+        self.assertIn('locations {', INTERNET_ARCHIVE_SELECTION_QUERY)
+        self.assertNotIn('publicationDate', INTERNET_ARCHIVE_SELECTION_QUERY)
+
+    def test_pagination_uses_bounded_pages_and_retrieves_all(self):
+        first_page = [numbered_work(number) for number in range(100)]
+        second_page = [numbered_work(100)]
+        thoth = MagicMock()
+        thoth.client.execute.side_effect = [
+            {'data': {'works': first_page}},
+            {'data': {'works': second_page}},
+        ]
+        works = get_internet_archive_selection_works(
+            thoth, [PUBLISHER_ID], SUPPORTED_WORK_TYPES,
+            '2026-07-21T22:40:00Z')
+        self.assertEqual(len(works), 101)
+        self.assertEqual(
+            [call.args[1]['offset'] for call in thoth.client.execute.call_args_list],
+            [0, 100],
+        )
+        self.assertTrue(all(
+            call.args[1]['limit'] == 100
+            for call in thoth.client.execute.call_args_list))
+
+    def test_query_applies_publishers_status_types_and_start_filter(self):
+        thoth = MagicMock()
+        thoth.client.execute.return_value = {'data': {'works': []}}
+        get_internet_archive_selection_works(
+            thoth, [PUBLISHER_ID], SUPPORTED_WORK_TYPES,
+            '2026-07-21T22:40:00Z')
+        variables = thoth.client.execute.call_args.args[1]
+        self.assertEqual(variables['publishers'], [PUBLISHER_ID])
+        self.assertEqual(variables['workStatuses'], ['ACTIVE'])
+        self.assertEqual(variables['workTypes'], list(SUPPORTED_WORK_TYPES))
+        self.assertEqual(variables['updatedAtWithRelations'], {
+            'timestamp': '2026-07-21T22:40:00Z',
+            'expression': 'GREATER_THAN',
+        })
+
+    def test_graphql_errors_retain_message_without_extensions(self):
+        thoth = MagicMock()
+        thoth.client.execute.return_value = {
+            'errors': [{
+                'message': 'useful failure',
+                'path': ['works'],
+                'extensions': {'debug': 'internal'},
+            }],
+        }
+        with self.assertRaises(ThothGraphQLResponseError) as raised:
+            get_internet_archive_selection_works(
+                thoth, [PUBLISHER_ID], SUPPORTED_WORK_TYPES,
+                '2026-07-21T22:40:00Z')
+        self.assertIn('useful failure', str(raised.exception))
+        self.assertNotIn('internal', str(raised.exception))
+
+    def test_page_size_must_be_bounded(self):
+        for value in (0, 101, 1.5):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                get_internet_archive_selection_works(
+                    MagicMock(), [PUBLISHER_ID], SUPPORTED_WORK_TYPES,
+                    '2026-07-21T22:40:00Z', page_size=value)
+
+
+class TestExistingFinderJSONCompatibility(unittest.TestCase):
+
+    def test_existing_finder_stdout_is_valid_json(self):
+        finder = MagicMock()
+        finder.thoth_ids = ['a', 'b']
+        finder.get_publishers = MagicMock()
+        finder.get_query_parameters = MagicMock()
+        finder.get_thoth_ids = MagicMock()
+        finder.remove_exceptions = MagicMock()
+        finder.post_process = MagicMock()
+        from obtain_new_ids import IDFinder
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            IDFinder.run(finder)
+        self.assertEqual(json.loads(stdout.getvalue()), ['a', 'b'])
 
 def make_location(platform):
     return SimpleNamespace(locationPlatform=platform)

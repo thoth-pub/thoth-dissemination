@@ -8,9 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
   - Added a manual, dry-run-by-default Internet Archive reconciliation workflow with bounded input validation, protected `develop`-only apply mode, diagnostic artifacts, and Step Summaries
   - Added a read-only-by-default Internet Archive reconciliation CLI with explicit and publisher selection provenance, deterministic JSON/JSONL reports, and guarded apply mode
+  - Added deterministic scheduled Internet Archive selection reports, 30-day diagnostic artifacts, Step Summaries, and a visible final overflow guard
 
 ### Changed
   - Made Internet Archive dissemination idempotently converge managed originals and metadata, verify their final remote state in one bounded polling loop, and preserve unrelated Archive data
+  - Changed scheduled Internet Archive dissemination from monthly publication-date selection to daily `updatedAtWithRelations` selection using a captured 30-hour UTC window, a 200-work oldest-first cap, and four-way parallelism
+  - Prevent simultaneous ordinary dissemination of the same platform/work pair while allowing different works and platforms to proceed independently
+  - Emit compact valid JSON arrays from all automatic ID finders
   - Distinguished mutable Internet Archive metadata from initial-only `mediatype` and administrator-only collection state in reconciliation reports
   - Made Thoth location write-back converge create, update, and no-op states while preserving canonical and checksum data
   - Report all reconciliation recommendations separately from safe automatic, attempted, applied, and uncertain actions

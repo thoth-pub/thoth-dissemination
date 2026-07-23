@@ -23,6 +23,39 @@ query PublicationLocations($publicationId: Uuid!, $limit: Int!, $offset: Int!) {
 }
 """
 
+INTERNET_ARCHIVE_SELECTION_QUERY = """
+query InternetArchiveSelection(
+  $limit: Int!
+  $offset: Int!
+  $publishers: [Uuid!]!
+  $workTypes: [WorkType!]!
+  $workStatuses: [WorkStatus!]!
+  $updatedAtWithRelations: TimeExpression!
+) {
+  works(
+    limit: $limit
+    offset: $offset
+    publishers: $publishers
+    workTypes: $workTypes
+    workStatuses: $workStatuses
+    order: {field: UPDATED_AT_WITH_RELATIONS, direction: ASC}
+    updatedAtWithRelations: $updatedAtWithRelations
+  ) {
+    workId
+    updatedAtWithRelations
+    workStatus
+    workType
+    publications {
+      publicationType
+      locations {
+        canonical
+        fullTextUrl
+      }
+    }
+  }
+}
+"""
+
 
 class ThothGraphQLTransportError(RuntimeError):
     """The Thoth GraphQL endpoint could not return a usable response."""
@@ -165,6 +198,75 @@ def get_publication_locations(thoth, publication_id):
         all_locations.extend(page)
         if len(page) < page_size:
             return all_locations
+        offset += page_size
+
+
+def get_internet_archive_selection_works(
+        thoth, publisher_ids, work_types, updated_after, page_size=100):
+    """Return every IA selection candidate using a bounded GraphQL query."""
+    if not isinstance(page_size, int) or page_size < 1 or page_size > 100:
+        raise ValueError('page_size must be between 1 and 100')
+
+    offset = 0
+    all_works = []
+    while True:
+        variables = {
+            'limit': page_size,
+            'offset': offset,
+            'publishers': list(publisher_ids),
+            'workTypes': list(work_types),
+            'workStatuses': ['ACTIVE'],
+            'updatedAtWithRelations': {
+                'timestamp': updated_after,
+                'expression': 'GREATER_THAN',
+            },
+        }
+        try:
+            response = thoth.client.execute(
+                INTERNET_ARCHIVE_SELECTION_QUERY, variables)
+        except Exception as error:
+            raise ThothGraphQLTransportError(
+                'Unable to query Internet Archive selection candidates: {}'.format(
+                    error)
+            ) from error
+
+        try:
+            payload = json.loads(response) if isinstance(response, str) else response
+        except (TypeError, ValueError) as error:
+            raise ThothGraphQLTransportError(
+                'Invalid JSON response from Thoth: {}'.format(error)
+            ) from error
+
+        if not isinstance(payload, dict):
+            raise ThothGraphQLTransportError(
+                'Thoth selection response was not an object')
+        if payload.get('errors'):
+            useful_errors = []
+            for error in payload['errors']:
+                if isinstance(error, dict):
+                    useful_errors.append({
+                        key: error[key] for key in ('message', 'path')
+                        if key in error
+                    })
+                else:
+                    useful_errors.append(str(error))
+            raise ThothGraphQLResponseError(
+                json.dumps(useful_errors, sort_keys=True)
+            )
+
+        try:
+            page = payload['data']['works']
+        except (KeyError, TypeError) as error:
+            raise ThothGraphQLTransportError(
+                'Thoth selection response did not contain a works list'
+            ) from error
+        if not isinstance(page, list):
+            raise ThothGraphQLTransportError(
+                'Thoth selection response did not contain a works list')
+
+        all_works.extend(page)
+        if len(page) < page_size:
+            return all_works
         offset += page_size
 
 
