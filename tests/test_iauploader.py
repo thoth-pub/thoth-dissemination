@@ -42,13 +42,17 @@ def original_file(name, contents):
 
 
 class FakeItem:
-    def __init__(self, identifier, exists, metadata=None, files=None):
+    def __init__(
+            self, identifier, exists, metadata=None, files=None,
+            identifier_available=True):
         self.identifier = identifier
         self.exists = exists
         self.metadata = dict(metadata or {})
         self.files = list(files or [])
         self.refresh = MagicMock(side_effect=self._refresh)
         self.modify_metadata = MagicMock(side_effect=self._modify_metadata)
+        self.identifier_available = MagicMock(
+            return_value=identifier_available)
         self.refresh_hook = None
 
     def _refresh(self):
@@ -195,7 +199,45 @@ class TestIAUploader(unittest.TestCase):
         self.assertTrue(pdf_call['verify'])
         self.assertTrue(pdf_call['queue_derive'])
         self.item.modify_metadata.assert_not_called()
+        self.item.identifier_available.assert_called_once_with()
         self._assert_location(locations[0])
+
+    def test_unavailable_missing_identifier_fast_fails_before_sources(self):
+        self.item.identifier_available.return_value = False
+
+        with self.assertRaisesRegex(
+                InternetArchiveIdentifierCollisionError,
+                'no public item metadata.*reported the identifier unavailable'):
+            self.uploader.upload_to_platform()
+
+        self.item.identifier_available.assert_called_once_with()
+        self.uploader.get_formatted_metadata.assert_not_called()
+        self.uploader.get_publication_details.assert_not_called()
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+
+    def test_identifier_availability_failure_fast_fails_before_sources(self):
+        self.item.identifier_available.side_effect = RuntimeError(
+            'availability endpoint failed')
+
+        with self.assertRaisesRegex(
+                DisseminationError, 'Unable to check.*availability endpoint failed'):
+            self.uploader.upload_to_platform()
+
+        self.uploader.get_formatted_metadata.assert_not_called()
+        self.uploader.get_publication_details.assert_not_called()
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+
+    def test_invalid_identifier_availability_response_is_rejected(self):
+        self.item.identifier_available.return_value = 'available'
+
+        with self.assertRaisesRegex(
+                DisseminationError, 'invalid response'):
+            self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_not_called()
+        self.uploader.get_formatted_metadata.assert_not_called()
 
     def test_existing_current_item_skips_files_and_metadata(self):
         self._set_existing_item()
@@ -205,6 +247,7 @@ class TestIAUploader(unittest.TestCase):
         self.mock_upload.assert_not_called()
         self.item.modify_metadata.assert_not_called()
         self.assertGreaterEqual(self.item.refresh.call_count, 1)
+        self.item.identifier_available.assert_not_called()
         self._assert_location(locations[0])
 
     def test_existing_item_with_changed_pdf_uploads_only_pdf(self):
@@ -300,6 +343,7 @@ class TestIAUploader(unittest.TestCase):
         mock_warning.assert_called_once()
         metadata_patch = self.item.modify_metadata.call_args.args[0]
         self.assertEqual(metadata_patch['thoth-work-id'], WORK_ID)
+        self.item.identifier_available.assert_not_called()
 
     def test_existing_item_with_matching_marker_is_accepted(self):
         metadata = self._desired_metadata()

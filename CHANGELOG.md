@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
   - Send explicit GraphQL nulls when clearing nullable location full-text URLs
+  - Refuse to create or repair an Internet Archive item unless its missing identifier is explicitly reported as available
 
 ## [[1.4.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.4.1) - 2026-07-20
 ### Fixed

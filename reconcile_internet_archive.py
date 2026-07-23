@@ -257,6 +257,7 @@ def _archive_report(item, desired, inspection):
         'exists': inspection['exists'],
         'ownership': inspection['ownership'],
         'ownership_reason': inspection['ownership_reason'],
+        'identifier_available': inspection['identifier_available'],
         'accepted_legacy_item': inspection['legacy'],
         'warnings': (
             ['legacy_item_missing_ownership_marker']
@@ -309,6 +310,7 @@ def _archive_inventory_report(item, uploader):
         'exists': bool(item.exists),
         'ownership': ownership['status'],
         'ownership_reason': ownership['reason'],
+        'identifier_available': ownership['identifier_available'],
         'accepted_legacy_item': ownership['status'] == 'legacy',
         'warnings': (
             ['legacy_item_missing_ownership_marker']
@@ -583,12 +585,12 @@ class InternetArchiveReconciler:
                 item, uploader)
             context['item'] = item
             result['internet_archive'] = archive_report
-            if not item.exists:
-                issues.append('item_missing')
-                actions.append('create_archive_item')
-            elif ownership['status'] == 'collision':
+            if ownership['status'] == 'collision':
                 issues.append('identifier_collision')
                 actions.append('resolve_identifier_collision')
+            elif not item.exists:
+                issues.append('item_missing')
+                actions.append('create_archive_item')
         except Exception as error:
             issues.append('archive_request_failed')
             errors.append('Internet Archive request failed: {}'.format(error))
@@ -637,16 +639,16 @@ class InternetArchiveReconciler:
                     'collection item without an ownership marker',
                     desired.identifier,
                 )
-            if not inspection['exists']:
+            if inspection['ownership'] == 'collision':
+                issues.append('identifier_collision')
+                actions.append('resolve_identifier_collision')
+            elif not inspection['exists']:
                 issues.append('item_missing')
                 actions.extend([
                     'create_archive_item',
                     'upload_pdf_original',
                     'upload_json_original',
                 ])
-            elif inspection['ownership'] == 'collision':
-                issues.append('identifier_collision')
-                actions.append('resolve_identifier_collision')
             else:
                 pdf_name = '{}.pdf'.format(desired.identifier)
                 json_name = '{}.json'.format(desired.identifier)

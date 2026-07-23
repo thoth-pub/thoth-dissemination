@@ -81,12 +81,11 @@ class IAUploader(Uploader):
                 'Error inspecting Internet Archive item {}: {}'.format(
                     identifier, error)) from error
 
-        item_exists = item.exists
-        if item_exists:
-            self._assert_item_owned_by_thoth(item)
+        ownership = self.classify_item_ownership(item)
+        self._assert_item_owned_by_thoth(item, ownership=ownership)
 
         desired = self.build_desired_state()
-        inspection = self.inspect_item(item, desired)
+        inspection = self.inspect_item(item, desired, ownership=ownership)
         verified_md5s = self.apply_archive_repairs(
             item,
             desired,
@@ -196,19 +195,54 @@ class IAUploader(Uploader):
     def classify_item_ownership(self, item):
         """Return an ownership classification shared by inspect and apply paths."""
         if not item.exists:
-            return {'status': 'missing', 'reason': None}
+            try:
+                available = item.identifier_available()
+            except Exception as error:
+                raise DisseminationError(
+                    'Unable to check Internet Archive identifier availability '
+                    'for {} after no public item metadata was available: {}; '
+                    'the item will not be created or modified'.format(
+                        self.work_id, error)
+                ) from error
+            if type(available) is not bool:
+                raise DisseminationError(
+                    'Internet Archive identifier availability returned an '
+                    'invalid response {!r} for {} after no public item '
+                    'metadata was available; the item will not be created or '
+                    'modified'.format(available, self.work_id)
+                )
+            if available:
+                return {
+                    'status': 'missing',
+                    'reason': None,
+                    'identifier_available': True,
+                }
+            return {
+                'status': 'collision',
+                'reason': (
+                    'no public item metadata was available, but the identifier '
+                    'availability API reported the identifier unavailable; the '
+                    'item will not be created or modified'
+                ),
+                'identifier_available': False,
+            }
 
         marker_values = self._as_metadata_list(
             item.metadata.get('thoth-work-id'))
         if marker_values:
             if all(value == self.work_id for value in marker_values):
-                return {'status': 'owned', 'reason': None}
+                return {
+                    'status': 'owned',
+                    'reason': None,
+                    'identifier_available': None,
+                }
             return {
                 'status': 'collision',
                 'reason': (
                     'existing thoth-work-id metadata is {!r}'.format(
                         marker_values)
                 ),
+                'identifier_available': None,
             }
 
         collections = self._as_metadata_list(
@@ -218,6 +252,7 @@ class IAUploader(Uploader):
             return {
                 'status': 'legacy',
                 'reason': 'legacy Thoth collection item has no ownership marker',
+                'identifier_available': None,
             }
 
         return {
@@ -227,11 +262,12 @@ class IAUploader(Uploader):
                 'identifiable legacy member of the {} collection'.format(
                     self.THOTH_COLLECTION)
             ),
+            'identifier_available': None,
         }
 
-    def inspect_item(self, item, desired):
+    def inspect_item(self, item, desired, ownership=None):
         """Compare one Archive item with desired state without mutating it."""
-        ownership = self.classify_item_ownership(item)
+        ownership = ownership or self.classify_item_ownership(item)
         originals = self._original_files(item.files)
         files = self.compare_original_files(
             originals, desired.expected_md5s)
@@ -249,6 +285,7 @@ class IAUploader(Uploader):
             'exists': bool(item.exists),
             'ownership': ownership['status'],
             'ownership_reason': ownership['reason'],
+            'identifier_available': ownership['identifier_available'],
             'legacy': ownership['status'] == 'legacy',
             'files': files,
             'metadata_current': bool(item.exists) and not metadata_problems,
@@ -317,10 +354,10 @@ class IAUploader(Uploader):
             desired.absent_metadata_fields,
         )
 
-    def _assert_item_owned_by_thoth(self, item):
+    def _assert_item_owned_by_thoth(self, item, ownership=None):
         """Raise when an existing identifier cannot safely be linked to Thoth."""
-        ownership = self.classify_item_ownership(item)
-        if ownership['status'] == 'owned':
+        ownership = ownership or self.classify_item_ownership(item)
+        if ownership['status'] in {'owned', 'missing'}:
             return
         if ownership['status'] == 'legacy':
             logging.warning(

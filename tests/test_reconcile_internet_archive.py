@@ -88,13 +88,17 @@ def original_file(name, contents):
 
 
 class FakeItem:
-    def __init__(self, exists=True, metadata=None, files=None):
+    def __init__(
+            self, exists=True, metadata=None, files=None,
+            identifier_available=True):
         self.identifier = WORK_ID
         self.exists = exists
         self.metadata = dict(metadata or {})
         self.files = list(files or [])
         self.refresh = MagicMock()
         self.modify_metadata = MagicMock()
+        self.identifier_available = MagicMock(
+            return_value=identifier_available)
 
 
 def desired_metadata(metadata=None):
@@ -301,10 +305,12 @@ class TestDryRunInspection(unittest.TestCase):
         self.assertEqual(result['issues'], [])
 
     def test_missing_archive_item(self):
-        result, _, _, _ = self.harness.inspect(
-            item=FakeItem(exists=False), locations=[])
+        item = FakeItem(exists=False)
+        result, _, _, _ = self.harness.inspect(item=item, locations=[])
 
         self.assertEqual(result['status'], 'item_missing')
+        self.assertTrue(result['internet_archive']['identifier_available'])
+        item.identifier_available.assert_called_once_with()
         self.assertEqual(result['recommended_actions'], [
             'create_archive_item',
             'upload_pdf_original',
@@ -313,6 +319,52 @@ class TestDryRunInspection(unittest.TestCase):
         ])
         self.assertEqual(
             result['auto_applicable_actions'], result['recommended_actions'])
+
+    def test_unavailable_identifier_is_collision_not_missing(self):
+        item = FakeItem(exists=False, identifier_available=False)
+
+        result, _, _, _ = self.harness.inspect(item=item, locations=[])
+
+        self.assertEqual(result['status'], 'identifier_collision')
+        self.assertIn('identifier_collision', result['issues'])
+        self.assertNotIn('item_missing', result['issues'])
+        self.assertFalse(
+            result['internet_archive']['identifier_available'])
+        self.assertIn(
+            'no public item metadata was available',
+            result['internet_archive']['ownership_reason'],
+        )
+        self.assertEqual(result['auto_applicable_actions'], [])
+        item.identifier_available.assert_called_once_with()
+
+    def test_identifier_availability_failure_is_archive_request_error(self):
+        item = FakeItem(exists=False)
+        item.identifier_available.side_effect = RuntimeError(
+            'availability endpoint failed')
+
+        result, _, _, _ = self.harness.inspect(item=item, locations=[])
+
+        self.assertIn('archive_request_failed', result['issues'])
+        self.assertNotIn('item_missing', result['issues'])
+        self.assertIn('availability endpoint failed', result['error'])
+        self.assertEqual(result['auto_applicable_actions'], [])
+
+    def test_discoverable_state_uses_unavailable_identifier_rule(self):
+        item = FakeItem(exists=False, identifier_available=False)
+
+        result, _, _, _ = self.harness.inspect(
+            item=item,
+            locations=[],
+            pdf_error=DisseminationError('PDF unavailable'),
+        )
+
+        self.assertIn('pdf_source_unavailable', result['issues'])
+        self.assertIn('identifier_collision', result['issues'])
+        self.assertNotIn('item_missing', result['issues'])
+        self.assertFalse(
+            result['internet_archive']['identifier_available'])
+        self.assertEqual(result['auto_applicable_actions'], [])
+        item.identifier_available.assert_called_once_with()
 
     def test_missing_pdf_original(self):
         result, _, _, _ = self.harness.inspect(item=current_item(files=[
@@ -858,6 +910,48 @@ class TestApplyMode(unittest.TestCase):
         self.assertEqual(result['attempted_actions'], [])
         archive_repair.assert_not_called()
         upsert.assert_not_called()
+
+    def test_unavailable_identifier_apply_performs_zero_mutations(self):
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        item = FakeItem(exists=False, identifier_available=False)
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                return_value=JSON_BYTES), patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=Publication(
+                        'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+                        'https://source.example/book.pdf')), \
+                patch('reconcile_internet_archive.get_item',
+                      return_value=item), patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=[]), patch.object(
+                    IAUploader, 'apply_archive_repairs') as archive_repair, \
+                patch('reconcile_internet_archive.upsert_location') as upsert:
+            result = reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertIn('identifier_collision', result['issues'])
+        self.assertEqual(result['auto_applicable_actions'], [])
+        self.assertEqual(result['attempted_actions'], [])
+        archive_repair.assert_not_called()
+        upsert.assert_not_called()
+        item.modify_metadata.assert_not_called()
+
+    def test_availability_failure_mixed_batch_continues(self):
+        failed = repairable_result([], status='error')
+        failed['issues'] = ['archive_request_failed']
+        failed['error'] = 'identifier availability request failed'
+        with patch.object(
+                self.reconciler, 'reconcile_one',
+                side_effect=[failed, current_result()]) as reconcile_one:
+            results = self.reconciler.reconcile(
+                [WORK_ID, WORK_ID_2], apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(results[0]['issues'], ['archive_request_failed'])
+        self.assertEqual(results[1]['status'], 'current')
+        self.assertEqual(reconcile_one.call_count, 2)
 
     def test_real_orchestration_records_successful_archive_repair(self):
         item = current_item(files=[
