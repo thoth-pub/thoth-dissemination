@@ -826,6 +826,147 @@ class TestDryRunInspection(unittest.TestCase):
 
         self.assertEqual(first, second)
 
+    def test_collection_conflict_is_reported_as_admin_only_manual_action(self):
+        metadata = desired_metadata()
+        metadata.pop('collection')
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(result['status'], 'metadata_conflict')
+        self.assertIn(
+            'archive_collection_membership_conflict', result['issues'])
+        self.assertIn(
+            'resolve_archive_collection_membership',
+            result['recommended_actions'],
+        )
+        archive_metadata = result['internet_archive']['metadata']
+        self.assertEqual(archive_metadata['mutable_problems'], [])
+        self.assertEqual(archive_metadata['initial_only_problems'], [])
+        self.assertEqual(archive_metadata['immutable_problems'], [])
+        self.assertEqual(archive_metadata['admin_only_problems'], [
+            "collection is None, expected to include "
+            "'thoth-archiving-network'",
+        ])
+        self.assertEqual(
+            archive_metadata['restricted_problems'],
+            archive_metadata['admin_only_problems'],
+        )
+        self.assertNotIn('collection', archive_metadata['patch_fields'])
+
+    def test_collection_only_conflict_is_not_mutable_metadata_drift(self):
+        metadata = desired_metadata()
+        metadata['collection'] = 'unrelated-collection'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertNotIn('archive_metadata_stale', result['issues'])
+        self.assertNotIn(
+            'update_archive_metadata', result['recommended_actions'])
+        self.assertEqual(result['recommended_actions'], [
+            'resolve_archive_collection_membership',
+        ])
+
+    def test_collection_and_mutable_drift_retain_both_actions(self):
+        metadata = desired_metadata()
+        metadata.pop('collection')
+        metadata['title'] = 'Old title'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(result['recommended_actions'], [
+            'resolve_archive_collection_membership',
+            'update_archive_metadata',
+        ])
+        self.assertIn('archive_metadata_stale', result['issues'])
+        self.assertEqual(
+            result['internet_archive']['metadata']['patch_fields'], ['title'])
+
+    def test_collection_conflict_retains_file_recommendations(self):
+        metadata = desired_metadata()
+        metadata['collection'] = []
+
+        result, _, _, _ = self.harness.inspect(item=FakeItem(
+            exists=True,
+            metadata=metadata,
+            files=[],
+        ))
+
+        self.assertEqual(result['recommended_actions'], [
+            'resolve_archive_collection_membership',
+            'upload_pdf_original',
+            'upload_json_original',
+        ])
+        self.assertIn('missing_pdf_original', result['issues'])
+        self.assertIn('missing_json_original', result['issues'])
+
+    def test_collection_conflict_retains_location_recommendation(self):
+        metadata = desired_metadata()
+        metadata['collection'] = 'unrelated-collection'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata),
+            locations=[],
+        )
+
+        self.assertEqual(result['recommended_actions'], [
+            'resolve_archive_collection_membership',
+            'create_thoth_location',
+        ])
+        self.assertIn('location_missing', result['issues'])
+
+    def test_collection_conflict_blocks_all_auto_applicable_actions(self):
+        metadata = desired_metadata()
+        metadata.pop('collection')
+        metadata['title'] = 'Old title'
+
+        result, _, _, _ = self.harness.inspect(
+            item=FakeItem(exists=True, metadata=metadata, files=[]),
+            locations=[],
+        )
+
+        self.assertEqual(result['auto_applicable_actions'], [])
+        self.assertIn(
+            'resolve_archive_collection_membership',
+            result['recommended_actions'],
+        )
+        self.assertIn(
+            'update_archive_metadata', result['recommended_actions'])
+        self.assertIn('upload_pdf_original', result['recommended_actions'])
+        self.assertIn(
+            'create_thoth_location', result['recommended_actions'])
+
+    def test_correct_collection_with_mutable_drift_is_auto_repairable(self):
+        metadata = desired_metadata()
+        metadata['collection'] = [
+            'unrelated-collection', IAUploader.THOTH_COLLECTION]
+        metadata['title'] = 'Old title'
+
+        result, _, _, _ = self.harness.inspect(
+            item=current_item(metadata=metadata))
+
+        self.assertEqual(result['status'], 'metadata_stale')
+        self.assertEqual(
+            result['auto_applicable_actions'],
+            ['update_archive_metadata'],
+        )
+        self.assertEqual(
+            result['internet_archive']['metadata']['admin_only_problems'], [])
+        self.assertEqual(
+            result['internet_archive']['metadata']['patch_fields'], ['title'])
+
+    def test_collection_conflict_report_is_deterministic(self):
+        metadata = desired_metadata()
+        metadata['collection'] = 'unrelated-collection'
+        item = current_item(metadata=metadata)
+
+        first, _, _, _ = self.harness.inspect(item=item, locations=[])
+        second, _, _, _ = self.harness.inspect(item=item, locations=[])
+
+        self.assertEqual(first, second)
+
     def test_multiple_archive_discrepancies_are_ordered(self):
         metadata = desired_metadata()
         metadata['title'] = 'Old title'
@@ -1517,6 +1658,41 @@ class TestApplyMode(unittest.TestCase):
         item.modify_metadata.assert_not_called()
         upsert.assert_not_called()
 
+    def test_collection_conflict_apply_performs_zero_mutations(self):
+        metadata = desired_metadata()
+        metadata['collection'] = 'unrelated-collection'
+        metadata['title'] = 'Old title'
+        item = FakeItem(exists=True, metadata=metadata, files=[])
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        publication = Publication(
+            'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+            'https://source.example/book.pdf')
+
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                return_value=JSON_BYTES), patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=publication), patch(
+                    'reconcile_internet_archive.get_item',
+                    return_value=item), patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=[]), patch.object(
+                    IAUploader, 'apply_archive_repairs') as archive_repair, \
+                patch('iauploader.upload') as upload, patch(
+                    'reconcile_internet_archive.upsert_location') as upsert:
+            result = reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(result['status'], 'metadata_conflict')
+        self.assertEqual(result['auto_applicable_actions'], [])
+        self.assertEqual(result['attempted_actions'], [])
+        archive_repair.assert_not_called()
+        upload.assert_not_called()
+        item.modify_metadata.assert_not_called()
+        upsert.assert_not_called()
+
     def test_availability_failure_mixed_batch_continues(self):
         failed = repairable_result([], status='error')
         failed['issues'] = ['archive_request_failed']
@@ -1681,6 +1857,22 @@ class TestOutput(unittest.TestCase):
             status='metadata_conflict',
         )
         result['issues'] = ['archive_immutable_metadata_conflict']
+        result['auto_applicable_actions'] = []
+
+        summary = summarise([result])
+
+        self.assertEqual(summary['repairable'], 0)
+        self.assertEqual(summary['ambiguous'], 1)
+        self.assertEqual(summary['failed'], 0)
+        self.assertEqual(summary['repaired'], 0)
+        self.assertEqual(summary['by_status'], {'metadata_conflict': 1})
+
+    def test_collection_conflict_is_ambiguous_not_repairable(self):
+        result = repairable_result(
+            ['resolve_archive_collection_membership'],
+            status='metadata_conflict',
+        )
+        result['issues'] = ['archive_collection_membership_conflict']
         result['auto_applicable_actions'] = []
 
         summary = summarise([result])

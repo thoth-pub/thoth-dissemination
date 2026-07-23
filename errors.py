@@ -15,7 +15,12 @@ class InternetArchiveIdentifierCollisionError(DisseminationError):
     """Refuse to modify an Internet Archive item not known to belong to Thoth."""
 
 
-class InternetArchiveImmutableMetadataError(DisseminationError):
+class InternetArchiveRestrictedMetadataError(DisseminationError):
+    """Refuse to mutate Archive metadata unavailable to normal credentials."""
+
+
+class InternetArchiveImmutableMetadataError(
+        InternetArchiveRestrictedMetadataError):
     """Refuse to mutate an item with incompatible initial-only metadata."""
 
 

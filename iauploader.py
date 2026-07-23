@@ -17,6 +17,7 @@ from errors import (
     InternetArchiveDesiredStateError,
     InternetArchiveIdentifierCollisionError,
     InternetArchiveImmutableMetadataError,
+    InternetArchiveRestrictedMetadataError,
     InternetArchiveVerificationError,
 )
 from uploader import Uploader, Location
@@ -69,8 +70,14 @@ class IAUploader(Uploader):
     INITIAL_ONLY_METADATA_FIELDS = {
         'mediatype',
     }
+    ADMIN_ONLY_METADATA_FIELDS = {
+        'collection',
+    }
+    NON_AUTOMUTABLE_METADATA_FIELDS = (
+        INITIAL_ONLY_METADATA_FIELDS | ADMIN_ONLY_METADATA_FIELDS
+    )
     MUTABLE_MANAGED_METADATA_FIELDS = (
-        MANAGED_METADATA_FIELDS - INITIAL_ONLY_METADATA_FIELDS
+        MANAGED_METADATA_FIELDS - NON_AUTOMUTABLE_METADATA_FIELDS
     )
 
     def upload_to_platform(self):
@@ -273,7 +280,8 @@ class IAUploader(Uploader):
             originals, desired.expected_md5s)
         metadata_patch = {}
         mutable_metadata_problems = []
-        immutable_metadata_problems = []
+        initial_only_metadata_problems = []
+        admin_only_metadata_problems = []
         if item.exists:
             metadata_patch = self._managed_metadata_patch(
                 item.metadata, desired.metadata)
@@ -283,15 +291,25 @@ class IAUploader(Uploader):
                 desired.absent_metadata_fields,
                 fields=self.MUTABLE_MANAGED_METADATA_FIELDS,
             )
-            immutable_metadata_problems = \
+            initial_only_metadata_problems = \
                 self._metadata_verification_problems(
                     item.metadata,
                     desired.metadata,
                     desired.absent_metadata_fields,
                     fields=self.INITIAL_ONLY_METADATA_FIELDS,
                 )
+            admin_only_metadata_problems = \
+                self._metadata_verification_problems(
+                    item.metadata,
+                    desired.metadata,
+                    desired.absent_metadata_fields,
+                    fields=self.ADMIN_ONLY_METADATA_FIELDS,
+                )
+        restricted_metadata_problems = (
+            initial_only_metadata_problems + admin_only_metadata_problems
+        )
         metadata_problems = (
-            mutable_metadata_problems + immutable_metadata_problems
+            mutable_metadata_problems + restricted_metadata_problems
         )
         return {
             'exists': bool(item.exists),
@@ -303,7 +321,14 @@ class IAUploader(Uploader):
             'metadata_current': bool(item.exists) and not metadata_problems,
             'metadata_problems': metadata_problems,
             'mutable_metadata_problems': mutable_metadata_problems,
-            'immutable_metadata_problems': immutable_metadata_problems,
+            'initial_only_metadata_problems':
+                initial_only_metadata_problems,
+            'admin_only_metadata_problems': admin_only_metadata_problems,
+            'restricted_metadata_problems': restricted_metadata_problems,
+            # Compatibility for existing report consumers: immutable metadata
+            # remains the initial-only subset.
+            'immutable_metadata_problems':
+                initial_only_metadata_problems,
             'metadata_patch': metadata_patch,
         }
 
@@ -333,6 +358,33 @@ class IAUploader(Uploader):
                     desired.identifier, '; '.join(conflicts))
             )
 
+    def _assert_admin_only_metadata_current(self, item, desired):
+        if not item.exists:
+            return
+
+        current_metadata = item.metadata or {}
+        if 'collection' not in desired.metadata:
+            return
+        current_collections = self._as_metadata_list(
+            current_metadata.get('collection'))
+        if self.THOTH_COLLECTION in current_collections:
+            return
+
+        raise InternetArchiveRestrictedMetadataError(
+            'Internet Archive item {} has incompatible collection membership '
+            '{!r}; it must include {!r}. Collection membership changes require '
+            'Internet Archive administrator intervention; no automatic '
+            'mutation was attempted.'.format(
+                desired.identifier,
+                current_collections,
+                self.THOTH_COLLECTION,
+            )
+        )
+
+    def _assert_restricted_metadata_current(self, item, desired):
+        self._assert_initial_only_metadata_current(item, desired)
+        self._assert_admin_only_metadata_current(item, desired)
+
     def apply_archive_repairs(
             self, item, desired, inspection=None, access_key=None,
             secret_key=None, progress=None):
@@ -340,7 +392,7 @@ class IAUploader(Uploader):
         inspection = inspection or self.inspect_item(item, desired)
         if inspection['ownership'] == 'collision':
             self._raise_item_collision(inspection['ownership_reason'])
-        self._assert_initial_only_metadata_current(item, desired)
+        self._assert_restricted_metadata_current(item, desired)
 
         files_to_upload = [
             name
@@ -554,18 +606,6 @@ class IAUploader(Uploader):
 
     def _managed_metadata_patch(self, current_metadata, desired_metadata):
         current_metadata = current_metadata or {}
-        desired_metadata = desired_metadata.copy()
-
-        current_collections = self._as_metadata_list(
-            current_metadata.get('collection'))
-        extra_collections = [
-            collection for collection in current_collections
-            if collection != self.THOTH_COLLECTION
-        ]
-        if extra_collections:
-            desired_metadata['collection'] = current_collections.copy()
-            if self.THOTH_COLLECTION not in current_collections:
-                desired_metadata['collection'].append(self.THOTH_COLLECTION)
 
         patch = {}
         for field in self.MUTABLE_MANAGED_METADATA_FIELDS:

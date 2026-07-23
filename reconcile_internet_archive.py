@@ -69,6 +69,7 @@ ISSUE_ORDER = (
     'missing_json_original',
     'stale_pdf_original',
     'stale_json_original',
+    'archive_collection_membership_conflict',
     'archive_immutable_metadata_conflict',
     'archive_metadata_stale',
     'thoth_location_lookup_failed',
@@ -82,6 +83,7 @@ ISSUE_ORDER = (
 
 ACTION_ORDER = (
     'resolve_identifier_collision',
+    'resolve_archive_collection_membership',
     'resolve_archive_immutable_metadata',
     'restore_pdf_source',
     'restore_json_export',
@@ -128,6 +130,7 @@ ISSUE_STATUS = {
     'missing_json_original': 'item_incomplete',
     'stale_pdf_original': 'files_stale',
     'stale_json_original': 'files_stale',
+    'archive_collection_membership_conflict': 'metadata_conflict',
     'archive_immutable_metadata_conflict': 'metadata_conflict',
     'archive_metadata_stale': 'metadata_stale',
     'thoth_location_lookup_failed': 'error',
@@ -272,6 +275,13 @@ def _archive_report(item, desired, inspection):
             'current': inspection['metadata_current'],
             'problems': inspection['metadata_problems'],
             'mutable_problems': inspection['mutable_metadata_problems'],
+            'initial_only_problems': inspection[
+                'initial_only_metadata_problems'],
+            'admin_only_problems': inspection[
+                'admin_only_metadata_problems'],
+            'restricted_problems': inspection[
+                'restricted_metadata_problems'],
+            # Compatibility for existing report consumers.
             'immutable_problems': inspection[
                 'immutable_metadata_problems'],
             'patch_fields': sorted(inspection['metadata_patch']),
@@ -718,6 +728,10 @@ class InternetArchiveReconciler:
                 if inspection['immutable_metadata_problems']:
                     issues.append('archive_immutable_metadata_conflict')
                     actions.append('resolve_archive_immutable_metadata')
+                if inspection['admin_only_metadata_problems']:
+                    issues.append('archive_collection_membership_conflict')
+                    actions.append(
+                        'resolve_archive_collection_membership')
                 if inspection['mutable_metadata_problems']:
                     issues.append('archive_metadata_stale')
                     actions.append('update_archive_metadata')
@@ -769,6 +783,7 @@ class InternetArchiveReconciler:
             'malformed_metadata',
             'archive_request_failed',
             'identifier_collision',
+            'archive_collection_membership_conflict',
             'archive_immutable_metadata_conflict',
             'thoth_location_lookup_failed',
             'duplicate_locations',

@@ -13,6 +13,7 @@ from errors import (
     DisseminationError,
     InternetArchiveIdentifierCollisionError,
     InternetArchiveImmutableMetadataError,
+    InternetArchiveRestrictedMetadataError,
     InternetArchiveVerificationError,
 )
 from iauploader import IAUploader
@@ -210,6 +211,14 @@ class TestIAUploader(unittest.TestCase):
             'metadata']
         self.assertEqual(initial_metadata['mediatype'], 'texts')
 
+    def test_new_item_initial_upload_sets_thoth_collection(self):
+        self.uploader.upload_to_platform()
+
+        initial_metadata = self.mock_upload.call_args_list[0].kwargs[
+            'metadata']
+        self.assertEqual(
+            initial_metadata['collection'], IAUploader.THOTH_COLLECTION)
+
     def test_new_item_final_verification_requires_mediatype(self):
         desired_metadata = self._desired_metadata()
 
@@ -228,6 +237,27 @@ class TestIAUploader(unittest.TestCase):
             with self.assertRaisesRegex(
                     InternetArchiveVerificationError,
                     "mediatype is None, expected 'texts'"):
+                self.uploader.upload_to_platform()
+
+    def test_new_item_final_verification_requires_thoth_collection(self):
+        desired_metadata = self._desired_metadata()
+
+        def upload_without_collection(**kwargs):
+            for name, file_object in kwargs['files'].items():
+                self.item.set_original(name, file_object.read())
+            if kwargs.get('metadata') is not None:
+                self.item.metadata = dict(desired_metadata)
+                self.item.metadata.pop('collection')
+            self.item.exists = True
+            return [make_response() for _ in kwargs['files']]
+
+        self.mock_upload.side_effect = upload_without_collection
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 1):
+            with self.assertRaisesRegex(
+                    InternetArchiveVerificationError,
+                    "collection is None, expected to include "
+                    "'thoth-archiving-network'"):
                 self.uploader.upload_to_platform()
 
     def test_existing_correct_mediatype_remains_repairable(self):
@@ -292,6 +322,70 @@ class TestIAUploader(unittest.TestCase):
             if field == 'mediatype'
         ])
 
+    def test_admin_only_collection_is_never_in_metadata_patch(self):
+        current = self._desired_metadata()
+        current.pop('collection')
+
+        metadata_patch = self.uploader._managed_metadata_patch(
+            current, self._desired_metadata())
+
+        self.assertNotIn('collection', metadata_patch)
+
+    def test_missing_desired_collection_never_produces_remove_tag(self):
+        current = self._desired_metadata()
+        desired = self._desired_metadata()
+        desired.pop('collection')
+
+        metadata_patch = self.uploader._managed_metadata_patch(
+            current, desired)
+
+        self.assertNotIn('collection', metadata_patch)
+
+    def test_collection_comparison_accepts_scalar_and_list_membership(self):
+        desired = self.uploader.build_desired_state()
+        for collection in (
+                IAUploader.THOTH_COLLECTION,
+                ['unrelated', IAUploader.THOTH_COLLECTION],
+        ):
+            with self.subTest(collection=collection):
+                metadata = self._desired_metadata()
+                metadata['collection'] = collection
+                self._set_existing_item(metadata=metadata)
+
+                inspection = self.uploader.inspect_item(self.item, desired)
+
+                self.assertEqual(
+                    inspection['admin_only_metadata_problems'], [])
+                self.assertNotIn('collection', inspection['metadata_patch'])
+
+    def test_missing_collection_reports_admin_only_conflict(self):
+        metadata = self._desired_metadata()
+        metadata.pop('collection')
+        self._set_existing_item(metadata=metadata)
+        desired = self.uploader.build_desired_state()
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertEqual(inspection['admin_only_metadata_problems'], [
+            "collection is None, expected to include "
+            "'thoth-archiving-network'",
+        ])
+        self.assertNotIn('collection', inspection['metadata_patch'])
+
+    def test_unrelated_collection_reports_admin_only_conflict(self):
+        metadata = self._desired_metadata()
+        metadata['collection'] = 'unrelated-collection'
+        self._set_existing_item(metadata=metadata)
+        desired = self.uploader.build_desired_state()
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertEqual(inspection['admin_only_metadata_problems'], [
+            "collection is 'unrelated-collection', expected to include "
+            "'thoth-archiving-network'",
+        ])
+        self.assertNotIn('collection', inspection['metadata_patch'])
+
     def test_direct_dissemination_rejects_immutable_mediatype_conflict(self):
         metadata = self._desired_metadata()
         metadata['mediatype'] = 'data'
@@ -334,6 +428,30 @@ class TestIAUploader(unittest.TestCase):
         self.item.metadata['mediatype'] = 'data'
 
         with self.assertRaises(InternetArchiveImmutableMetadataError):
+            self.uploader.apply_archive_repairs(
+                self.item,
+                desired,
+                inspection=stale_inspection,
+                access_key='access-key',
+                secret_key='secret-key',
+            )
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.item.refresh.assert_not_called()
+
+    def test_apply_archive_repairs_rechecks_admin_only_collection(self):
+        self._set_existing_item()
+        desired = self.uploader.build_desired_state()
+        stale_inspection = self.uploader.inspect_item(self.item, desired)
+        self.item.metadata['collection'] = 'unrelated-collection'
+
+        with self.assertRaisesRegex(
+                InternetArchiveRestrictedMetadataError,
+                "item {}.*collection membership "
+                "\\['unrelated-collection'\\].*must include "
+                "'thoth-archiving-network'.*administrator intervention.*"
+                "no automatic mutation was attempted".format(WORK_ID)):
             self.uploader.apply_archive_repairs(
                 self.item,
                 desired,
@@ -525,19 +643,23 @@ class TestIAUploader(unittest.TestCase):
         self.assertEqual(metadata_patch['thoth-work-id'], WORK_ID)
         self.item.identifier_available.assert_not_called()
 
-    def test_existing_item_with_matching_marker_is_accepted(self):
+    def test_matching_marker_with_missing_collection_is_restricted_conflict(self):
         metadata = self._desired_metadata()
         metadata.pop('collection')
         metadata['thoth-work-id'] = [WORK_ID]
         self._set_existing_item(metadata=metadata)
 
-        locations = self.uploader.upload_to_platform()
+        with self.assertRaisesRegex(
+                InternetArchiveRestrictedMetadataError,
+                "item {}.*collection membership \\[\\].*must include "
+                "'thoth-archiving-network'.*administrator intervention.*"
+                "no automatic mutation was attempted".format(WORK_ID)):
+            self.uploader.upload_to_platform()
 
-        metadata_patch = self.item.modify_metadata.call_args.args[0]
-        self.assertEqual(
-            metadata_patch['collection'], IAUploader.THOTH_COLLECTION)
-        self.assertNotIn('thoth-work-id', metadata_patch)
-        self._assert_location(locations[0])
+        self.uploader.get_variable_from_env.assert_not_called()
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.item.refresh.assert_not_called()
 
     def test_collision_with_another_thoth_work_id_is_refused(self):
         metadata = self._desired_metadata()
@@ -837,16 +959,18 @@ class TestIAUploader(unittest.TestCase):
             self.item.metadata['collection'],
             ['other-collection', 'thoth-archiving-network'])
 
-    def test_matching_marker_adds_thoth_collection_without_removing_other_one(self):
+    def test_matching_marker_with_only_unrelated_collection_is_restricted(self):
         metadata = self._desired_metadata()
         metadata['collection'] = 'other-collection'
-        self._set_existing_item(metadata=metadata)
+        self._set_existing_item(metadata=metadata, files=[])
 
-        self.uploader.upload_to_platform()
+        with self.assertRaises(InternetArchiveRestrictedMetadataError):
+            self.uploader.upload_to_platform()
 
-        self.assertEqual(
-            self.item.modify_metadata.call_args.args[0]['collection'],
-            ['other-collection', 'thoth-archiving-network'])
+        self.uploader.get_variable_from_env.assert_not_called()
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.item.refresh.assert_not_called()
 
 
 class TestDisseminatorCLI(unittest.TestCase):
