@@ -881,34 +881,24 @@ class InternetArchiveReconciler:
                         if action not in applied_actions:
                             applied_actions.append(action)
         except Exception as error:
+            failure_base = before
+            failure_error = str(error)
+            if any(
+                    action in ARCHIVE_ACTIONS
+                    for action in applied_actions):
+                try:
+                    failure_base = self._inspect_after_apply(before, context)
+                except Exception as inspection_error:
+                    failure_error = (
+                        '{}; post-apply reinspection failed: {}'.format(
+                            failure_error, inspection_error)
+                    )
             return self._failed_apply_result(
-                before, attempted_actions, applied_actions,
+                failure_base, attempted_actions, applied_actions,
                 uncertain_actions, 'thoth_location_mutation_failed',
-                str(error))
+                failure_error, before=before)
 
-        verification_base = deepcopy(before)
-        verification_base.update({
-            'issues': [],
-            'recommended_actions': [],
-            'auto_applicable_actions': [],
-            'attempted_actions': [],
-            'applied_actions': [],
-            'uncertain_actions': [],
-            'internet_archive': None,
-            'thoth_location': None,
-            'error': None,
-        })
-        verification_context = {
-            'uploader': context['uploader'],
-            'desired': context['desired'],
-            'item': context['item'],
-        }
-        final = self._inspect_remote(
-            verification_base,
-            context['uploader'],
-            context['desired'],
-            verification_context,
-        )
+        final = self._inspect_after_apply(before, context)
         final['before'] = before
         final['attempted_actions'] = _ordered_unique(
             attempted_actions, ACTION_ORDER)
@@ -927,12 +917,37 @@ class InternetArchiveReconciler:
             )
         return final
 
+    def _inspect_after_apply(self, before, context):
+        verification_base = deepcopy(before)
+        verification_base.update({
+            'issues': [],
+            'recommended_actions': [],
+            'auto_applicable_actions': [],
+            'attempted_actions': [],
+            'applied_actions': [],
+            'uncertain_actions': [],
+            'internet_archive': None,
+            'thoth_location': None,
+            'error': None,
+        })
+        verification_context = {
+            'uploader': context['uploader'],
+            'desired': context['desired'],
+            'item': context['item'],
+        }
+        return self._inspect_remote(
+            verification_base,
+            context['uploader'],
+            context['desired'],
+            verification_context,
+        )
+
     @staticmethod
     def _failed_apply_result(
-            before, attempted_actions, applied_actions, uncertain_actions,
-            issue, error):
-        result = deepcopy(before)
-        result['before'] = before
+            base, attempted_actions, applied_actions, uncertain_actions,
+            issue, error, before=None):
+        result = deepcopy(base)
+        result['before'] = base if before is None else before
         result['issues'] = _ordered_unique(
             result['issues'] + [issue], ISSUE_ORDER)
         result['status'] = 'error'

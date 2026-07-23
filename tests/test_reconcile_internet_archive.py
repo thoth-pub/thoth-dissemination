@@ -1522,6 +1522,10 @@ class TestApplyMode(unittest.TestCase):
             'upload_pdf_original',
             'create_thoth_location',
         ], status='files_stale')
+        post_archive = repairable_result(
+            ['create_thoth_location'],
+            status='location_missing',
+        )
         context = apply_context()
 
         def fail_location(*args, **kwargs):
@@ -1530,7 +1534,9 @@ class TestApplyMode(unittest.TestCase):
 
         with patch.object(
                 self.reconciler, 'inspect_work',
-                return_value=(before, context)), patch(
+                return_value=(before, context)), patch.object(
+                    self.reconciler, '_inspect_remote',
+                    return_value=post_archive) as inspect_remote, patch(
                     'reconcile_internet_archive.upsert_location',
                     side_effect=fail_location) as upsert:
             result = self.reconciler.reconcile_one(
@@ -1544,8 +1550,48 @@ class TestApplyMode(unittest.TestCase):
             result['applied_actions'], ['upload_pdf_original'])
         self.assertIn(
             'thoth_location_mutation_failed', result['issues'])
+        self.assertIn('location_missing', result['issues'])
+        self.assertNotIn('files_stale', result['issues'])
+        self.assertEqual(
+            result['recommended_actions'], ['create_thoth_location'])
+        self.assertNotIn(
+            'upload_pdf_original', result['recommended_actions'])
         self.assertNotIn('archive_mutation_failed', result['issues'])
+        self.assertEqual(result['before'], before)
+        inspect_remote.assert_called_once()
         upsert.assert_called_once()
+
+    def test_partial_apply_reinspection_failure_retains_both_diagnostics(self):
+        before = repairable_result([
+            'upload_pdf_original',
+            'create_thoth_location',
+        ], status='files_stale')
+        context = apply_context()
+
+        def fail_location(*args, **kwargs):
+            kwargs['progress']('create_thoth_location', 'attempted')
+            raise RuntimeError('location failed')
+
+        with patch.object(
+                self.reconciler, 'inspect_work',
+                return_value=(before, context)), patch.object(
+                    self.reconciler, '_inspect_remote',
+                    side_effect=RuntimeError('inspection failed')), patch(
+                    'reconcile_internet_archive.upsert_location',
+                    side_effect=fail_location):
+            result = self.reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+
+        self.assertEqual(
+            result['applied_actions'], ['upload_pdf_original'])
+        self.assertIn('location failed', result['error'])
+        self.assertIn(
+            'post-apply reinspection failed: inspection failed',
+            result['error'],
+        )
+        self.assertIn(
+            'thoth_location_mutation_failed', result['issues'])
+        self.assertEqual(result['before'], before)
 
     def test_successful_mixed_repair_runs_both_phases_and_verification(self):
         context = apply_context()

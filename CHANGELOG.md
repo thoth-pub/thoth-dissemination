@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Send explicit GraphQL nulls when clearing nullable location full-text URLs
   - Keep reconciliation JSON/JSONL stdout machine-readable during Thoth location mutations while preserving explicit standalone location ID output
   - Load local `config.env` values before reconciliation apply credential validation without overriding exported environment variables
+  - Reinspect remote state after an Archive repair succeeds but the following Thoth location mutation fails
   - Refuse to create or repair an Internet Archive item unless its missing identifier is explicitly reported as available
   - Block automatic Archive and Thoth mutations when an existing item has missing or incompatible initial-only `mediatype` metadata
   - Stop automatic collection membership patches and report existing items outside the Thoth Archiving Network collection for manual Internet Archive administrator coordination
