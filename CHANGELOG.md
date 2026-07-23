@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [[1.5.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.5.0) - 2026-07-23
 ### Added
   - Added a manual, dry-run-by-default Internet Archive reconciliation workflow with bounded input validation, protected `develop`-only apply mode, diagnostic artifacts, and Step Summaries
   - Added a read-only-by-default Internet Archive reconciliation CLI with explicit and publisher selection provenance, deterministic JSON/JSONL reports, and guarded apply mode
