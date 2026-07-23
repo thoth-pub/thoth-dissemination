@@ -1,27 +1,151 @@
-# Purpose: upload newly-published works from Thoth to Internet Archive.
-# Uploads all active Thoth works with a publication date within the previous calendar month.
-# Work must have a valid URL supplied as the PDF Publication Canonical Location.
-# IA credentials for a user with write permissions to the Thoth Archiving Network
-# collection (e.g. thoth_pub) must be present as repository secrets
-# named IA_S3_ACCESS (access key) and IA_S3_SECRET (secret key).
+# Select recently updated, IA-eligible works and disseminate a bounded batch.
 name: ia-bulk-disseminate
 
 on:
   schedule:
-    # 'at 04:40 on day-of-month 7'
-    # There might be a delay between a book being published and the publisher
-    # correctly setting its publication date and Active status in Thoth.
-    # Therefore, this action is run a few days after the start of the month,
-    # to minimise situations where e.g. a book which was published on the 31st, but
-    # whose record was not updated until the 1st, is missed out of both months' runs.
-    - cron: '40 4 7 * *'
+    - cron: '40 4 * * *'
   workflow_dispatch:
+    inputs:
+      lookback_hours:
+        description: UTC lookback window in hours (maximum 168)
+        required: false
+        type: number
+        default: 30
+      max_works:
+        description: Maximum works to disseminate (hard maximum 200)
+        required: false
+        type: number
+        default: 200
+
+concurrency:
+  group: internet-archive-scheduled-dissemination
+  cancel-in-progress: false
 
 jobs:
-  ia-bulk-disseminate:
-    uses: ./.github/workflows/bulk_disseminate.yml
+  select:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      work_ids: ${{ steps.outputs.outputs.work_ids }}
+      selected_count: ${{ steps.outputs.outputs.selected_count }}
+      omitted_count: ${{ steps.outputs.outputs.omitted_count }}
+      truncated: ${{ steps.outputs.outputs.truncated }}
+      selection_exit_status: ${{ steps.outputs.outputs.selection_exit_status }}
+      artifact_name: ${{ steps.outputs.outputs.artifact_name }}
+    env:
+      ARTIFACT_NAME: ia-selection-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements_obtain_new_ids.txt
+
+      - name: Install selection dependencies
+        run: python -m pip install -r requirements_obtain_new_ids.txt
+
+      - name: Select recently updated eligible works
+        env:
+          ENV_PUBLISHERS: ${{ vars.IA_ENV_PUBLISHERS }}
+          ENV_EXCEPTIONS: ${{ vars.IA_ENV_EXCEPTIONS }}
+        run: |
+          lookback_hours="${{ inputs.lookback_hours }}"
+          max_works="${{ inputs.max_works }}"
+          if [[ -z "$lookback_hours" ]]; then
+            lookback_hours=30
+          fi
+          if [[ -z "$max_works" ]]; then
+            max_works=200
+          fi
+
+          set +e
+          python obtain_new_ids.py \
+            --platform InternetArchive \
+            --lookback-hours "$lookback_hours" \
+            --max-ids "$max_works" \
+            --report internet-archive-selection.json \
+            > selected-work-ids.json \
+            2> >(tee internet-archive-selection.log >&2)
+          status=$?
+          set -e
+          echo "$status" > selection-exit-status.txt
+
+      - name: Expose bounded selection outputs
+        id: outputs
+        if: ${{ always() }}
+        run: >-
+          python3 .github/scripts/ia_selection_workflow.py outputs
+          --report internet-archive-selection.json
+          --selected-ids selected-work-ids.json
+          --status selection-exit-status.txt
+          --artifact-name "$ARTIFACT_NAME"
+
+      - name: Upload selection diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            internet-archive-selection.json
+            internet-archive-selection.log
+          retention-days: 30
+          if-no-files-found: warn
+          overwrite: false
+
+      - name: Write selection summary
+        if: ${{ always() }}
+        run: >-
+          python3 .github/scripts/ia_selection_workflow.py summary
+          --report internet-archive-selection.json
+          --status selection-exit-status.txt
+          --artifact-name "$ARTIFACT_NAME"
+
+      - name: Preserve selection failure status
+        if: ${{ always() }}
+        run: >-
+          python3 .github/scripts/ia_selection_workflow.py selection-guard
+          --report internet-archive-selection.json
+          --selected-ids selected-work-ids.json
+          --status selection-exit-status.txt
+
+  disseminate:
+    needs: select
+    if: ${{ needs.select.outputs.selected_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        work-id: ${{ fromJSON(needs.select.outputs.work_ids) }}
+    uses: ./.github/workflows/disseminate.yml
     with:
-      platform: 'InternetArchive'
-      env_publishers: ${{ vars.IA_ENV_PUBLISHERS }}
-      env_exceptions: ${{ vars.IA_ENV_EXCEPTIONS }}
+      platform: InternetArchive
+      work-id: ${{ matrix.work-id }}
     secrets: inherit
+
+  final-status:
+    if: ${{ always() }}
+    needs:
+      - select
+      - disseminate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Evaluate selection, dissemination, and overflow
+        env:
+          SELECTION_RESULT: ${{ needs.select.result }}
+          DISSEMINATION_RESULT: ${{ needs.disseminate.result }}
+          SELECTED_COUNT: ${{ needs.select.outputs.selected_count }}
+          OMITTED_COUNT: ${{ needs.select.outputs.omitted_count }}
+          TRUNCATED: ${{ needs.select.outputs.truncated }}
+          ARTIFACT_NAME: ${{ needs.select.outputs.artifact_name }}
+        run: python3 .github/scripts/ia_selection_workflow.py final-guard

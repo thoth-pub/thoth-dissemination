@@ -9,3 +9,28 @@ class DisseminationError(Exception):
 
     def __init__(self, message):
         super().__init__(message)
+
+
+class InternetArchiveIdentifierCollisionError(DisseminationError):
+    """Refuse to modify an Internet Archive item not known to belong to Thoth."""
+
+
+class InternetArchiveRestrictedMetadataError(DisseminationError):
+    """Refuse to mutate Archive metadata unavailable to normal credentials."""
+
+
+class InternetArchiveImmutableMetadataError(
+        InternetArchiveRestrictedMetadataError):
+    """Refuse to mutate an item with incompatible initial-only metadata."""
+
+
+class InternetArchiveVerificationError(DisseminationError):
+    """Report an Internet Archive upload which could not be verified in time."""
+
+
+class InternetArchiveDesiredStateError(DisseminationError):
+    """Report which source failed while constructing Archive desired state."""
+
+    def __init__(self, source, message):
+        self.source = source
+        super().__init__(message)

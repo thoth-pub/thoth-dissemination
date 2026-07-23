@@ -1,0 +1,221 @@
+# Purpose: manually inspect or repair bounded Internet Archive reconciliation batches.
+# Required reviewers must be configured on the `disseminate` GitHub environment;
+# workflow YAML cannot create environment protection rules.
+name: internet-archive-reconciliation
+run-name: >-
+  IA reconciliation (${{ inputs.apply && 'apply' || 'dry-run' }})
+  for ${{ inputs.publisher_id || 'explicit works' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      publisher_id:
+        description: 'Optional Thoth publisher UUID'
+        required: false
+        type: string
+      work_ids:
+        description: 'Optional comma- or newline-separated Thoth work UUIDs'
+        required: false
+        type: string
+      limit:
+        description: 'Maximum publisher works to select (1-200)'
+        required: true
+        default: 100
+        type: number
+      offset:
+        description: 'Non-negative publisher selection offset'
+        required: true
+        default: 0
+        type: number
+      apply:
+        description: 'Apply safe automatic repairs'
+        required: true
+        default: false
+        type: boolean
+      confirm_apply:
+        description: 'Enter APPLY to confirm apply mode'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    ia-reconciliation-${{
+      inputs.publisher_id != '' &&
+      inputs.publisher_id ||
+      format('explicit-{0}-{1}', github.run_id, github.run_attempt)
+    }}
+  cancel-in-progress: false
+
+jobs:
+  dry-run:
+    if: ${{ inputs.apply == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      ARTIFACT_NAME: ia-reconciliation-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Validate and normalise inputs
+        id: inputs
+        env:
+          INPUT_PUBLISHER_ID: ${{ inputs.publisher_id }}
+          INPUT_WORK_IDS: ${{ inputs.work_ids }}
+          INPUT_LIMIT: ${{ inputs.limit }}
+          INPUT_OFFSET: ${{ inputs.offset }}
+        run: >-
+          python3 .github/scripts/ia_reconcile_workflow.py
+          validate --mode dry-run
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run read-only reconciliation
+        env:
+          PUBLISHER_ID: ${{ steps.inputs.outputs.publisher_id }}
+          LIMIT: ${{ steps.inputs.outputs.limit }}
+          OFFSET: ${{ steps.inputs.outputs.offset }}
+        run: |
+          command=(
+            python reconcile_internet_archive.py
+            --format json
+            --output internet-archive-reconciliation.json
+            --limit "$LIMIT"
+            --offset "$OFFSET"
+          )
+          if [[ -n "$PUBLISHER_ID" ]]; then
+            command+=(--publisher-id "$PUBLISHER_ID")
+          fi
+          while IFS= read -r work_id; do
+            if [[ -n "$work_id" ]]; then
+              command+=(--work-id "$work_id")
+            fi
+          done < normalised-work-ids.txt
+
+          set +e
+          "${command[@]}" \
+            2> >(tee -a internet-archive-reconciliation.log >&2)
+          status=$?
+          set -e
+
+          echo "$status" > reconciliation-exit-status.txt
+          exit "$status"
+
+      - name: Upload reconciliation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            internet-archive-reconciliation.json
+            internet-archive-reconciliation.log
+            reconciliation-run-context.json
+          retention-days: 30
+          if-no-files-found: error
+          overwrite: false
+
+      - name: Write reconciliation summary
+        if: ${{ always() }}
+        run: python3 .github/scripts/ia_reconcile_workflow.py summary
+
+  apply:
+    if: ${{ inputs.apply == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: disseminate
+    permissions:
+      contents: read
+    env:
+      ARTIFACT_NAME: ia-reconciliation-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Validate and normalise inputs
+        id: inputs
+        env:
+          INPUT_PUBLISHER_ID: ${{ inputs.publisher_id }}
+          INPUT_WORK_IDS: ${{ inputs.work_ids }}
+          INPUT_LIMIT: ${{ inputs.limit }}
+          INPUT_OFFSET: ${{ inputs.offset }}
+          INPUT_CONFIRM_APPLY: ${{ inputs.confirm_apply }}
+        run: >-
+          python3 .github/scripts/ia_reconcile_workflow.py
+          validate --mode apply
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run protected reconciliation
+        env:
+          PUBLISHER_ID: ${{ steps.inputs.outputs.publisher_id }}
+          LIMIT: ${{ steps.inputs.outputs.limit }}
+          OFFSET: ${{ steps.inputs.outputs.offset }}
+          ia_s3_access: ${{ secrets.IA_S3_ACCESS }}
+          ia_s3_secret: ${{ secrets.IA_S3_SECRET }}
+          THOTH_PAT: ${{ secrets.THOTH_PAT }}
+        run: |
+          command=(
+            python reconcile_internet_archive.py
+            --format json
+            --output internet-archive-reconciliation.json
+            --limit "$LIMIT"
+            --offset "$OFFSET"
+            --apply
+          )
+          if [[ -n "$PUBLISHER_ID" ]]; then
+            command+=(--publisher-id "$PUBLISHER_ID")
+          fi
+          while IFS= read -r work_id; do
+            if [[ -n "$work_id" ]]; then
+              command+=(--work-id "$work_id")
+            fi
+          done < normalised-work-ids.txt
+
+          set +e
+          "${command[@]}" \
+            2> >(tee -a internet-archive-reconciliation.log >&2)
+          status=$?
+          set -e
+
+          echo "$status" > reconciliation-exit-status.txt
+          exit "$status"
+
+      - name: Upload reconciliation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            internet-archive-reconciliation.json
+            internet-archive-reconciliation.log
+            reconciliation-run-context.json
+          retention-days: 30
+          if-no-files-found: error
+          overwrite: false
+
+      - name: Write reconciliation summary
+        if: ${{ always() }}
+        run: python3 .github/scripts/ia_reconcile_workflow.py summary

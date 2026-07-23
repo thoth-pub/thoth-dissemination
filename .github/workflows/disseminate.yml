@@ -2,6 +2,10 @@
 # (given as an array of work IDs) from Thoth to the specified platform.
 name: disseminate
 
+concurrency:
+  group: ${{ format('disseminate-{0}-{1}', inputs.platform, inputs.work-id) }}
+  cancel-in-progress: false
+
 on:
   workflow_call:
     inputs:

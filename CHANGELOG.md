@@ -5,6 +5,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+  - Added a manual, dry-run-by-default Internet Archive reconciliation workflow with bounded input validation, protected `develop`-only apply mode, diagnostic artifacts, and Step Summaries
+  - Added a read-only-by-default Internet Archive reconciliation CLI with explicit and publisher selection provenance, deterministic JSON/JSONL reports, and guarded apply mode
+  - Added deterministic scheduled Internet Archive selection reports, 30-day diagnostic artifacts, Step Summaries, and a visible final overflow guard
+
+### Changed
+  - Made Internet Archive dissemination idempotently converge managed originals and metadata, verify their final remote state in one bounded polling loop, and preserve unrelated Archive data
+  - Changed scheduled Internet Archive dissemination from monthly publication-date selection to daily `updatedAtWithRelations` selection using a captured 30-hour UTC window, a 200-work oldest-first cap, and four-way parallelism
+  - Prevent simultaneous ordinary dissemination of the same platform/work pair while allowing different works and platforms to proceed independently
+  - Emit compact valid JSON arrays from all automatic ID finders
+  - Distinguished mutable Internet Archive metadata from initial-only `mediatype` and administrator-only collection state in reconciliation reports
+  - Made Thoth location write-back converge create, update, and no-op states while preserving canonical and checksum data
+  - Report all reconciliation recommendations separately from safe automatic, attempted, applied, and uncertain actions
+  - Set the dissemination service version to the next feature release, 1.5.0
+
+### Fixed
+  - Refresh and reclassify Internet Archive item ownership immediately before the first repair mutation
+  - Send explicit GraphQL nulls when clearing nullable location full-text URLs
+  - Keep reconciliation JSON/JSONL stdout machine-readable during Thoth location mutations while preserving explicit standalone location ID output
+  - Load local `config.env` values before reconciliation apply credential validation without overriding exported environment variables
+  - Reinspect remote state after an Archive repair succeeds but the following Thoth location mutation fails
+  - Refuse to create or repair an Internet Archive item unless its missing identifier is explicitly reported as available
+  - Block automatic Archive and Thoth mutations when an existing item has missing or incompatible initial-only `mediatype` metadata
+  - Stop automatic collection membership patches and report existing items outside the Thoth Archiving Network collection for manual Internet Archive administrator coordination
 
 ## [[1.4.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.4.1) - 2026-07-20
 ### Fixed
