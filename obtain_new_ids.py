@@ -2,8 +2,9 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to Internet Archive, (Loughborough) Figshare, Zenodo, CUL and Google Play:
-find newly-published works for upload.
+For dissemination to (Loughborough) Figshare, Zenodo, CUL and Google Play:
+find newly-published works for upload. Internet Archive selection is based on
+recent relation-aware updates and usable canonical PDF sources.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
 Based on `iabulkupload/obtain_work_ids.py`.
 """
@@ -13,10 +14,79 @@ from thothlibrary import errors
 import argparse
 import json
 import logging
+import math
 from datetime import datetime, timedelta, UTC
 from os import environ
+from pathlib import Path
 import sys
-from thothapi import get_thoth_client
+from uuid import UUID
+
+from internet_archive_policy import SUPPORTED_WORK_TYPES
+from thothapi import (
+    get_internet_archive_selection_works,
+    get_thoth_client,
+)
+
+
+DEFAULT_IA_LOOKBACK_HOURS = 30
+MAX_IA_LOOKBACK_HOURS = 168
+DEFAULT_IA_MAX_IDS = 200
+MAX_IA_MAX_IDS = 200
+IA_QUERY_PAGE_SIZE = 100
+
+
+class InternetArchiveSelectionError(RuntimeError):
+    """Internet Archive selection could not complete safely."""
+
+
+def canonical_utc_timestamp(value):
+    """Render a timezone-aware datetime as canonical UTC ISO 8601."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError('timestamp is timezone-naive')
+    return value.astimezone(UTC).isoformat().replace('+00:00', 'Z')
+
+
+def parse_api_timestamp(value):
+    """Parse an API timestamp without guessing a missing timezone."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('timestamp is missing')
+    normalised = value.strip()
+    if normalised.endswith(('Z', 'z')):
+        normalised = normalised[:-1] + '+00:00'
+    parsed = datetime.fromisoformat(normalised)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError('timestamp is timezone-naive')
+    return parsed.astimezone(UTC)
+
+
+def lookback_hours_type(value):
+    """Argparse validator for the bounded IA overlap window."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError(
+            'lookback hours must be a number') from error
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError(
+            'lookback hours must be a positive finite number')
+    if number > MAX_IA_LOOKBACK_HOURS:
+        raise argparse.ArgumentTypeError(
+            'lookback hours may not exceed {}'.format(
+                MAX_IA_LOOKBACK_HOURS))
+    return int(number) if number.is_integer() else number
+
+
+def max_ids_type(value):
+    """Argparse validator for the IA matrix hard cap."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError(
+            'max IDs must be an integer') from error
+    if number < 1 or number > MAX_IA_MAX_IDS:
+        raise argparse.ArgumentTypeError(
+            'max IDs must be between 1 and {}'.format(MAX_IA_MAX_IDS))
+    return number
 
 
 class IDFinder():
@@ -43,7 +113,7 @@ class IDFinder():
         self.remove_exceptions()
         self.post_process()
         logging.info('List of IDs found: {}'.format(self.thoth_ids))
-        print(self.thoth_ids)
+        print(json.dumps(self.thoth_ids, separators=(',', ':')))
 
     def get_publishers(self):
         """"Retrieve IDs for all publishers whose works should be included"""
@@ -190,6 +260,302 @@ class MonthlyIDFinder(IDFinder):
         previous_month_start = previous_month_end.replace(day=1)
 
         self.get_thoth_ids_iteratively(previous_month_start, previous_month_end)
+
+
+class InternetArchiveIDFinder(IDFinder):
+    """Select recently updated IA-eligible works without retrieving sources."""
+
+    def __init__(
+            self, lookback_hours=DEFAULT_IA_LOOKBACK_HOURS,
+            max_ids=DEFAULT_IA_MAX_IDS, report_path=None, now_provider=None,
+            thoth=None):
+        if thoth is None:
+            super().__init__()
+        else:
+            self.thoth = thoth
+            self.thoth_ids = []
+        self.lookback_hours = lookback_hours
+        self.max_ids = max_ids
+        self.report_path = Path(report_path) if report_path else None
+        self.now_provider = now_provider or (lambda: datetime.now(UTC))
+        self.publisher_ids = []
+        self.exception_ids = []
+        self.report = None
+        self.window_start = None
+        self.window_end = None
+
+    @staticmethod
+    def _normalise_uuid_list(raw_value, variable_name, required):
+        if raw_value is None or raw_value == '':
+            if required:
+                raise InternetArchiveSelectionError(
+                    '{} must be a non-empty JSON array'.format(variable_name))
+            return []
+        try:
+            values = json.loads(raw_value)
+        except (TypeError, ValueError) as error:
+            raise InternetArchiveSelectionError(
+                '{} must be a JSON array'.format(variable_name)) from error
+        if not isinstance(values, list) or (required and not values):
+            qualifier = 'non-empty ' if required else ''
+            raise InternetArchiveSelectionError(
+                '{} must be a {}JSON array'.format(variable_name, qualifier))
+
+        normalised = []
+        for value in values:
+            if not isinstance(value, str):
+                raise InternetArchiveSelectionError(
+                    '{} contains a non-string UUID'.format(variable_name))
+            try:
+                normalised.append(str(UUID(value)))
+            except (ValueError, AttributeError) as error:
+                raise InternetArchiveSelectionError(
+                    '{} contains malformed UUID {}'.format(
+                        variable_name, value)
+                ) from error
+        return sorted(set(normalised))
+
+    def get_publishers(self):
+        """Validate, normalise and confirm every configured publisher."""
+        self.publisher_ids = self._normalise_uuid_list(
+            environ.get('ENV_PUBLISHERS'), 'ENV_PUBLISHERS', required=True)
+        for publisher_id in self.publisher_ids:
+            try:
+                publisher = self.thoth.publisher(publisher_id=publisher_id)
+            except Exception as error:
+                raise InternetArchiveSelectionError(
+                    'Publisher {} could not be confirmed'.format(
+                        publisher_id)
+                ) from error
+            if publisher is None:
+                raise InternetArchiveSelectionError(
+                    'Publisher {} was not found'.format(publisher_id))
+
+    def get_exceptions(self):
+        """Validate and normalise the optional configured work exceptions."""
+        self.exception_ids = self._normalise_uuid_list(
+            environ.get('ENV_EXCEPTIONS'), 'ENV_EXCEPTIONS', required=False)
+
+    @staticmethod
+    def _work_value(work, key, default=None):
+        if isinstance(work, dict):
+            return work.get(key, default)
+        return getattr(work, key, default)
+
+    @classmethod
+    def _exclusion(cls, work, reason, timestamp=None):
+        work_id = cls._work_value(work, 'workId')
+        raw_timestamp = cls._work_value(work, 'updatedAtWithRelations')
+        return {
+            'work_id': None if work_id is None else str(work_id),
+            'updated_at_with_relations': (
+                canonical_utc_timestamp(timestamp)
+                if timestamp is not None
+                else raw_timestamp
+            ),
+            'reason': reason,
+        }
+
+    @classmethod
+    def _source_exclusion_reason(cls, work):
+        publications = cls._work_value(work, 'publications', []) or []
+        pdf_publications = [
+            publication for publication in publications
+            if cls._work_value(publication, 'publicationType') == 'PDF'
+        ]
+        if not pdf_publications:
+            return 'no_pdf_publication'
+
+        locations = cls._work_value(
+            pdf_publications[0], 'locations', []) or []
+        canonical_locations = [
+            location for location in locations
+            if cls._work_value(location, 'canonical') is True
+        ]
+        if not canonical_locations:
+            return 'no_canonical_pdf_location'
+        if not any(
+                isinstance(cls._work_value(location, 'fullTextUrl'), str)
+                and cls._work_value(location, 'fullTextUrl').strip()
+                for location in canonical_locations):
+            return 'canonical_pdf_location_missing_full_text_url'
+        return None
+
+    @staticmethod
+    def _excluded_sort_key(entry):
+        timestamp = entry.get('updated_at_with_relations')
+        try:
+            timestamp_key = parse_api_timestamp(timestamp)
+        except (TypeError, ValueError):
+            timestamp_key = datetime.max.replace(tzinfo=UTC)
+        return (
+            timestamp_key,
+            entry.get('work_id') or '',
+            entry.get('reason') or '',
+            '' if timestamp is None else str(timestamp),
+        )
+
+    def _write_report(self, report):
+        if self.report_path is None:
+            return
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        serialised = json.dumps(
+            report, indent=2, sort_keys=True, ensure_ascii=True) + '\n'
+        self.report_path.write_text(serialised, encoding='utf-8')
+
+    def _base_report(self, generated_at):
+        return {
+            'platform': 'InternetArchive',
+            'generated_at': canonical_utc_timestamp(generated_at),
+            'window': {
+                'start': canonical_utc_timestamp(self.window_start),
+                'end': canonical_utc_timestamp(self.window_end),
+                'lookback_hours': self.lookback_hours,
+            },
+            'publisher_ids': self.publisher_ids,
+            'exception_ids': self.exception_ids,
+            'queried_count': 0,
+            'eligible_count': 0,
+            'selected_count': 0,
+            'omitted_count': 0,
+            'truncated': False,
+            'selection_limit': self.max_ids,
+            'selected': [],
+            'omitted': [],
+            'excluded_counts': {},
+            'excluded': [],
+        }
+
+    def write_failure_report(self, error):
+        """Write a sanitised report for configuration/query failures."""
+        if self.window_end is None:
+            now = self.now_provider()
+            if now.tzinfo is None or now.utcoffset() is None:
+                now = datetime.now(UTC)
+            self.window_end = now.astimezone(UTC)
+            self.window_start = self.window_end - timedelta(
+                hours=self.lookback_hours)
+        report = self._base_report(self.window_end)
+        report['error'] = '{}: {}'.format(type(error).__name__, str(error))
+        report['status'] = 'failed'
+        self.report = report
+        self._write_report(report)
+
+    def select(self):
+        """Build the deterministic selected, omitted and excluded records."""
+        captured_now = self.now_provider()
+        if captured_now.tzinfo is None or captured_now.utcoffset() is None:
+            raise InternetArchiveSelectionError(
+                'Current time must be timezone-aware')
+        self.window_end = captured_now.astimezone(UTC)
+        self.window_start = self.window_end - timedelta(
+            hours=self.lookback_hours)
+
+        self.get_publishers()
+        self.get_exceptions()
+        report = self._base_report(self.window_end)
+        works = get_internet_archive_selection_works(
+            self.thoth,
+            self.publisher_ids,
+            SUPPORTED_WORK_TYPES,
+            canonical_utc_timestamp(self.window_start),
+            page_size=IA_QUERY_PAGE_SIZE,
+        )
+        report['queried_count'] = len(works)
+
+        newest_by_work_id = {}
+        excluded = []
+        for work in works:
+            work_id = self._work_value(work, 'workId')
+            raw_timestamp = self._work_value(
+                work, 'updatedAtWithRelations')
+            if raw_timestamp is None or raw_timestamp == '':
+                excluded.append(self._exclusion(
+                    work, 'missing_update_timestamp'))
+                continue
+            try:
+                timestamp = parse_api_timestamp(raw_timestamp)
+            except (TypeError, ValueError):
+                excluded.append(self._exclusion(
+                    work, 'malformed_update_timestamp'))
+                continue
+            if work_id is None:
+                excluded.append(self._exclusion(
+                    work, 'missing_work_id', timestamp))
+                continue
+            work_id = str(work_id)
+            current = newest_by_work_id.get(work_id)
+            if current is None or timestamp > current[0]:
+                newest_by_work_id[work_id] = (timestamp, work)
+
+        eligible = []
+        exception_ids = set(self.exception_ids)
+        for work_id, (timestamp, work) in newest_by_work_id.items():
+            reason = None
+            if timestamp <= self.window_start:
+                reason = 'outside_window'
+            elif timestamp > self.window_end:
+                reason = 'after_window_end'
+            elif work_id in exception_ids:
+                reason = 'configured_exception'
+            elif self._work_value(work, 'workStatus') != 'ACTIVE':
+                reason = 'inactive'
+            elif self._work_value(work, 'workType') not in SUPPORTED_WORK_TYPES:
+                reason = 'unsupported_work_type'
+            else:
+                reason = self._source_exclusion_reason(work)
+
+            if reason is not None:
+                excluded.append(self._exclusion(work, reason, timestamp))
+                continue
+            eligible.append({
+                'work_id': work_id,
+                'updated_at_with_relations': canonical_utc_timestamp(timestamp),
+                '_timestamp': timestamp,
+            })
+
+        eligible.sort(key=lambda entry: (
+            entry['_timestamp'], entry['work_id']))
+        selected = eligible[:self.max_ids]
+        omitted = eligible[self.max_ids:]
+        for entry in selected + omitted:
+            entry.pop('_timestamp')
+
+        excluded.sort(key=self._excluded_sort_key)
+        excluded_counts = {}
+        for entry in excluded:
+            reason = entry['reason']
+            excluded_counts[reason] = excluded_counts.get(reason, 0) + 1
+
+        report.update({
+            'eligible_count': len(eligible),
+            'selected_count': len(selected),
+            'omitted_count': len(omitted),
+            'truncated': bool(omitted),
+            'selected': selected,
+            'omitted': omitted,
+            'excluded_counts': dict(sorted(excluded_counts.items())),
+            'excluded': excluded,
+        })
+        self.thoth_ids = [entry['work_id'] for entry in selected]
+        self.report = report
+        return report
+
+    def run(self):
+        """Select, report, then emit only the compact JSON work-ID array."""
+        report = self.select()
+        self._write_report(report)
+        if report['truncated']:
+            logging.warning(
+                '%s eligible works exceeded the %s-work limit; %s omitted. '
+                'Inspect the selection artifact and use bounded manual '
+                'reconciliation or another reviewed bounded operation.',
+                report['eligible_count'],
+                report['selection_limit'],
+                report['omitted_count'],
+            )
+        logging.info('List of IDs found: %s', self.thoth_ids)
+        print(json.dumps(self.thoth_ids, separators=(',', ':')))
 
 
 class WeeklyIDFinder(IDFinder):
@@ -353,48 +719,104 @@ class OapenLocationsIDFinder(IDFinder):
         self.thoth_ids = oapen_location_required
 
 
-def get_arguments():
+def get_arguments(argv=None):
     """Simple argument parsing"""
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--platform")
     parser.add_argument("--locations", action=argparse.BooleanOptionalAction)
-    args = parser.parse_args()
+    parser.add_argument(
+        '--lookback-hours',
+        type=lookback_hours_type,
+        default=DEFAULT_IA_LOOKBACK_HOURS,
+        help='IA UTC lookback window (positive hours, maximum 168; default 30)',
+    )
+    parser.add_argument(
+        '--max-ids',
+        type=max_ids_type,
+        default=DEFAULT_IA_MAX_IDS,
+        help='IA selection limit (1-200; default 200)',
+    )
+    parser.add_argument(
+        '--report',
+        help='write the Internet Archive selection report to this path',
+    )
+    args = parser.parse_args(argv)
     return args
+
+
+def get_id_finder(args, now_provider=None, thoth=None):
+    """Map parsed CLI arguments to the platform-specific finder."""
+    platform = args.platform
+    if args.locations:
+        if platform == 'OAPEN':
+            return OapenLocationsIDFinder()
+        raise InternetArchiveSelectionError(
+            'Locations option is only supported for OAPEN')
+
+    finder_classes = {
+        'Crossref': CrossrefIDFinder,
+        'GooglePlay': GooglePlayIDFinder,
+        'OAPEN': WeeklyIDFinder,
+        'EBSCOHost': WeeklyIDFinder,
+        'JSTOR': WeeklyIDFinder,
+        'ProjectMUSE': WeeklyIDFinder,
+        'ProQuest': WeeklyIDFinder,
+        'Figshare': MonthlyIDFinder,
+        'Zenodo': MonthlyIDFinder,
+        'CUL': MonthlyIDFinder,
+        'BKCI': BKCIIDFinder,
+    }
+    if platform == 'InternetArchive':
+        return InternetArchiveIDFinder(
+            lookback_hours=args.lookback_hours,
+            max_ids=args.max_ids,
+            report_path=args.report,
+            now_provider=now_provider,
+            thoth=thoth,
+        )
+    finder_class = finder_classes.get(platform)
+    if finder_class is None:
+        raise InternetArchiveSelectionError(
+            'Platform must be one of InternetArchive, Crossref, Figshare, '
+            'Zenodo, CUL, GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, '
+            'ProjectMUSE or ProQuest')
+    return finder_class()
+
+
+def main(argv=None, now_provider=None, thoth=None):
+    """Run selection and return a process status."""
+    args = get_arguments(argv)
+    finder = None
+    try:
+        finder = get_id_finder(args, now_provider=now_provider, thoth=thoth)
+        finder.run()
+    except InternetArchiveSelectionError as error:
+        if isinstance(finder, InternetArchiveIDFinder):
+            try:
+                finder.write_failure_report(error)
+            except Exception as report_error:
+                logging.error(
+                    'Unable to write Internet Archive failure report: %s',
+                    report_error)
+        logging.error('%s', error)
+        return 1
+    except Exception as error:
+        if isinstance(finder, InternetArchiveIDFinder):
+            try:
+                finder.write_failure_report(error)
+            except Exception as report_error:
+                logging.error(
+                    'Unable to write Internet Archive failure report: %s',
+                    report_error)
+            logging.error(
+                'Internet Archive selection failed: %s: %s',
+                type(error).__name__, error)
+            return 1
+        raise
+    return 0
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO,
                         format='%(levelname)s:%(asctime)s: %(message)s')
-
-    args = get_arguments()
-    platform = args.platform
-    locations = args.locations
-
-    if locations:
-        match platform:
-            case 'OAPEN':
-                id_finder = OapenLocationsIDFinder()
-            case _:
-                logging.error(
-                    'Locations option is only supported for OAPEN')
-                sys.exit(1)
-    else:
-        match platform:
-            case 'Crossref':
-                id_finder = CrossrefIDFinder()
-            case 'GooglePlay':
-                id_finder = GooglePlayIDFinder()
-            case 'OAPEN' | 'EBSCOHost' | 'JSTOR' | 'ProjectMUSE' | 'ProQuest':
-                id_finder = WeeklyIDFinder()
-            case 'Figshare' | 'Zenodo' | 'CUL' | 'InternetArchive':
-                id_finder = MonthlyIDFinder()
-            case 'BKCI':
-                id_finder = BKCIIDFinder()
-            case _:
-                logging.error(
-                    'Platform must be one of InternetArchive, Crossref, Figshare, '
-                    'Zenodo, CUL, GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, '
-                    'ProjectMUSE or ProQuest')
-                sys.exit(1)
-
-    id_finder.run()
+    sys.exit(main())

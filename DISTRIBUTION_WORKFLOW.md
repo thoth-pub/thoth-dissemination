@@ -4,14 +4,20 @@ This document describes the workflow currently implemented in `thoth-disseminati
 
 ## 1) End-to-end architecture
 
-1. A scheduled (or manual) GitHub workflow calls `bulk_disseminate.yml` with:
+1. Most scheduled (or manual) GitHub workflows call `bulk_disseminate.yml` with:
    - `platform`
    - `env_publishers` (JSON list of publisher IDs)
    - `env_exceptions` (JSON list of work IDs to skip)
-2. `bulk_disseminate.yml` runs `obtain_new_ids.py --platform <platform>` to produce a list of work IDs.
-3. It fans out to one `disseminate.yml` run per work ID.
-4. `disseminate.yml` runs `disseminator.py --work <work-id> --platform <platform>`.
-5. Platform uploaders either:
+2. Internet Archive instead uses a dedicated daily
+   `ia_bulk_disseminate.yml` selection/reporting job.
+3. The selector runs `obtain_new_ids.py --platform <platform>` and emits a
+   compact JSON list of work IDs.
+4. The calling workflow fans out to one `disseminate.yml` run per work ID.
+   Scheduled IA uses at most four parallel works.
+5. `disseminate.yml` prevents overlapping ordinary runs for the same
+   platform/work pair.
+6. `disseminate.yml` runs `disseminator.py --work <work-id> --platform <platform>`.
+7. Platform uploaders either:
    - return upload locations (which can be written back to Thoth), or
    - return no locations (and rely on email notifications / later catch-up).
 
@@ -30,6 +36,19 @@ All automatic runs share these rules from `obtain_new_ids.py`:
   - `MonthlyIDFinder`: previous calendar month.
   - `GooglePlayIDFinder`: previous day.
   - `CrossrefIDFinder`: updated within ~last 1.25 hours.
+- `InternetArchiveIDFinder` is deliberately different:
+  - required `IA_ENV_PUBLISHERS` and optional `IA_ENV_EXCEPTIONS` values are
+    validated as JSON UUID arrays;
+  - selection uses `updatedAtWithRelations`, so relation-only changes qualify;
+  - the captured UTC interval is
+    `updatedAtWithRelations > start && updatedAtWithRelations <= end`;
+  - the default 30-hour lookback creates six hours of overlap between daily
+    runs, and the documented hard maximum is 168 hours;
+  - only active IA-supported book-level works with a PDF and a non-empty
+    canonical PDF `fullTextUrl` qualify;
+  - selection performs no PDF/export download and no request to source URLs;
+  - eligible works are ordered by oldest update, then UUID, before the
+    200-work cap.
 
 ## 3) Platform schedule and scope matrix
 
@@ -37,7 +56,7 @@ GitHub Actions schedules run in UTC.
 
 | Platform | Workflow | Cadence | Selector class | High-level scope |
 |---|---|---|---|---|
-| InternetArchive | `ia_bulk_disseminate.yml` | Monthly, day 1 at 00:15 | `InternetArchiveIDFinder` | Active works not already in IA collection |
+| InternetArchive | `ia_bulk_disseminate.yml` | Daily at 04:40 | `InternetArchiveIDFinder` | Active supported works updated in the captured previous 30 hours with a usable canonical PDF source |
 | Crossref | `cr_bulk_disseminate.yml` | Hourly at :45 | `CrossrefIDFinder` | Active + qualifying Forthcoming works updated recently |
 | Figshare | `fs_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
 | Zenodo | `zn_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
@@ -54,16 +73,31 @@ GitHub Actions schedules run in UTC.
 ## 4) Platform-by-platform payload and conditions
 
 ### Internet Archive (`InternetArchive`)
+- Scheduled selection:
+  - Daily at 04:40 UTC with a default 30-hour relation-aware update window
+  - Uses `IA_ENV_PUBLISHERS` and optional `IA_ENV_EXCEPTIONS`
+  - Captures one upper boundary and excludes later updates for the next run
+  - Processes at most 200 works, oldest update first, with four-way parallelism
+  - Uploads a 30-day selection report/log artifact and writes aggregate counts
+    to the Step Summary
+  - Reports every overflow record and fails the final status after the bounded
+    selected batch completes
 - Upload content:
   - Required: PDF publication file
   - Also uploads: `json::thoth` metadata file
   - Uses work ID as IA identifier
 - Preconditions:
   - `ia_s3_access` / `ia_s3_secret`
-  - Identifier must not already exist in IA
-  - PDF canonical location must exist and be downloadable
+  - New identifiers must be explicitly available; owned existing items are
+    updated idempotently
+  - PDF canonical location must exist and be downloadable during dissemination
 - Automatic writeback:
-  - Returns Thoth location (`INTERNET_ARCHIVE`) and is written back by workflow.
+  - Returns Thoth location (`INTERNET_ARCHIVE`) and idempotently creates,
+    updates, or preserves it.
+- Operations:
+  - Unchanged selected works safely no-op.
+  - Use the selection artifact plus bounded manual reconciliation for omitted
+    or ambiguous works.
 
 ### OAPEN (`OAPEN`)
 - Upload content:
@@ -252,11 +286,12 @@ From `disseminate.yml`, email job runs for:
 ## 7) Known implementation caveats in current repo state
 
 1. `muse_bulk_disseminate.yaml` passes `platform: 'MUSE'`, but platform matching in `obtain_new_ids.py` and `disseminator.py` expects `ProjectMUSE`. As coded, scheduled Project MUSE bulk runs will not resolve the platform correctly.
-2. Workflows that call `write_locations.py` set `THOTH_EMAIL` instead of `THOTH_PAT`, but `write_locations.py` requires `THOTH_PAT`. This can prevent automatic location writeback unless `THOTH_PAT` is otherwise present in job env.
-3. `ProQuest` uploader intends PDF-or-EPUB support, but it retrieves PDF ISBN before fallback logic, so EPUB-only records can fail early.
+2. `ProQuest` uploader intends PDF-or-EPUB support, but it retrieves PDF ISBN before fallback logic, so EPUB-only records can fail early.
 
 ## 8) Manual operations
 
 - `manual_disseminate.yml` supports ad-hoc dissemination of explicit work ID arrays to a chosen platform string.
 - `disseminator.py` can also be run directly for one work ID and one platform.
-
+- `reconcile_internet_archive.py` supports bounded read-only inspection and
+  guarded apply repair for explicit works or a publisher selection. Use it to
+  review omitted or ambiguous scheduled-selection records.
