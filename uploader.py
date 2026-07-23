@@ -182,9 +182,14 @@ class Uploader():
                 full_title = title if subtitle is None else '{}: {}'.format(
                     title, subtitle)
 
-            work.setdefault('title', title if title is not None else full_title)
-            work.setdefault('subtitle', subtitle)
-            work.setdefault('fullTitle', full_title)
+            title_fields = {
+                'title': title if title is not None else full_title,
+                'subtitle': subtitle,
+                'fullTitle': full_title,
+            }
+            for field, value in title_fields.items():
+                if field not in work or work[field] is None:
+                    work[field] = value
 
         long_abstract = cls.get_canonical_metadata_entry(
             work.get('abstracts'),

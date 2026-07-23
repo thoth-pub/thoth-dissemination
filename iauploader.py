@@ -75,11 +75,6 @@ class IAUploader(Uploader):
 
     def upload_to_platform(self):
         """Create or idempotently update a work in Internet Archive."""
-        access_key = self.get_variable_from_env(
-            'ia_s3_access', 'Internet Archive')
-        secret_key = self.get_variable_from_env(
-            'ia_s3_secret', 'Internet Archive')
-
         identifier = self.work_id
         try:
             item = get_item(identifier)
@@ -97,8 +92,6 @@ class IAUploader(Uploader):
             item,
             desired,
             inspection=inspection,
-            access_key=access_key,
-            secret_key=secret_key,
         )
 
         logging.info(
@@ -348,10 +341,6 @@ class IAUploader(Uploader):
         if inspection['ownership'] == 'collision':
             self._raise_item_collision(inspection['ownership_reason'])
         self._assert_initial_only_metadata_current(item, desired)
-        access_key = access_key or self.get_variable_from_env(
-            'ia_s3_access', 'Internet Archive')
-        secret_key = secret_key or self.get_variable_from_env(
-            'ia_s3_secret', 'Internet Archive')
 
         files_to_upload = [
             name
@@ -362,6 +351,15 @@ class IAUploader(Uploader):
             if not inspection['files'][name]['current']
         ]
         creating_item = not inspection['exists']
+        metadata_update_required = (
+            inspection['exists'] and bool(inspection['metadata_patch'])
+        )
+        if files_to_upload or metadata_update_required:
+            access_key = access_key or self.get_variable_from_env(
+                'ia_s3_access', 'Internet Archive')
+            secret_key = secret_key or self.get_variable_from_env(
+                'ia_s3_secret', 'Internet Archive')
+
         for index, name in enumerate(files_to_upload):
             action = (
                 'upload_pdf_original' if name.endswith('.pdf')
@@ -383,7 +381,7 @@ class IAUploader(Uploader):
             if progress is not None:
                 progress(action, 'completed')
 
-        if inspection['exists'] and inspection['metadata_patch']:
+        if metadata_update_required:
             if progress is not None:
                 progress('update_archive_metadata', 'attempted')
             self._modify_metadata(

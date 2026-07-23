@@ -303,9 +303,9 @@ def _archive_report(item, desired, inspection):
     }
 
 
-def _archive_inventory_report(item, uploader):
+def _archive_inventory_report(item, uploader, ownership=None):
     """Report safely discoverable Archive state without desired source state."""
-    ownership = uploader.classify_item_ownership(item)
+    ownership = ownership or uploader.classify_item_ownership(item)
     all_files = sorted(filter(None, (
         IAUploader._file_value(file_metadata, 'name')
         for file_metadata in item.files or []
@@ -491,7 +491,7 @@ class InternetArchiveReconciler:
         return issues
 
     def inspect_work(self, work_id, selection=None):
-        """Build desired state, then inspect both remote systems read-only."""
+        """Preflight Archive ownership, then inspect source and remote state."""
         result = _base_result(work_id)
         if selection is not None:
             result['selection'] = {
@@ -518,18 +518,34 @@ class InternetArchiveReconciler:
 
         work = metadata['data']['work']
         uploader = self._uploader(work_id, metadata)
+        context['uploader'] = uploader
         publisher = ((work.get('imprint') or {}).get('publisher') or {})
+        pdf_publication = next((
+            publication for publication in work.get('publications') or []
+            if publication.get('publicationType') == 'PDF'
+        ), None)
         result.update({
             'publisher_id': publisher.get('publisherId'),
             'title': work.get('title') or work.get('fullTitle'),
+            'publication_id': (
+                pdf_publication.get('publicationId')
+                if pdf_publication is not None else None
+            ),
         })
         eligibility_issues = self._eligibility_issues(work)
         result['issues'] = _ordered_unique(eligibility_issues, ISSUE_ORDER)
+        result['eligible'] = not eligibility_issues
         if eligibility_issues:
             result['recommended_actions'] = ['fix_work_eligibility']
+
+        result = self._preflight_archive(result, uploader, context)
+        if {'archive_request_failed', 'identifier_collision'}.intersection(
+                result['issues']):
+            return self._inspect_discoverable_state(
+                result, uploader, context), context
         if eligibility_issues and not result['selection']['explicit']:
-            result['status'] = _status_for_issues(result['issues'])
-            return result, context
+            return self._inspect_discoverable_state(
+                result, uploader, context), context
 
         try:
             source = uploader.get_publication_source('PDF')
@@ -541,19 +557,12 @@ class InternetArchiveReconciler:
                 ACTION_ORDER,
             )
             result['error'] = str(error)
-            pdf_publication = next((
-                publication for publication in work.get('publications') or []
-                if publication.get('publicationType') == 'PDF'
-            ), None)
-            if pdf_publication is not None:
-                result['publication_id'] = pdf_publication.get('publicationId')
             return self._inspect_discoverable_state(
                 result, uploader, context), context
 
         result.update({
             'publication_id': source.id,
             'pdf_source_url': source.url,
-            'eligible': not eligibility_issues,
         })
         try:
             desired = uploader.build_desired_state()
@@ -575,32 +584,58 @@ class InternetArchiveReconciler:
             return self._inspect_discoverable_state(
                 result, uploader, context), context
 
-        context.update({'uploader': uploader, 'desired': desired})
+        context['desired'] = desired
         result = self._inspect_remote(result, uploader, desired, context)
         return result, context
 
-    def _inspect_discoverable_state(self, initial_result, uploader, context):
-        """Inspect ownership and observed locations without expected state."""
+    def _preflight_archive(self, initial_result, uploader, context):
+        """Retrieve and classify one Archive item before source requests."""
         result = deepcopy(initial_result)
         issues = list(result['issues'])
         actions = list(result['recommended_actions'])
         errors = [result['error']] if result['error'] else []
+        context['archive_preflight_complete'] = True
 
         try:
             item = get_item(uploader.work_id)
-            archive_report, ownership = _archive_inventory_report(
-                item, uploader)
-            context['item'] = item
+            ownership = uploader.classify_item_ownership(item)
+            archive_report, _ = _archive_inventory_report(
+                item, uploader, ownership=ownership)
+            context.update({
+                'item': item,
+                'archive_ownership': ownership,
+            })
             result['internet_archive'] = archive_report
             if ownership['status'] == 'collision':
                 issues.append('identifier_collision')
                 actions.append('resolve_identifier_collision')
-            elif not item.exists:
-                issues.append('item_missing')
-                actions.append('create_archive_item')
         except Exception as error:
             issues.append('archive_request_failed')
             errors.append('Internet Archive request failed: {}'.format(error))
+
+        result['issues'] = _ordered_unique(issues, ISSUE_ORDER)
+        result['recommended_actions'] = _ordered_unique(actions, ACTION_ORDER)
+        result['status'] = _status_for_issues(result['issues'])
+        result['error'] = '; '.join(_ordered_unique(errors, ())) or None
+        return result
+
+    def _inspect_discoverable_state(self, initial_result, uploader, context):
+        """Inspect ownership and observed locations without expected state."""
+        result = deepcopy(initial_result)
+        if not context.get('archive_preflight_complete'):
+            result = self._preflight_archive(result, uploader, context)
+        issues = list(result['issues'])
+        actions = list(result['recommended_actions'])
+        errors = [result['error']] if result['error'] else []
+
+        ownership = context.get('archive_ownership')
+        if ownership is not None:
+            if ownership['status'] == 'collision':
+                issues.append('identifier_collision')
+                actions.append('resolve_identifier_collision')
+            elif ownership['status'] == 'missing':
+                issues.append('item_missing')
+                actions.append('create_archive_item')
 
         if result['publication_id'] is not None:
             try:
@@ -631,13 +666,21 @@ class InternetArchiveReconciler:
         issues = list(result['issues'])
         actions = list(result['recommended_actions'])
         errors = [result['error']] if result['error'] else []
-        result['internet_archive'] = None
+        result['internet_archive'] = initial_result.get('internet_archive')
         result['thoth_location'] = None
 
         try:
-            item = get_item(desired.identifier)
-            inspection = uploader.inspect_item(item, desired)
-            context.update({'item': item, 'archive_inspection': inspection})
+            item = context.get('item')
+            if item is None:
+                item = get_item(desired.identifier)
+                context['item'] = item
+            ownership = context.get('archive_ownership')
+            if ownership is None:
+                ownership = uploader.classify_item_ownership(item)
+                context['archive_ownership'] = ownership
+            inspection = uploader.inspect_item(
+                item, desired, ownership=ownership)
+            context['archive_inspection'] = inspection
             result['internet_archive'] = _archive_report(
                 item, desired, inspection)
             if inspection['legacy']:
@@ -841,6 +884,7 @@ class InternetArchiveReconciler:
         verification_context = {
             'uploader': context['uploader'],
             'desired': context['desired'],
+            'item': context['item'],
         }
         final = self._inspect_remote(
             verification_base,

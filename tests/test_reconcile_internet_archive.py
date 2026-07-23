@@ -90,8 +90,8 @@ def original_file(name, contents):
 class FakeItem:
     def __init__(
             self, exists=True, metadata=None, files=None,
-            identifier_available=True):
-        self.identifier = WORK_ID
+            identifier_available=True, identifier=WORK_ID):
+        self.identifier = identifier
         self.exists = exists
         self.metadata = dict(metadata or {})
         self.files = list(files or [])
@@ -163,6 +163,297 @@ class InspectionHarness:
                     return_value=locations) as get_locations:
             result, context = reconciler.inspect_work(WORK_ID)
         return result, context, get_item, get_locations
+
+
+class TestOwnershipPreflight(unittest.TestCase):
+    def _inspect(
+            self, item, metadata=None, locations=None, json_error=None,
+            pdf_error=None, apply=False):
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(metadata or work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        events = []
+        publication = Publication(
+            'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+            'https://source.example/book.pdf')
+        original_classify = IAUploader.classify_item_ownership
+        original_build = IAUploader.build_desired_state
+
+        def get_archive_item(identifier):
+            events.append('get_item')
+            self.assertEqual(identifier, WORK_ID)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        def classify(uploader, archive_item):
+            events.append('classify_ownership')
+            return original_classify(uploader, archive_item)
+
+        def build_desired(uploader):
+            events.append('build_desired_state')
+            return original_build(uploader)
+
+        def get_json(_uploader, _format):
+            events.append('get_json_export')
+            if json_error is not None:
+                raise json_error
+            return JSON_BYTES
+
+        def get_pdf(_uploader, _publication_type):
+            events.append('download_pdf')
+            if pdf_error is not None:
+                raise pdf_error
+            return publication
+
+        with patch(
+                'reconcile_internet_archive.get_item',
+                side_effect=get_archive_item) as get_item_mock, patch.object(
+                    IAUploader, 'classify_item_ownership',
+                    autospec=True, side_effect=classify), patch.object(
+                    IAUploader, 'build_desired_state',
+                    autospec=True, side_effect=build_desired) as build, \
+                patch.object(
+                    IAUploader, 'get_formatted_metadata',
+                    autospec=True, side_effect=get_json) as get_json_mock, \
+                patch.object(
+                    IAUploader, 'get_publication_details',
+                    autospec=True, side_effect=get_pdf) as get_pdf_mock, patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=(
+                        [current_location()] if locations is None else locations
+                    )) as get_locations, patch.object(
+                    IAUploader, 'apply_archive_repairs') as archive_repair, \
+                patch(
+                    'reconcile_internet_archive.upsert_location') as upsert:
+            if apply:
+                result = reconciler.reconcile_one(
+                    WORK_ID, apply=True, credentials=CREDENTIALS)
+                context = None
+            else:
+                result, context = reconciler.inspect_work(WORK_ID)
+
+        return SimpleNamespace(
+            result=result,
+            context=context,
+            events=events,
+            get_item=get_item_mock,
+            build=build,
+            get_json=get_json_mock,
+            get_pdf=get_pdf_mock,
+            get_locations=get_locations,
+            archive_repair=archive_repair,
+            upsert=upsert,
+        )
+
+    def test_conflicting_marker_stops_before_desired_state_and_sources(self):
+        metadata = desired_metadata()
+        metadata['thoth-work-id'] = 'another-work'
+        inspected = self._inspect(
+            FakeItem(exists=True, metadata=metadata),
+            locations=[],
+        )
+
+        self.assertEqual(
+            inspected.events, ['get_item', 'classify_ownership'])
+        self.assertIn('identifier_collision', inspected.result['issues'])
+        self.assertEqual(
+            inspected.result['recommended_actions'], [
+                'resolve_identifier_collision', 'create_thoth_location'])
+        self.assertEqual(inspected.result['auto_applicable_actions'], [])
+        inspected.get_item.assert_called_once_with(WORK_ID)
+        inspected.build.assert_not_called()
+        inspected.get_json.assert_not_called()
+        inspected.get_pdf.assert_not_called()
+
+    def test_unavailable_missing_identifier_checks_once_before_sources(self):
+        item = FakeItem(exists=False, identifier_available=False)
+
+        inspected = self._inspect(item, locations=[])
+
+        self.assertEqual(
+            inspected.events, ['get_item', 'classify_ownership'])
+        item.identifier_available.assert_called_once_with()
+        self.assertIn('identifier_collision', inspected.result['issues'])
+        self.assertNotIn('item_missing', inspected.result['issues'])
+        inspected.build.assert_not_called()
+        inspected.get_json.assert_not_called()
+        inspected.get_pdf.assert_not_called()
+
+    def test_availability_exception_stops_sources_as_archive_failure(self):
+        item = FakeItem(exists=False)
+        item.identifier_available.side_effect = RuntimeError(
+            'availability endpoint failed')
+
+        inspected = self._inspect(item, locations=[])
+
+        self.assertIn('archive_request_failed', inspected.result['issues'])
+        self.assertIn('availability endpoint failed', inspected.result['error'])
+        self.assertEqual(inspected.result['auto_applicable_actions'], [])
+        inspected.build.assert_not_called()
+        inspected.get_json.assert_not_called()
+        inspected.get_pdf.assert_not_called()
+
+    def test_archive_request_failure_stops_sources(self):
+        inspected = self._inspect(
+            RuntimeError('Archive request failed'),
+            locations=[],
+        )
+
+        self.assertIn('archive_request_failed', inspected.result['issues'])
+        self.assertIn('Archive request failed', inspected.result['error'])
+        self.assertEqual(inspected.result['auto_applicable_actions'], [])
+        inspected.build.assert_not_called()
+        inspected.get_json.assert_not_called()
+        inspected.get_pdf.assert_not_called()
+
+    def test_invalid_availability_response_stops_sources(self):
+        item = FakeItem(exists=False, identifier_available='unknown')
+
+        inspected = self._inspect(item, locations=[])
+
+        self.assertIn('archive_request_failed', inspected.result['issues'])
+        self.assertIn('invalid response', inspected.result['error'])
+        item.identifier_available.assert_called_once_with()
+        inspected.build.assert_not_called()
+        inspected.get_json.assert_not_called()
+        inspected.get_pdf.assert_not_called()
+
+    def test_owned_item_skips_availability_then_builds_desired_state(self):
+        item = current_item()
+
+        inspected = self._inspect(item)
+
+        self.assertEqual(inspected.events[:3], [
+            'get_item', 'classify_ownership', 'build_desired_state'])
+        item.identifier_available.assert_not_called()
+        inspected.get_item.assert_called_once_with(WORK_ID)
+        inspected.build.assert_called_once()
+        self.assertEqual(inspected.result['status'], 'current')
+
+    def test_legacy_item_skips_availability_then_builds_desired_state(self):
+        metadata = desired_metadata()
+        metadata.pop('thoth-work-id')
+        item = current_item(metadata=metadata)
+
+        inspected = self._inspect(item)
+
+        self.assertEqual(inspected.events[:3], [
+            'get_item', 'classify_ownership', 'build_desired_state'])
+        item.identifier_available.assert_not_called()
+        self.assertTrue(
+            inspected.result['internet_archive']['accepted_legacy_item'])
+
+    def test_available_missing_identifier_builds_after_single_check(self):
+        item = FakeItem(exists=False, identifier_available=True)
+
+        inspected = self._inspect(item, locations=[])
+
+        self.assertEqual(inspected.events[:3], [
+            'get_item', 'classify_ownership', 'build_desired_state'])
+        item.identifier_available.assert_called_once_with()
+        inspected.get_item.assert_called_once_with(WORK_ID)
+        self.assertIn('item_missing', inspected.result['issues'])
+        self.assertIn(
+            'create_archive_item', inspected.result['auto_applicable_actions'])
+
+    def test_pdf_failure_preserves_ownership_and_location_inventory(self):
+        item = current_item()
+
+        inspected = self._inspect(
+            item,
+            pdf_error=DisseminationError('broken PDF URL'),
+        )
+
+        self.assertIn('pdf_source_unavailable', inspected.result['issues'])
+        self.assertEqual(
+            inspected.result['internet_archive']['ownership'], 'owned')
+        self.assertIsNone(inspected.result['internet_archive']['expected'])
+        self.assertEqual(inspected.result['thoth_location']['state'], 'observed')
+        self.assertEqual(inspected.result['auto_applicable_actions'], [])
+        inspected.get_item.assert_called_once_with(WORK_ID)
+
+    def test_json_failure_preserves_ownership_and_location_inventory(self):
+        item = current_item()
+
+        inspected = self._inspect(
+            item,
+            json_error=DisseminationError('export unavailable'),
+        )
+
+        self.assertIn('json_export_unavailable', inspected.result['issues'])
+        self.assertEqual(
+            inspected.result['internet_archive']['ownership'], 'owned')
+        self.assertEqual(inspected.result['thoth_location']['count'], 1)
+        self.assertEqual(inspected.result['auto_applicable_actions'], [])
+        inspected.get_item.assert_called_once_with(WORK_ID)
+
+    def test_collision_observes_existing_location_without_auto_action(self):
+        metadata = desired_metadata()
+        metadata['thoth-work-id'] = 'another-work'
+
+        inspected = self._inspect(
+            FakeItem(exists=True, metadata=metadata),
+            locations=[current_location()],
+        )
+
+        self.assertEqual(inspected.result['thoth_location']['state'], 'observed')
+        self.assertEqual(
+            inspected.result['recommended_actions'],
+            ['resolve_identifier_collision'])
+        self.assertEqual(inspected.result['auto_applicable_actions'], [])
+
+    def test_apply_collision_performs_zero_archive_or_location_mutations(self):
+        metadata = desired_metadata()
+        metadata['thoth-work-id'] = 'another-work'
+        item = FakeItem(exists=True, metadata=metadata)
+
+        inspected = self._inspect(item, locations=[], apply=True)
+
+        self.assertEqual(inspected.result['status'], 'identifier_collision')
+        self.assertEqual(inspected.result['attempted_actions'], [])
+        inspected.archive_repair.assert_not_called()
+        inspected.upsert.assert_not_called()
+        item.modify_metadata.assert_not_called()
+
+    def test_mixed_batch_skips_collided_broken_source_and_continues(self):
+        first_metadata = work_metadata()
+        first_metadata['data']['work']['publications'][0]['locations'][0][
+            'fullTextUrl'] = 'https://broken.example/book.pdf'
+        second_metadata = work_metadata(workId=WORK_ID_2)
+        thoth = MagicMock()
+        thoth.work_by_id.side_effect = [
+            json.dumps(first_metadata),
+            json.dumps(second_metadata),
+        ]
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        collided_metadata = desired_metadata()
+        collided_metadata['thoth-work-id'] = 'another-work'
+        items = {
+            WORK_ID: FakeItem(exists=True, metadata=collided_metadata),
+            WORK_ID_2: FakeItem(
+                exists=False, identifier_available=True, identifier=WORK_ID_2),
+        }
+
+        with patch(
+                'reconcile_internet_archive.get_item',
+                side_effect=lambda identifier: items[identifier]), patch.object(
+                    IAUploader, 'get_formatted_metadata',
+                    return_value=JSON_BYTES) as get_json, patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=Publication(
+                        'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+                        'https://source.example/book.pdf')) as get_pdf, patch(
+                    'reconcile_internet_archive.retrieve_existing_locations',
+                    return_value=[]):
+            results = reconciler.reconcile([WORK_ID, WORK_ID_2])
+
+        self.assertEqual(results[0]['status'], 'identifier_collision')
+        self.assertEqual(results[1]['status'], 'item_missing')
+        self.assertEqual(get_json.call_count, 1)
+        self.assertEqual(get_pdf.call_count, 1)
+        items[WORK_ID].identifier_available.assert_not_called()
+        items[WORK_ID_2].identifier_available.assert_called_once_with()
 
 
 class TestSelectionAndCLI(unittest.TestCase):
@@ -349,7 +640,7 @@ class TestDryRunInspection(unittest.TestCase):
         self.assertIn('availability endpoint failed', result['error'])
         self.assertEqual(result['auto_applicable_actions'], [])
 
-    def test_discoverable_state_uses_unavailable_identifier_rule(self):
+    def test_unavailable_identifier_short_circuits_source_failure(self):
         item = FakeItem(exists=False, identifier_available=False)
 
         result, _, _, _ = self.harness.inspect(
@@ -358,8 +649,8 @@ class TestDryRunInspection(unittest.TestCase):
             pdf_error=DisseminationError('PDF unavailable'),
         )
 
-        self.assertIn('pdf_source_unavailable', result['issues'])
         self.assertIn('identifier_collision', result['issues'])
+        self.assertNotIn('pdf_source_unavailable', result['issues'])
         self.assertNotIn('item_missing', result['issues'])
         self.assertFalse(
             result['internet_archive']['identifier_available'])

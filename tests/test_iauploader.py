@@ -4,7 +4,7 @@ import json
 import sys
 import unittest
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from requests import Response
 from requests.exceptions import HTTPError
@@ -317,6 +317,16 @@ class TestIAUploader(unittest.TestCase):
         self.item.modify_metadata.assert_not_called()
         self.item.refresh.assert_not_called()
 
+    def test_immutable_conflict_does_not_read_credentials(self):
+        metadata = self._desired_metadata()
+        metadata['mediatype'] = 'data'
+        self._set_existing_item(metadata=metadata)
+
+        with self.assertRaises(InternetArchiveImmutableMetadataError):
+            self.uploader.upload_to_platform()
+
+        self.uploader.get_variable_from_env.assert_not_called()
+
     def test_apply_archive_repairs_rechecks_initial_only_metadata(self):
         self._set_existing_item()
         desired = self.uploader.build_desired_state()
@@ -396,6 +406,29 @@ class TestIAUploader(unittest.TestCase):
         self.assertGreaterEqual(self.item.refresh.call_count, 1)
         self.item.identifier_available.assert_not_called()
         self._assert_location(locations[0])
+
+    def test_current_item_does_not_read_credentials(self):
+        self._set_existing_item()
+
+        self.uploader.upload_to_platform()
+
+        self.uploader.get_variable_from_env.assert_not_called()
+
+    def test_item_requiring_mutation_reads_credentials(self):
+        metadata = self._desired_metadata()
+        metadata['title'] = 'Old title'
+        self._set_existing_item(metadata=metadata)
+
+        self.uploader.upload_to_platform()
+
+        self.assertEqual(
+            self.uploader.get_variable_from_env.call_args_list,
+            [
+                call('ia_s3_access', 'Internet Archive'),
+                call('ia_s3_secret', 'Internet Archive'),
+            ],
+        )
+        self.item.modify_metadata.assert_called_once()
 
     def test_existing_item_with_changed_pdf_uploads_only_pdf(self):
         self._set_existing_item(files=[
@@ -519,6 +552,16 @@ class TestIAUploader(unittest.TestCase):
         self.mock_upload.assert_not_called()
         self.item.modify_metadata.assert_not_called()
         self.uploader.get_formatted_metadata.assert_not_called()
+
+    def test_identifier_collision_does_not_read_credentials(self):
+        metadata = self._desired_metadata()
+        metadata['thoth-work-id'] = 'another-work-id'
+        self._set_existing_item(metadata=metadata)
+
+        with self.assertRaises(InternetArchiveIdentifierCollisionError):
+            self.uploader.upload_to_platform()
+
+        self.uploader.get_variable_from_env.assert_not_called()
 
     def test_collision_without_thoth_ownership_is_refused(self):
         metadata = self._desired_metadata()
