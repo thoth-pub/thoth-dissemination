@@ -89,55 +89,6 @@ def get_thoth_client_url(client_url=None):
     return stripped_url
 
 
-def patch_thoth_client_queries():
-    """
-    Patch the thothlibrary work queries for thoth-dissemination's needs.
-
-    Two adjustments are applied to the `Work` query field selections:
-
-    1. The released client still requests `workFeaturedVideos` on `Work`, but the
-       launch schema exposes a singular `featuredVideo` field. thoth-dissemination
-       does not consume featured-video data, so removing that selection is safe.
-
-    2. The client hardcodes `markupFormat: JATS_XML` on the canonical `titles`
-       and `abstracts` selections. Internet Archive (and other plain-text
-       consumers such as the BKCI CSV and the SWORD Dublin Core profiles) strip
-       or cannot render that markup, which prevents dissemination from ever
-       converging. We request `PLAIN_TEXT` for the work title/abstract instead
-       of stripping the markup ourselves downstream. Only the top-level
-       `titles`/`abstracts` selections are rewritten; other JATS_XML selections
-       (biographies, relations, awards, etc.) are left untouched as they are not
-       consumed as the work title/abstract.
-    """
-    from thothlibrary import ThothClient
-
-    def _patch_field(field):
-        stripped = field.lstrip()
-        if stripped.startswith('titles(') or stripped.startswith('abstracts('):
-            return field.replace(
-                'markupFormat: JATS_XML', 'markupFormat: PLAIN_TEXT')
-        return field
-
-    for query_name in [
-        'work',
-        'workByDoi',
-        'bookByDoi',
-        'chapterByDoi',
-        'works',
-        'books',
-        'chapters',
-    ]:
-        query_spec = ThothClient.QUERIES.get(query_name)
-        if query_spec is None or 'fields' not in query_spec:
-            continue
-
-        query_spec['fields'] = [
-            _patch_field(field)
-            for field in query_spec['fields']
-            if not field.lstrip().startswith('workFeaturedVideos ')
-        ]
-
-
 def patch_thoth_client_mutations():
     """Render native Python booleans as valid GraphQL boolean literals."""
     from thothlibrary.mutation import ThothMutation
@@ -291,10 +242,9 @@ def get_internet_archive_selection_works(
 
 
 def get_thoth_client(client_url=None):
-    """Instantiate a patched Thoth client using an optional endpoint override."""
+    """Instantiate a Thoth client using an optional endpoint override."""
     from thothlibrary import ThothClient
 
-    patch_thoth_client_queries()
     patch_thoth_client_mutations()
     resolved_url = get_thoth_client_url(client_url)
     return ThothClient(resolved_url) if resolved_url else ThothClient()

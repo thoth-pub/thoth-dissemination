@@ -448,7 +448,10 @@ class InternetArchiveReconciler:
 
     def _load_work_metadata(self, work_id):
         try:
-            raw = self.thoth.work_by_id(work_id=work_id, raw=True)
+            # Plain text so the desired Archive metadata (title/abstract) matches
+            # the plain text Internet Archive stores; see Uploader.get_thoth_metadata.
+            raw = self.thoth.work_by_id(
+                work_id=work_id, markup_format="PLAIN_TEXT", raw=True)
         except ThothError as error:
             error_text = str(error)
             if any(marker in error_text.lower() for marker in (

@@ -241,8 +241,8 @@ class SwordV2Uploader(Uploader):
             # we don't have that metadata currently in Thoth. When multilingualism is
             # implemented, we can revisit this.
             # (oapen_abstract_otherlanguage should be used for other versions)
-            # OAPEN cannot support rich text; titles/abstracts are already
-            # requested from Thoth as PLAIN_TEXT (see thothapi.py).
+            # OAPEN cannot render rich text; the shared metadata fetch already
+            # requests titles/abstracts as PLAIN_TEXT through thothlibrary.
             dcterms_abstract=long_abstract,
             # OAPEN needs year only for this field
             # Mandatory in OAPEN, and mandatory in Thoth for ACTIVE works
@@ -252,7 +252,7 @@ class SwordV2Uploader(Uploader):
             # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
             dcterms_imprintId=work_metadata.get('imprint').get('imprintName'),
             # Mandatory in both OAPEN and Thoth
-            # Title is already requested from Thoth as PLAIN_TEXT (thothapi.py)
+            # Title arrives as PLAIN_TEXT from the shared metadata fetch.
             dcterms_title=work_metadata['title'],
             dcterms_alternative=work_metadata.get('subtitle'),
             # Mandatory in OAPEN: options are "book" or "chapter"
