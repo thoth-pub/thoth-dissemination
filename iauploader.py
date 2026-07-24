@@ -5,7 +5,6 @@ Retrieve and disseminate files and metadata to Internet Archive
 
 import hashlib
 import logging
-import re
 from dataclasses import dataclass
 from io import BytesIO
 from time import sleep
@@ -46,15 +45,6 @@ class IAUploader(Uploader):
     VERIFICATION_SLEEP_SECONDS = 20
     REPEATABLE_METADATA_FIELDS = {
         'collection', 'creator', 'isbn', 'subject', 'language', 'issn'
-    }
-    # Free-text fields whose Thoth value may carry JATS/HTML markup (e.g.
-    # <italic> in abstracts and titles). Internet Archive sanitises this markup
-    # on storage, so equality must compare the visible text, not the tags IA
-    # discards; otherwise verification never matches and the item never
-    # converges to `current`.
-    MARKUP_NORMALISED_METADATA_FIELDS = {
-        'title',
-        'description',
     }
     MANAGED_METADATA_FIELDS = {
         'collection',
@@ -703,22 +693,6 @@ class IAUploader(Uploader):
                     'absent'.format(field, current_metadata[field]))
         return problems
 
-    # Matches any XML/HTML-style tag (e.g. JATS <italic>, </italic>, <p>).
-    _MARKUP_TAG_RE = re.compile(r'<[^>]+>')
-
-    @classmethod
-    def _normalise_markup(cls, value):
-        """Reduce a free-text value to the visible text Internet Archive keeps.
-
-        IA strips inline markup (and collapses whitespace) when it stores
-        free-text metadata, so we compare tag-stripped, whitespace-collapsed
-        text rather than the raw Thoth value.
-        """
-        cleaned = cls._clean_metadata_value(value)
-        if not isinstance(cleaned, str):
-            return cleaned
-        return ' '.join(cls._MARKUP_TAG_RE.sub('', cleaned).split())
-
     @classmethod
     def _metadata_values_equal(cls, field, current_value, desired_value):
         if field in cls.REPEATABLE_METADATA_FIELDS:
@@ -727,9 +701,6 @@ class IAUploader(Uploader):
         if field == 'thoth-work-id':
             return cls._as_metadata_list(current_value) \
                 == cls._as_metadata_list(desired_value)
-        if field in cls.MARKUP_NORMALISED_METADATA_FIELDS:
-            return cls._normalise_markup(current_value) \
-                == cls._normalise_markup(desired_value)
         return cls._clean_metadata_value(current_value) \
             == cls._clean_metadata_value(desired_value)
 

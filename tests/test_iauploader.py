@@ -360,20 +360,6 @@ class TestIAUploader(unittest.TestCase):
         self.assertNotIn('imagecount', IAUploader.INITIAL_ONLY_METADATA_FIELDS)
         self.assertNotIn('imagecount', IAUploader.ADMIN_ONLY_METADATA_FIELDS)
 
-    def test_markup_only_description_difference_is_not_a_problem(self):
-        # IA strips inline JATS markup (e.g. <italic>) from free text; only the
-        # visible text should be compared, or verification never converges.
-        desired = self.uploader.build_desired_state()
-        metadata = self._desired_metadata()
-        metadata['description'] = (
-            '<p>A <italic>long</italic> description</p>')
-        self._set_existing_item(metadata=metadata)
-
-        inspection = self.uploader.inspect_item(self.item, desired)
-
-        self.assertTrue(inspection['metadata_current'])
-        self.assertNotIn('description', inspection['metadata_patch'])
-
     def test_genuine_description_change_is_still_detected(self):
         desired = self.uploader.build_desired_state()
         metadata = self._desired_metadata()

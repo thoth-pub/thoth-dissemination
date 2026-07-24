@@ -91,13 +91,32 @@ def get_thoth_client_url(client_url=None):
 
 def patch_thoth_client_queries():
     """
-    Patch known query mismatches between thothlibrary 1.0.0 and the launch schema.
+    Patch the thothlibrary work queries for thoth-dissemination's needs.
 
-    The released client still requests `workFeaturedVideos` on `Work`, but the
-    launch schema exposes a singular `featuredVideo` field. thoth-dissemination
-    does not consume featured-video data, so removing that selection is safe.
+    Two adjustments are applied to the `Work` query field selections:
+
+    1. The released client still requests `workFeaturedVideos` on `Work`, but the
+       launch schema exposes a singular `featuredVideo` field. thoth-dissemination
+       does not consume featured-video data, so removing that selection is safe.
+
+    2. The client hardcodes `markupFormat: JATS_XML` on the canonical `titles`
+       and `abstracts` selections. Internet Archive (and other plain-text
+       consumers such as the BKCI CSV and the SWORD Dublin Core profiles) strip
+       or cannot render that markup, which prevents dissemination from ever
+       converging. We request `PLAIN_TEXT` for the work title/abstract instead
+       of stripping the markup ourselves downstream. Only the top-level
+       `titles`/`abstracts` selections are rewritten; other JATS_XML selections
+       (biographies, relations, awards, etc.) are left untouched as they are not
+       consumed as the work title/abstract.
     """
     from thothlibrary import ThothClient
+
+    def _patch_field(field):
+        stripped = field.lstrip()
+        if stripped.startswith('titles(') or stripped.startswith('abstracts('):
+            return field.replace(
+                'markupFormat: JATS_XML', 'markupFormat: PLAIN_TEXT')
+        return field
 
     for query_name in [
         'work',
@@ -113,7 +132,8 @@ def patch_thoth_client_queries():
             continue
 
         query_spec['fields'] = [
-            field for field in query_spec['fields']
+            _patch_field(field)
+            for field in query_spec['fields']
             if not field.lstrip().startswith('workFeaturedVideos ')
         ]
 
