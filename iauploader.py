@@ -73,8 +73,22 @@ class IAUploader(Uploader):
     ADMIN_ONLY_METADATA_FIELDS = {
         'collection',
     }
+    # Fields that Internet Archive derives and owns after upload. IA's derive
+    # process recomputes `imagecount` from the deposited PDF and overwrites any
+    # value we send. We may seed such fields on initial creation, but must
+    # never treat IA's derived value as stale or re-patch it: doing so makes
+    # every reconciliation re-queue an update that IA immediately overwrites,
+    # so the item never converges to `current` (and bulk-dissemination
+    # verification times out on the same mismatch). These are excluded from the
+    # auto-mutable set but are NOT restricted (initial-only/admin-only), so a
+    # divergence is silently accepted rather than raised as a manual conflict.
+    DERIVED_METADATA_FIELDS = {
+        'imagecount',
+    }
     NON_AUTOMUTABLE_METADATA_FIELDS = (
-        INITIAL_ONLY_METADATA_FIELDS | ADMIN_ONLY_METADATA_FIELDS
+        INITIAL_ONLY_METADATA_FIELDS
+        | ADMIN_ONLY_METADATA_FIELDS
+        | DERIVED_METADATA_FIELDS
     )
     MUTABLE_MANAGED_METADATA_FIELDS = (
         MANAGED_METADATA_FIELDS - NON_AUTOMUTABLE_METADATA_FIELDS

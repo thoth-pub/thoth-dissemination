@@ -119,8 +119,14 @@ class Uploader():
         """Retrieve JSON-formatted work metadata from Thoth GraphQL API via Thoth Client"""
         thoth = get_thoth_client(client_url)
         try:
+            # Request canonical titles/abstracts as plain text: Internet Archive
+            # and other shared-GraphQL consumers (BKCI CSV, SWORD Dublin Core)
+            # cannot render JATS markup, so plain text keeps dissemination and
+            # reconciliation converging. Crossref/ONIX are unaffected as they use
+            # the separate Export API.
             metadata_string = thoth.work_by_id(
                 work_id=self.work_id,
+                markup_format="PLAIN_TEXT",
                 raw=True
             )
         except ThothError:
