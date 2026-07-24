@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [[1.6.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.6.1) - 2026-07-24
 ### Fixed
   - Exclude Internet Archive-derived metadata (`imagecount`) from apply-time final-state verification, matching read-only inspection, so metadata repairs converge instead of timing out (and no longer abort before Thoth location creation) on items where Internet Archive holds a derived value
 
