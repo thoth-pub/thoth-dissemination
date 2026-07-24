@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.6.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.6.0) - 2026-07-24
+### Changed
+  - Request canonical work titles and abstracts as plain text through `thothlibrary`'s `markup_format` argument at the shared metadata fetch, so Internet Archive and other shared-GraphQL consumers (BKCI CSV, SWORD Dublin Core profiles) receive plain text rather than JATS markup; Crossref and ONIX are unaffected as they use the separate Export API
+  - Removed the downstream markup handling this replaces (the `thothapi` query monkey-patch, the Internet Archive comparison-time tag stripping, and the OAPEN `STRIP_TAGS` regex)
+  - Require `thothlibrary` 1.2.0
+  - Set the dissemination service version to the next feature release, 1.6.0
+### Fixed
+  - Treat the Internet Archive-derived `imagecount` metadata field as owned by Internet Archive: seed it on item creation but accept its derived value instead of repeatedly patching it, so items converge and bulk-dissemination verification no longer times out
+  - Stop reporting Internet Archive title and abstract metadata as stale when it differs only by the markup Internet Archive strips on storage
+
 ## [[1.5.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.5.0) - 2026-07-23
 ### Added
   - Added a manual, dry-run-by-default Internet Archive reconciliation workflow with bounded input validation, protected `develop`-only apply mode, diagnostic artifacts, and Step Summaries
