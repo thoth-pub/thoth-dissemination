@@ -360,6 +360,75 @@ class TestIAUploader(unittest.TestCase):
         self.assertNotIn('imagecount', IAUploader.INITIAL_ONLY_METADATA_FIELDS)
         self.assertNotIn('imagecount', IAUploader.ADMIN_ONLY_METADATA_FIELDS)
 
+    def test_final_verification_field_scope_excludes_only_derived(self):
+        # Final verification must cover every managed field except the ones
+        # Internet Archive derives and owns, keeping it consistent with
+        # inspect_item's non-derived scoping.
+        self.assertEqual(
+            IAUploader.FINAL_VERIFICATION_METADATA_FIELDS,
+            IAUploader.MANAGED_METADATA_FIELDS
+            - IAUploader.DERIVED_METADATA_FIELDS)
+        self.assertNotIn(
+            'imagecount', IAUploader.FINAL_VERIFICATION_METADATA_FIELDS)
+        for field in ('mediatype', 'collection', 'title', 'description',
+                      'thoth-work-id', 'thoth-dissemination-service'):
+            self.assertIn(
+                field, IAUploader.FINAL_VERIFICATION_METADATA_FIELDS)
+
+    def test_final_verification_ignores_present_derived_field(self):
+        # Reproduces the post-PR #90 canary failure: Thoth has no pageCount so
+        # desired metadata omits imagecount, but Internet Archive holds a
+        # derived imagecount. Final verification must not demand its absence.
+        self.uploader.metadata['data']['work']['pageCount'] = None
+        desired = self._desired_metadata()
+        self.assertNotIn('imagecount', desired)
+        stale = dict(desired, description='Stale description', imagecount='120')
+        self._set_existing_item(metadata=stale)
+
+        locations = self.uploader.upload_to_platform()
+
+        # The stale mutable field is repaired, but imagecount is neither
+        # patched nor removed, and final verification succeeds.
+        self.item.modify_metadata.assert_called_once()
+        patch = self.item.modify_metadata.call_args.args[0]
+        self.assertIn('description', patch)
+        self.assertNotIn('imagecount', patch)
+        self.assertEqual(self.item.metadata.get('imagecount'), '120')
+        self.mock_upload.assert_not_called()
+        self._assert_location(locations[0])
+
+    def test_final_verification_ignores_divergent_derived_field(self):
+        # Desired imagecount (from pageCount) differs from IA's derived value.
+        desired = self._desired_metadata()
+        self.assertEqual(desired.get('imagecount'), '250')
+        stale = dict(desired, description='Stale description', imagecount='247')
+        self._set_existing_item(metadata=stale)
+
+        locations = self.uploader.upload_to_platform()
+
+        patch = self.item.modify_metadata.call_args.args[0]
+        self.assertNotIn('imagecount', patch)
+        self.assertEqual(self.item.metadata.get('imagecount'), '247')
+        self.mock_upload.assert_not_called()
+        self._assert_location(locations[0])
+
+    def test_final_verification_still_fails_on_stale_mutable_field(self):
+        # A genuine mutable field that stays stale after the update must still
+        # raise, proving the fix is a field-scope correction, not a bypass.
+        metadata = dict(self._desired_metadata(), title='Old title')
+        self._set_existing_item(metadata=metadata)
+        # Acknowledge the patch without applying it, so the field stays stale.
+        self.item.modify_metadata.side_effect = \
+            lambda *args, **kwargs: make_response()
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 1):
+            with self.assertRaises(InternetArchiveVerificationError) as raised:
+                self.uploader.upload_to_platform()
+
+        self.assertIn('metadata discrepancies', str(raised.exception))
+        self.assertIn('title', str(raised.exception))
+        self.assertIn('Old title', str(raised.exception))
+
     def test_genuine_description_change_is_still_detected(self):
         desired = self.uploader.build_desired_state()
         metadata = self._desired_metadata()
