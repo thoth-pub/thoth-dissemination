@@ -93,6 +93,15 @@ class IAUploader(Uploader):
     MUTABLE_MANAGED_METADATA_FIELDS = (
         MANAGED_METADATA_FIELDS - NON_AUTOMUTABLE_METADATA_FIELDS
     )
+    # Managed fields whose final remote state we can verify. Internet
+    # Archive-derived fields are excluded because IA owns their value after
+    # upload (e.g. it recomputes `imagecount` from the deposited PDF), so
+    # neither a divergent value nor its presence when we sent none is a
+    # verification failure. This keeps final-state verification consistent with
+    # `inspect_item`, which already scopes its checks to the non-derived subsets.
+    FINAL_VERIFICATION_METADATA_FIELDS = (
+        MANAGED_METADATA_FIELDS - DERIVED_METADATA_FIELDS
+    )
 
     def upload_to_platform(self):
         """Create or idempotently update a work in Internet Archive."""
@@ -755,7 +764,8 @@ class IAUploader(Uploader):
                             '{} has MD5 {!r}, expected {!r}'.format(
                                 name, remote_md5, expected_md5))
                 metadata_problems = self._metadata_verification_problems(
-                    item.metadata, desired_metadata, absent_fields)
+                    item.metadata, desired_metadata, absent_fields,
+                    fields=self.FINAL_VERIFICATION_METADATA_FIELDS)
                 last_file_problems = file_problems
                 last_metadata_problems = metadata_problems
                 last_refresh_problem = None

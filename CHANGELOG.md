@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.6.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.6.1) - 2026-07-24
+### Fixed
+  - Exclude Internet Archive-derived metadata (`imagecount`) from apply-time final-state verification, matching read-only inspection, so metadata repairs converge instead of timing out (and no longer abort before Thoth location creation) on items where Internet Archive holds a derived value
+
 ## [[1.6.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.6.0) - 2026-07-24
 ### Changed
   - Request canonical work titles and abstracts as plain text through `thothlibrary`'s `markup_format` argument at the shared metadata fetch, so Internet Archive and other shared-GraphQL consumers (BKCI CSV, SWORD Dublin Core profiles) receive plain text rather than JATS markup; Crossref and ONIX are unaffected as they use the separate Export API
