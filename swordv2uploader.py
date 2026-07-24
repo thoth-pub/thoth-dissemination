@@ -5,7 +5,6 @@ Retrieve and disseminate files and metadata to a server using SWORD v2
 
 import logging
 import pycountry
-import re
 import sys
 import sword2
 from enum import Enum
@@ -203,7 +202,6 @@ class SwordV2Uploader(Uploader):
         """
         Profile developed in discussion with OAPEN
         """
-        STRIP_TAGS = re.compile('<.*?>')
         work_metadata = self.metadata.get('data').get('work')
 
         # Mandatory fields that are non-mandatory in Thoth
@@ -243,8 +241,9 @@ class SwordV2Uploader(Uploader):
             # we don't have that metadata currently in Thoth. When multilingualism is
             # implemented, we can revisit this.
             # (oapen_abstract_otherlanguage should be used for other versions)
-            # OAPEN cannot currently support rich text, so remove XML tags
-            dcterms_abstract=re.sub(STRIP_TAGS, '', long_abstract),
+            # OAPEN cannot render rich text; the shared metadata fetch already
+            # requests titles/abstracts as PLAIN_TEXT through thothlibrary.
+            dcterms_abstract=long_abstract,
             # OAPEN needs year only for this field
             # Mandatory in OAPEN, and mandatory in Thoth for ACTIVE works
             dcterms_issued=work_metadata['publicationDate'].split('-')[0],
@@ -253,8 +252,8 @@ class SwordV2Uploader(Uploader):
             # appears in spreadsheet twice; second time states OAPEN publisher ID list is needed
             dcterms_imprintId=work_metadata.get('imprint').get('imprintName'),
             # Mandatory in both OAPEN and Thoth
-            # OAPEN cannot currently support rich text, so remove XML tags
-            dcterms_title=re.sub(STRIP_TAGS, '', work_metadata['title']),
+            # Title arrives as PLAIN_TEXT from the shared metadata fetch.
+            dcterms_title=work_metadata['title'],
             dcterms_alternative=work_metadata.get('subtitle'),
             # Mandatory in OAPEN: options are "book" or "chapter"
             # OAPEN say this is autofilled to "book"

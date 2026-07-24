@@ -322,6 +322,56 @@ class TestIAUploader(unittest.TestCase):
             if field == 'mediatype'
         ])
 
+    def test_ia_derived_imagecount_is_never_in_metadata_patch(self):
+        # IA's derive process owns `imagecount`; a divergent value must not be
+        # re-patched, or the item never converges (IA overwrites it again).
+        current = self._desired_metadata()
+        current['imagecount'] = '999'
+
+        patch = self.uploader._managed_metadata_patch(
+            current, self._desired_metadata())
+
+        self.assertNotIn('imagecount', patch)
+
+    def test_ia_derived_imagecount_is_never_removed(self):
+        current = self._desired_metadata()
+        desired = self._desired_metadata()
+        desired.pop('imagecount')
+
+        patch = self.uploader._managed_metadata_patch(current, desired)
+
+        self.assertNotIn('imagecount', patch)
+
+    def test_ia_derived_imagecount_divergence_is_not_a_problem(self):
+        desired = self.uploader.build_desired_state()
+        metadata = self._desired_metadata()
+        metadata['imagecount'] = '999'
+        self._set_existing_item(metadata=metadata)
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertTrue(inspection['metadata_current'])
+        self.assertEqual(inspection['metadata_problems'], [])
+
+    def test_imagecount_is_seeded_but_not_restricted(self):
+        # Still managed (seeded on creation) but neither mutable nor restricted.
+        self.assertIn('imagecount', IAUploader.MANAGED_METADATA_FIELDS)
+        self.assertNotIn('imagecount', IAUploader.MUTABLE_MANAGED_METADATA_FIELDS)
+        self.assertNotIn('imagecount', IAUploader.INITIAL_ONLY_METADATA_FIELDS)
+        self.assertNotIn('imagecount', IAUploader.ADMIN_ONLY_METADATA_FIELDS)
+
+    def test_genuine_description_change_is_still_detected(self):
+        desired = self.uploader.build_desired_state()
+        metadata = self._desired_metadata()
+        metadata['description'] = 'A completely different description'
+        self._set_existing_item(metadata=metadata)
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertFalse(inspection['metadata_current'])
+        self.assertEqual(
+            inspection['metadata_patch']['description'], 'A long description')
+
     def test_admin_only_collection_is_never_in_metadata_patch(self):
         current = self._desired_metadata()
         current.pop('collection')
