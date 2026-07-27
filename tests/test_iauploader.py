@@ -988,6 +988,67 @@ class TestIAUploader(unittest.TestCase):
         self.assertIn('is missing as an original file', msg)
         self.assertEqual(self.mock_upload.call_count, 1)
 
+    def test_refresh_failure_during_extended_phase_stops_immediately(self):
+        # Phase 2 begins legitimately (uploaded JSON still stale), then the next
+        # refresh fails. Stop at once and report the actual, not full, window.
+        self._set_existing_item(files=[
+            original_file(PDF_NAME, self.pdf_bytes),
+            original_file(JSON_NAME, b'old json bytes'),
+        ])
+        self.mock_upload.side_effect = lambda **kwargs: [make_response()]
+
+        def fail_on_first_extended_refresh(item):
+            # 1 pre-mutation + 2 ordinary refreshes, then the first extended.
+            if item.refresh.call_count >= 4:
+                raise ReqConnectionError('connection reset')
+        self.item.refresh_hook = fail_on_first_extended_refresh
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 2), \
+                patch.object(IAUploader, 'UPLOAD_PROPAGATION_ATTEMPTS', 8):
+            with self.assertRaises(InternetArchiveVerificationError) as raised:
+                self.uploader.upload_to_platform()
+
+        msg = str(raised.exception)
+        self.assertIn('stopped during upload propagation', msg)
+        self.assertIn('refresh failed', msg)
+        self.assertIn('after 1 extended attempts (~30s)', msg)
+        self.assertNotIn('8 extended attempts', msg)
+        self.assertNotIn('932', msg)
+        self.assertNotIn('Timed out waiting', msg)
+        # Ordinary sleep (20) once, then exactly one extended sleep (30).
+        self.assertEqual(
+            [c.args[0] for c in self.mock_sleep.call_args_list], [20, 30])
+        self.assertEqual(self.mock_upload.call_count, 1)   # no duplicate upload
+
+    def test_metadata_drift_during_extended_phase_stops_immediately(self):
+        # Phase 2 begins legitimately, then a mutable metadata field goes stale.
+        self._set_existing_item(files=[
+            original_file(PDF_NAME, self.pdf_bytes),
+            original_file(JSON_NAME, b'old json bytes'),
+        ])
+        self.mock_upload.side_effect = lambda **kwargs: [make_response()]
+
+        def drift_metadata_during_extended(item):
+            if item.refresh.call_count >= 4:
+                item.metadata = dict(item.metadata, title='Old title')
+        self.item.refresh_hook = drift_metadata_during_extended
+
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 2), \
+                patch.object(IAUploader, 'UPLOAD_PROPAGATION_ATTEMPTS', 8):
+            with self.assertRaises(InternetArchiveVerificationError) as raised:
+                self.uploader.upload_to_platform()
+
+        msg = str(raised.exception)
+        self.assertIn('stopped during upload propagation', msg)
+        self.assertIn('metadata discrepancies', msg)
+        self.assertIn('title', msg)
+        self.assertIn('after 1 extended attempts (~30s)', msg)
+        self.assertNotIn('Timed out waiting', msg)
+        self.assertNotIn('932', msg)
+        self.assertEqual(
+            [c.args[0] for c in self.mock_sleep.call_args_list], [20, 30])
+        self.assertEqual(self.mock_upload.call_count, 1)
+
     def test_non_uploaded_stale_file_is_not_extended(self):
         self._set_existing_item(files=[
             original_file(PDF_NAME, b'wrong pdf bytes'),

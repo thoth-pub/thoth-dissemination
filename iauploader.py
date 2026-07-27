@@ -885,25 +885,41 @@ class IAUploader(Uploader):
         """
         result = last_result
         sleeps = self._upload_propagation_sleeps()
+        completed_attempts = 0
+        elapsed_seconds = 0
+        stopped_early = False
         for attempt, sleep_seconds in enumerate(sleeps, start=1):
             logging.info(
                 'Waiting %ss for Internet Archive to expose accepted upload(s) '
                 'for %s (extended attempt %s/%s)',
                 sleep_seconds, self.work_id, attempt, len(sleeps))
             sleep(sleep_seconds)
+            completed_attempts = attempt
+            elapsed_seconds += sleep_seconds
             result = self._check_final_state(
                 item, expected_md5s, desired_metadata, absent_fields)
             if result['verified'] is not None:
                 return result['verified']
-            # If a non-propagation problem surfaces (metadata drift, refresh
-            # error, or a file we did not upload), stop waiting and fail.
+            # If a new non-propagation problem surfaces (metadata drift, refresh
+            # error, or a file we did not upload), stop waiting immediately and
+            # report the transition accurately -- do not claim the full
+            # propagation deadline expired.
             if not self._is_upload_propagation_only(result, uploaded_file_names):
+                stopped_early = True
                 break
+
+        if stopped_early:
+            raise InternetArchiveVerificationError(
+                'Internet Archive verification stopped during upload '
+                'propagation for item {} after {} extended attempts (~{}s): '
+                '{}'.format(
+                    self.work_id, completed_attempts, elapsed_seconds,
+                    self._problem_summary(result)))
 
         raise InternetArchiveVerificationError(
             'Timed out waiting for accepted Internet Archive upload propagation '
             'for item {} after {} extended attempts (~{}s): {}'.format(
-                self.work_id, len(sleeps), sum(sleeps),
+                self.work_id, completed_attempts, elapsed_seconds,
                 self._problem_summary(result)))
 
     def parse_metadata(self):
