@@ -41,8 +41,15 @@ class IAUploader(Uploader):
     """Dissemination logic for Internet Archive."""
 
     THOTH_COLLECTION = 'thoth-archiving-network'
+    # Phase 1 (ordinary) verification: metadata + all expected originals.
     VERIFICATION_ATTEMPTS = 10
     VERIFICATION_SLEEP_SECONDS = 20
+    # Phase 2 (extended) verification: only for originals successfully uploaded
+    # during this invocation whose new bytes Internet Archive has accepted but
+    # not yet exposed (eventual consistency). Bounded backoff, no re-upload.
+    UPLOAD_PROPAGATION_ATTEMPTS = 8
+    UPLOAD_PROPAGATION_INITIAL_SLEEP_SECONDS = 30
+    UPLOAD_PROPAGATION_MAX_SLEEP_SECONDS = 180
     REPEATABLE_METADATA_FIELDS = {
         'collection', 'creator', 'isbn', 'subject', 'language', 'issn'
     }
@@ -464,6 +471,7 @@ class IAUploader(Uploader):
             secret_key = secret_key or self.get_variable_from_env(
                 'ia_s3_secret', 'Internet Archive')
 
+        uploaded_file_names = set()
         for index, name in enumerate(files_to_upload):
             action = (
                 'upload_pdf_original' if name.endswith('.pdf')
@@ -480,6 +488,10 @@ class IAUploader(Uploader):
                 access_key,
                 secret_key,
             )
+            # Only record the file as uploaded after the S3 request was
+            # accepted (i.e. _upload_files returned without raising). Internet
+            # Archive may still take minutes to expose the new original.
+            uploaded_file_names.add(name)
             if progress is not None and creating_item and index == 0:
                 progress('create_archive_item', 'completed')
             if progress is not None:
@@ -502,6 +514,7 @@ class IAUploader(Uploader):
             desired.expected_md5s,
             desired.metadata,
             desired.absent_metadata_fields,
+            uploaded_file_names=frozenset(uploaded_file_names),
         )
 
     def _assert_item_owned_by_thoth(
@@ -743,62 +756,155 @@ class IAUploader(Uploader):
             return None
         return value
 
-    def _verify_final_state(
+    @classmethod
+    def _upload_propagation_sleeps(cls):
+        """Bounded backoff schedule (seconds) for extended propagation waits."""
+        sleeps = []
+        seconds = cls.UPLOAD_PROPAGATION_INITIAL_SLEEP_SECONDS
+        for _ in range(cls.UPLOAD_PROPAGATION_ATTEMPTS):
+            sleeps.append(min(seconds, cls.UPLOAD_PROPAGATION_MAX_SLEEP_SECONDS))
+            seconds = int(seconds * 1.5)
+        return sleeps
+
+    @staticmethod
+    def _describe_file_problem(problem):
+        if problem['kind'] == 'missing':
+            return '{} is missing as an original file'.format(problem['name'])
+        return '{} has MD5 {!r}, expected {!r}'.format(
+            problem['name'], problem['remote_md5'], problem['expected_md5'])
+
+    def _check_final_state(
             self, item, expected_md5s, desired_metadata, absent_fields):
-        last_file_problems = ['item file metadata was not available']
-        last_metadata_problems = ['item metadata was not available']
-        last_refresh_problem = None
+        """Refresh once and compare originals + metadata.
+
+        Returns a dict: ``verified`` (name->md5 map or None), ``file_problems``
+        (structured list or None), ``metadata_problems`` (list or None) and
+        ``refresh_error`` (str or None).
+        """
+        try:
+            item.refresh()
+        except req_except.RequestException as error:
+            return {'verified': None, 'file_problems': None,
+                    'metadata_problems': None,
+                    'refresh_error': 'refresh failed: {}'.format(error)}
+        originals = self._original_files(item.files)
+        file_problems = []
+        for name, expected_md5 in expected_md5s.items():
+            if name not in originals:
+                file_problems.append({
+                    'name': name, 'kind': 'missing',
+                    'remote_md5': None, 'expected_md5': expected_md5})
+                continue
+            remote_md5 = self._file_value(originals[name], 'md5')
+            if remote_md5 != expected_md5:
+                file_problems.append({
+                    'name': name, 'kind': 'stale',
+                    'remote_md5': remote_md5, 'expected_md5': expected_md5})
+        metadata_problems = self._metadata_verification_problems(
+            item.metadata, desired_metadata, absent_fields,
+            fields=self.FINAL_VERIFICATION_METADATA_FIELDS)
+        verified = None
+        if not file_problems and not metadata_problems:
+            verified = {name: self._file_value(originals[name], 'md5')
+                        for name in expected_md5s}
+        return {'verified': verified, 'file_problems': file_problems,
+                'metadata_problems': metadata_problems, 'refresh_error': None}
+
+    @staticmethod
+    def _is_upload_propagation_only(result, uploaded_file_names):
+        """True when the only remaining discrepancies are originals uploaded in
+        this invocation that Internet Archive has accepted but not yet exposed.
+
+        Deliberately conservative: any refresh error, metadata discrepancy, or
+        a file discrepancy for a file not uploaded in this invocation disqualifies
+        the extended phase.
+        """
+        if result.get('refresh_error'):
+            return False
+        if result.get('metadata_problems'):
+            return False
+        file_problems = result.get('file_problems')
+        if not file_problems:
+            return False
+        for problem in file_problems:
+            if problem['name'] not in uploaded_file_names:
+                return False
+            if problem['kind'] not in ('missing', 'stale'):
+                return False
+        return True
+
+    @staticmethod
+    def _problem_summary(result):
+        groups = []
+        if result.get('file_problems'):
+            groups.append('file discrepancies: {}'.format('; '.join(
+                IAUploader._describe_file_problem(p)
+                for p in result['file_problems'])))
+        if result.get('metadata_problems'):
+            groups.append('metadata discrepancies: {}'.format(
+                '; '.join(result['metadata_problems'])))
+        if result.get('refresh_error'):
+            groups.append(result['refresh_error'])
+        return '; '.join(groups) or 'no item state was available'
+
+    def _verify_final_state(
+            self, item, expected_md5s, desired_metadata, absent_fields,
+            uploaded_file_names=frozenset()):
+        # --- Phase 1: ordinary verification (metadata + all originals) ---
+        result = {'file_problems': None, 'metadata_problems': None,
+                  'refresh_error': 'item state was not available',
+                  'verified': None}
         for attempt in range(1, self.VERIFICATION_ATTEMPTS + 1):
-            try:
-                item.refresh()
-                originals = self._original_files(item.files)
-                file_problems = []
-                for name, expected_md5 in expected_md5s.items():
-                    if name not in originals:
-                        file_problems.append(
-                            '{} is missing as an original file'.format(name))
-                        continue
-                    remote_md5 = self._file_value(originals[name], 'md5')
-                    if remote_md5 != expected_md5:
-                        file_problems.append(
-                            '{} has MD5 {!r}, expected {!r}'.format(
-                                name, remote_md5, expected_md5))
-                metadata_problems = self._metadata_verification_problems(
-                    item.metadata, desired_metadata, absent_fields,
-                    fields=self.FINAL_VERIFICATION_METADATA_FIELDS)
-                last_file_problems = file_problems
-                last_metadata_problems = metadata_problems
-                last_refresh_problem = None
-                if not file_problems and not metadata_problems:
-                    return {
-                        name: self._file_value(originals[name], 'md5')
-                        for name in expected_md5s
-                    }
-            except req_except.RequestException as error:
-                last_refresh_problem = 'refresh failed: {}'.format(error)
-
-            problem_groups = []
-            if last_file_problems:
-                problem_groups.append(
-                    'file discrepancies: {}'.format(
-                        '; '.join(last_file_problems)))
-            if last_metadata_problems:
-                problem_groups.append(
-                    'metadata discrepancies: {}'.format(
-                        '; '.join(last_metadata_problems)))
-            if last_refresh_problem:
-                problem_groups.append(last_refresh_problem)
-            last_problem = '; '.join(problem_groups)
-
+            result = self._check_final_state(
+                item, expected_md5s, desired_metadata, absent_fields)
+            if result['verified'] is not None:
+                return result['verified']
             if attempt < self.VERIFICATION_ATTEMPTS:
                 logging.debug(
                     'Internet Archive verification incomplete on attempt %s: %s',
-                    attempt, last_problem)
+                    attempt, self._problem_summary(result))
                 sleep(self.VERIFICATION_SLEEP_SECONDS)
+
+        # --- Phase 2 gate ---
+        if self._is_upload_propagation_only(result, uploaded_file_names):
+            return self._verify_uploaded_file_propagation(
+                item, expected_md5s, desired_metadata, absent_fields,
+                uploaded_file_names, result)
 
         raise InternetArchiveVerificationError(
             'Timed out verifying Internet Archive item {} after {} attempts: {}'
-            .format(self.work_id, self.VERIFICATION_ATTEMPTS, last_problem))
+            .format(self.work_id, self.VERIFICATION_ATTEMPTS,
+                    self._problem_summary(result)))
+
+    def _verify_uploaded_file_propagation(
+            self, item, expected_md5s, desired_metadata, absent_fields,
+            uploaded_file_names, last_result):
+        """Extended, bounded wait for accepted-but-pending original uploads.
+
+        Never re-uploads. Only re-reads the item state on a backoff schedule.
+        """
+        result = last_result
+        sleeps = self._upload_propagation_sleeps()
+        for attempt, sleep_seconds in enumerate(sleeps, start=1):
+            logging.info(
+                'Waiting %ss for Internet Archive to expose accepted upload(s) '
+                'for %s (extended attempt %s/%s)',
+                sleep_seconds, self.work_id, attempt, len(sleeps))
+            sleep(sleep_seconds)
+            result = self._check_final_state(
+                item, expected_md5s, desired_metadata, absent_fields)
+            if result['verified'] is not None:
+                return result['verified']
+            # If a non-propagation problem surfaces (metadata drift, refresh
+            # error, or a file we did not upload), stop waiting and fail.
+            if not self._is_upload_propagation_only(result, uploaded_file_names):
+                break
+
+        raise InternetArchiveVerificationError(
+            'Timed out waiting for accepted Internet Archive upload propagation '
+            'for item {} after {} extended attempts (~{}s): {}'.format(
+                self.work_id, len(sleeps), sum(sleeps),
+                self._problem_summary(result)))
 
     def parse_metadata(self):
         """Convert work metadata into Internet Archive format."""
