@@ -18,7 +18,7 @@ on:
         required: false
         type: string
       limit:
-        description: 'Maximum publisher works to select (1-200)'
+        description: 'Maximum publisher works to select (dry-run: 1-200; apply: maximum 7 total works)'
         required: true
         default: 100
         type: number

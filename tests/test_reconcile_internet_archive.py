@@ -1231,6 +1231,11 @@ CREDENTIALS = {
 class TestApplyMode(unittest.TestCase):
     def setUp(self):
         self.reconciler = InternetArchiveReconciler(thoth=MagicMock())
+        # Real-apply tests exercise IAUploader verification (including the
+        # bounded extended propagation phase); patch its sleep so no test waits.
+        self._sleep_patcher = patch('iauploader.sleep')
+        self._sleep_patcher.start()
+        self.addCleanup(self._sleep_patcher.stop)
 
     def _apply(self, before, context, final=None):
         final = final or current_result()
