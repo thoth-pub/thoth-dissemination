@@ -4,6 +4,7 @@ Retrieve and disseminate files and metadata to Internet Archive
 """
 
 import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from io import BytesIO
@@ -145,14 +146,86 @@ class IAUploader(Uploader):
             location.checksum_algorithm,
         )]
 
+    @staticmethod
+    def _normalise_json_sidecar(metadata_bytes):
+        """Return canonical, deterministic bytes for a ``json::thoth`` sidecar.
+
+        Thoth's ``json::thoth`` export is generated per request and begins with
+        a top-level ``jsonGeneratedAt`` wall-clock timestamp, so uploading the
+        raw export byte-for-byte gives an unchanged work a different expected
+        MD5 on every run, making a stable ``current`` state structurally
+        impossible for managed JSON originals. This removes only that single
+        volatile top-level field and re-serialises the remaining semantic
+        payload canonically (sorted keys, no insignificant whitespace, a single
+        trailing newline), so two exports that differ only by ``jsonGeneratedAt``
+        (or by whitespace or key ordering) yield identical bytes while any real
+        metadata change still yields different bytes.
+
+        Failures raise ``InternetArchiveDesiredStateError`` for the ``json``
+        component with a concise reason and never expose the full payload; the
+        caller adds the work UUID. The raw response is never used as a silent
+        fallback.
+        """
+        if not isinstance(metadata_bytes, bytes):
+            raise InternetArchiveDesiredStateError(
+                'json',
+                'response was not bytes (got {})'.format(
+                    type(metadata_bytes).__name__),
+            )
+        try:
+            decoded = metadata_bytes.decode('utf-8')
+        except UnicodeDecodeError as error:
+            raise InternetArchiveDesiredStateError(
+                'json', 'response was not valid UTF-8: {}'.format(error),
+            ) from error
+        try:
+            payload = json.loads(decoded)
+        except ValueError as error:
+            raise InternetArchiveDesiredStateError(
+                'json', 'response was not valid JSON: {}'.format(error),
+            ) from error
+        if not isinstance(payload, dict):
+            raise InternetArchiveDesiredStateError(
+                'json',
+                'JSON root value is {}, expected a JSON object'.format(
+                    type(payload).__name__),
+            )
+        # Remove only the top-level volatile generation timestamp; any nested
+        # field of the same name is deliberately left untouched.
+        payload.pop('jsonGeneratedAt', None)
+        try:
+            canonical = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(',', ':'),
+                allow_nan=False,
+            )
+        except ValueError as error:
+            raise InternetArchiveDesiredStateError(
+                'json',
+                'response contained values that canonical JSON serialisation '
+                'refuses: {}'.format(error),
+            ) from error
+        return canonical.encode('utf-8') + b'\n'
+
     def build_desired_state(self):
         """Construct Archive and Thoth location state without mutating either."""
         try:
-            metadata_bytes = self.get_formatted_metadata('json::thoth')
+            raw_metadata_bytes = self.get_formatted_metadata('json::thoth')
         except Exception as error:
             raise InternetArchiveDesiredStateError(
                 'json',
                 'JSON export unavailable for {}: {}'.format(
+                    self.work_id, error),
+            ) from error
+
+        try:
+            metadata_bytes = self._normalise_json_sidecar(raw_metadata_bytes)
+        except InternetArchiveDesiredStateError as error:
+            raise InternetArchiveDesiredStateError(
+                'json',
+                'JSON sidecar normalisation failed for {}: {}'.format(
                     self.work_id, error),
             ) from error
 
@@ -165,12 +238,6 @@ class IAUploader(Uploader):
                     self.work_id, error),
             ) from error
 
-        if not isinstance(metadata_bytes, bytes):
-            raise InternetArchiveDesiredStateError(
-                'json',
-                'JSON export unavailable for {}: response was not bytes'.format(
-                    self.work_id),
-            )
         if not isinstance(publication.bytes, bytes) or not publication.bytes:
             raise InternetArchiveDesiredStateError(
                 'pdf',
