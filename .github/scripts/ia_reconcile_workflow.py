@@ -16,6 +16,19 @@ WORK_IDS_PATH = Path("normalised-work-ids.txt")
 REPORT_PATH = Path("internet-archive-reconciliation.json")
 STATUS_PATH = Path("reconciliation-exit-status.txt")
 
+# Dry-run only inspects item state, so it may discover a large candidate batch.
+DRY_RUN_MAX_BATCH_SIZE = 200
+# Apply runs mutate IA and each affected work can incur ~932s of extended
+# upload-propagation polling; a conservative cap keeps a fully lagging batch
+# within the 180-minute apply job timeout with margin for source retrieval,
+# uploads and report generation. Larger campaigns use multiple sequential runs.
+APPLY_MAX_BATCH_SIZE = 7
+
+
+def maximum_batch_size(mode):
+    """Return the worst-case selectable-works cap for the given mode."""
+    return DRY_RUN_MAX_BATCH_SIZE if mode == "dry-run" else APPLY_MAX_BATCH_SIZE
+
 
 def annotation(title, message):
     """Emit an escaped GitHub error annotation."""
@@ -89,6 +102,7 @@ def validate_inputs(mode):
         errors.append(message)
         annotation("No selection criteria", message)
 
+    maximum_batch = maximum_batch_size(mode)
     possible_batch = None
     if limit is not None:
         possible_batch = (
@@ -96,13 +110,21 @@ def validate_inputs(mode):
             if publisher_raw
             else len(explicit_ids)
         )
-        if possible_batch > 200:
-            message = (
-                "The requested batch can select up to "
-                f"{possible_batch} works; the hard limit is 200"
-            )
+        if possible_batch > maximum_batch:
+            if mode == "apply":
+                message = (
+                    f"Apply batches may select at most {APPLY_MAX_BATCH_SIZE} "
+                    f"works; this request can select up to {possible_batch}."
+                )
+                annotation("Apply batch exceeds cap", message)
+            else:
+                message = (
+                    "The requested batch can select up to "
+                    f"{possible_batch} works; the hard limit is "
+                    f"{DRY_RUN_MAX_BATCH_SIZE}"
+                )
+                annotation("Combined batch exceeds 200", message)
             errors.append(message)
-            annotation("Combined batch exceeds 200", message)
 
     if mode == "apply":
         if os.environ.get("INPUT_CONFIRM_APPLY") != "APPLY":
@@ -122,6 +144,7 @@ def validate_inputs(mode):
         "explicit_work_id_count": len(explicit_ids),
         "github_ref": os.environ.get("GITHUB_REF"),
         "limit": limit,
+        "maximum_batch_size": maximum_batch,
         "mode": mode,
         "offset": offset,
         "possible_batch_size": possible_batch,

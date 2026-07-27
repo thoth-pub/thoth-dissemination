@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from uuid import UUID
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,13 @@ HELPER = ROOT / ".github" / "scripts" / "ia_reconcile_workflow.py"
 WORK_ID = "11111111-2222-3333-4444-555555555555"
 WORK_ID_2 = "22222222-3333-4444-5555-666666666666"
 PUBLISHER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+DRY_RUN_MAX_BATCH_SIZE = 200
+APPLY_MAX_BATCH_SIZE = 7
+
+
+def distinct_work_ids(count):
+    """Return `count` distinct valid UUIDs (explicit IDs are deduplicated)."""
+    return [str(UUID(int=index + 1)) for index in range(count)]
 
 
 class TestIAReconcileWorkflow(unittest.TestCase):
@@ -190,6 +198,185 @@ class TestIAReconcileWorkflow(unittest.TestCase):
         self.assertIn("- Applied actions: 1", summary)
         self.assertIn("- Uncertain actions: 1", summary)
         self.assertNotIn(WORK_ID, summary)
+
+    def _context(self, workdir):
+        return json.loads(
+            (workdir / "reconciliation-run-context.json").read_text()
+        )
+
+    def test_dry_run_publisher_limit_200_succeeds(self):
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "dry-run",
+            INPUT_LIMIT="200",
+            INPUT_PUBLISHER_ID=PUBLISHER_ID,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        context = self._context(workdir)
+        self.assertEqual(context["possible_batch_size"], 200)
+        self.assertEqual(
+            context["maximum_batch_size"], DRY_RUN_MAX_BATCH_SIZE
+        )
+        self.assertEqual(context["validation_errors"], [])
+
+    def test_dry_run_200_explicit_ids_succeeds(self):
+        ids = distinct_work_ids(200)
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "dry-run",
+            INPUT_WORK_IDS="\n".join(ids),
+        )
+
+        self.assertEqual(result.returncode, 0)
+        context = self._context(workdir)
+        self.assertEqual(context["explicit_work_id_count"], 200)
+        self.assertEqual(context["possible_batch_size"], 200)
+        self.assertEqual(context["validation_errors"], [])
+
+    def test_apply_seven_explicit_ids_succeeds(self):
+        ids = distinct_work_ids(7)
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_CONFIRM_APPLY="APPLY",
+            INPUT_WORK_IDS="\n".join(ids),
+        )
+
+        self.assertEqual(result.returncode, 0)
+        context = self._context(workdir)
+        self.assertEqual(context["possible_batch_size"], 7)
+        self.assertEqual(context["maximum_batch_size"], APPLY_MAX_BATCH_SIZE)
+        self.assertEqual(context["validation_errors"], [])
+
+    def test_apply_eight_explicit_ids_is_rejected(self):
+        ids = distinct_work_ids(8)
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_CONFIRM_APPLY="APPLY",
+            INPUT_WORK_IDS="\n".join(ids),
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("title=Apply batch exceeds cap", result.stdout)
+        context = self._context(workdir)
+        self.assertEqual(context["possible_batch_size"], 8)
+        self.assertIn(
+            "Apply batches may select at most 7 works; "
+            "this request can select up to 8.",
+            context["validation_errors"],
+        )
+
+    def test_apply_publisher_limit_7_succeeds(self):
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_CONFIRM_APPLY="APPLY",
+            INPUT_LIMIT="7",
+            INPUT_PUBLISHER_ID=PUBLISHER_ID,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        context = self._context(workdir)
+        self.assertEqual(context["possible_batch_size"], 7)
+        self.assertEqual(context["validation_errors"], [])
+
+    def test_apply_publisher_limit_8_is_rejected(self):
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_CONFIRM_APPLY="APPLY",
+            INPUT_LIMIT="8",
+            INPUT_PUBLISHER_ID=PUBLISHER_ID,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("title=Apply batch exceeds cap", result.stdout)
+        context = self._context(workdir)
+        self.assertEqual(context["possible_batch_size"], 8)
+
+    def test_apply_publisher_limit_5_plus_2_explicit_succeeds(self):
+        ids = distinct_work_ids(2)
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_CONFIRM_APPLY="APPLY",
+            INPUT_LIMIT="5",
+            INPUT_PUBLISHER_ID=PUBLISHER_ID,
+            INPUT_WORK_IDS="\n".join(ids),
+        )
+
+        self.assertEqual(result.returncode, 0)
+        context = self._context(workdir)
+        self.assertEqual(context["possible_batch_size"], 7)
+        self.assertEqual(context["validation_errors"], [])
+
+    def test_apply_publisher_limit_5_plus_3_explicit_is_rejected(self):
+        ids = distinct_work_ids(3)
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_CONFIRM_APPLY="APPLY",
+            INPUT_LIMIT="5",
+            INPUT_PUBLISHER_ID=PUBLISHER_ID,
+            INPUT_WORK_IDS="\n".join(ids),
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("title=Apply batch exceeds cap", result.stdout)
+        context = self._context(workdir)
+        self.assertEqual(context["possible_batch_size"], 8)
+
+    def test_oversized_apply_records_validation_error_in_context(self):
+        ids = distinct_work_ids(8)
+        result, workdir = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_CONFIRM_APPLY="APPLY",
+            INPUT_WORK_IDS="\n".join(ids),
+        )
+
+        self.assertEqual(result.returncode, 2)
+        context = self._context(workdir)
+        self.assertEqual(context["mode"], "apply")
+        self.assertEqual(context["possible_batch_size"], 8)
+        self.assertEqual(context["maximum_batch_size"], APPLY_MAX_BATCH_SIZE)
+        self.assertTrue(
+            any(
+                "Apply batches may select at most" in error
+                for error in context["validation_errors"]
+            )
+        )
+        self.assertIn(
+            "VALIDATION ERROR:",
+            (workdir / "internet-archive-reconciliation.log").read_text(),
+        )
+
+    def test_apply_cap_does_not_relax_confirmation_or_branch_restrictions(self):
+        # A within-cap apply request on the wrong ref without confirmation is
+        # still rejected: the batch cap does not weaken existing protections.
+        ids = distinct_work_ids(3)
+        result, _ = self.run_helper(
+            "validate",
+            "--mode",
+            "apply",
+            INPUT_WORK_IDS="\n".join(ids),
+            GITHUB_REF="refs/heads/feature/make-ia-idempotent",
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("title=Missing apply confirmation", result.stdout)
+        self.assertIn("title=Apply ref restriction", result.stdout)
 
 
 if __name__ == "__main__":
