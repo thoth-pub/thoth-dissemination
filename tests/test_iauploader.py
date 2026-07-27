@@ -3,6 +3,7 @@ import importlib
 import json
 import sys
 import unittest
+from decimal import Decimal
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -11,6 +12,7 @@ from requests.exceptions import ConnectionError as ReqConnectionError, HTTPError
 
 from errors import (
     DisseminationError,
+    InternetArchiveDesiredStateError,
     InternetArchiveIdentifierCollisionError,
     InternetArchiveImmutableMetadataError,
     InternetArchiveRestrictedMetadataError,
@@ -90,7 +92,12 @@ class TestIAUploader(unittest.TestCase):
         self.addCleanup(self.sleep_patcher.stop)
 
         self.pdf_bytes = b'current PDF bytes'
-        self.json_bytes = b'{"current":"metadata"}'
+        # Canonical sidecar bytes: the deterministic representation produced by
+        # IAUploader._normalise_json_sidecar (sorted keys, compact separators,
+        # single trailing newline). Using the canonical form here means the raw
+        # export and its normalisation are byte-identical, so remote originals
+        # seeded with these bytes still compare as current.
+        self.json_bytes = b'{"current":"metadata"}\n'
         self.uploader = IAUploader.__new__(IAUploader)
         self.uploader.work_id = WORK_ID
         self.uploader.export_url = 'https://export.example'
@@ -1394,6 +1401,384 @@ class TestIAUploader(unittest.TestCase):
         self.mock_upload.assert_not_called()
         self.item.modify_metadata.assert_not_called()
         self.item.refresh.assert_not_called()
+
+    # --- Deterministic JSON sidecar: desired-state behaviour ---
+
+    # A pair of raw json::thoth exports that are semantically identical but
+    # carry different top-level generation timestamps. Both must normalise to
+    # the canonical self.json_bytes.
+    RAW_EXPORT_EARLY = (
+        b'{"jsonGeneratedAt":"2026-07-27T10:00:00.000000Z",'
+        b'"current":"metadata"}')
+    RAW_EXPORT_LATE = (
+        b'  {\n  "current": "metadata",\n'
+        b'  "jsonGeneratedAt": "2026-07-27T11:30:00.000000Z"\n}\n')
+
+    def test_build_desired_state_stores_normalised_json_bytes(self):
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_EARLY
+
+        desired = self.uploader.build_desired_state()
+
+        self.assertEqual(desired.file_bytes[JSON_NAME], self.json_bytes)
+
+    def test_expected_json_md5_is_calculated_from_normalised_bytes(self):
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_EARLY
+
+        desired = self.uploader.build_desired_state()
+
+        self.assertEqual(
+            desired.expected_md5s[JSON_NAME],
+            hashlib.md5(self.json_bytes).hexdigest())
+        # Never the MD5 of the raw timestamp-bearing export.
+        self.assertNotEqual(
+            desired.expected_md5s[JSON_NAME],
+            hashlib.md5(self.RAW_EXPORT_EARLY).hexdigest())
+
+    def test_uploader_sends_exact_normalised_json_bytes(self):
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_LATE
+        self._set_existing_item(files=[
+            original_file(PDF_NAME, self.pdf_bytes),
+            original_file(JSON_NAME, b'legacy raw sidecar'),
+        ])
+
+        sent = {}
+
+        def capture_upload(**kwargs):
+            for name, file_object in kwargs['files'].items():
+                contents = file_object.read()
+                sent[name] = contents
+                self.item.set_original(name, contents)
+            self.item.exists = True
+            return [make_response() for _ in kwargs['files']]
+
+        self.mock_upload.side_effect = capture_upload
+
+        self.uploader.upload_to_platform()
+
+        self.assertEqual(set(sent), {JSON_NAME})
+        self.assertEqual(sent[JSON_NAME], self.json_bytes)
+
+    def test_two_desired_builds_differing_only_by_timestamp_share_json_md5(self):
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_EARLY
+        early = self.uploader.build_desired_state()
+
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_LATE
+        late = self.uploader.build_desired_state()
+
+        self.assertEqual(early.file_bytes[JSON_NAME], late.file_bytes[JSON_NAME])
+        self.assertEqual(
+            early.expected_md5s[JSON_NAME], late.expected_md5s[JSON_NAME])
+
+    def test_remote_canonical_json_is_current_despite_new_timestamp(self):
+        # Remote already holds the canonical bytes; the next raw export carries
+        # a different generation timestamp. The sidecar must remain current.
+        self._set_existing_item(files=[
+            original_file(PDF_NAME, self.pdf_bytes),
+            original_file(JSON_NAME, self.json_bytes),
+        ])
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_LATE
+        desired = self.uploader.build_desired_state()
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertTrue(inspection['files'][JSON_NAME]['current'])
+        self.assertTrue(inspection['files'][PDF_NAME]['current'])
+
+    def test_legacy_timestamp_sidecar_is_stale_and_proposes_one_json_upload(self):
+        # A pre-fix original still carrying the raw timestamp bytes must be
+        # classified stale exactly once, proposing only the JSON upload.
+        self._set_existing_item(files=[
+            original_file(PDF_NAME, self.pdf_bytes),
+            original_file(JSON_NAME, self.RAW_EXPORT_EARLY),
+        ])
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_LATE
+        desired = self.uploader.build_desired_state()
+
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertFalse(inspection['files'][JSON_NAME]['current'])
+        self.assertTrue(inspection['files'][PDF_NAME]['current'])
+        self.assertEqual(inspection['metadata_patch'], {})
+
+    def test_legacy_sidecar_upload_then_reinspection_is_current(self):
+        # End-to-end determinism: repair uploads the canonical bytes, and a
+        # later build with yet another timestamp classifies the item current.
+        self._set_existing_item(files=[
+            original_file(PDF_NAME, self.pdf_bytes),
+            original_file(JSON_NAME, self.RAW_EXPORT_EARLY),
+        ])
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_LATE
+
+        self.uploader.upload_to_platform()
+
+        self.assertEqual(
+            set(self.mock_upload.call_args.kwargs['files']), {JSON_NAME})
+        # Remote now holds the canonical bytes; a fresh export with a different
+        # timestamp must produce no further action.
+        self.uploader.get_formatted_metadata.return_value = (
+            b'{"jsonGeneratedAt":"2026-07-28T00:00:00.000000Z",'
+            b'"current":"metadata"}')
+        desired = self.uploader.build_desired_state()
+        inspection = self.uploader.inspect_item(self.item, desired)
+
+        self.assertTrue(inspection['files'][JSON_NAME]['current'])
+        self.assertTrue(inspection['files'][PDF_NAME]['current'])
+        self.assertEqual(inspection['metadata_patch'], {})
+
+    def test_current_item_with_new_timestamp_export_makes_no_api_calls(self):
+        # The current-item fast path must still read no credentials and perform
+        # no upload when only the volatile timestamp changed.
+        self._set_existing_item(files=[
+            original_file(PDF_NAME, self.pdf_bytes),
+            original_file(JSON_NAME, self.json_bytes),
+        ])
+        self.uploader.get_formatted_metadata.return_value = self.RAW_EXPORT_LATE
+
+        self.uploader.upload_to_platform()
+
+        self.mock_upload.assert_not_called()
+        self.item.modify_metadata.assert_not_called()
+        self.uploader.get_variable_from_env.assert_not_called()
+
+    # --- Deterministic JSON sidecar: error behaviour via build_desired_state ---
+
+    def test_invalid_utf8_export_raises_desired_state_error_for_json(self):
+        self.uploader.get_formatted_metadata.return_value = b'\xff\xfe not utf8'
+
+        with self.assertRaises(InternetArchiveDesiredStateError) as raised:
+            self.uploader.build_desired_state()
+
+        self.assertEqual(raised.exception.source, 'json')
+
+    def test_malformed_json_export_raises_desired_state_error_for_json(self):
+        self.uploader.get_formatted_metadata.return_value = b'{"current":'
+
+        with self.assertRaises(InternetArchiveDesiredStateError) as raised:
+            self.uploader.build_desired_state()
+
+        self.assertEqual(raised.exception.source, 'json')
+
+    def test_non_object_json_roots_are_rejected(self):
+        for raw in (b'[1, 2, 3]', b'"a string"', b'42', b'true', b'null'):
+            with self.subTest(raw=raw):
+                self.uploader.get_formatted_metadata.return_value = raw
+                with self.assertRaises(
+                        InternetArchiveDesiredStateError) as raised:
+                    self.uploader.build_desired_state()
+                self.assertEqual(raised.exception.source, 'json')
+
+    def test_non_bytes_export_response_is_rejected(self):
+        self.uploader.get_formatted_metadata.return_value = {'not': 'bytes'}
+
+        with self.assertRaises(InternetArchiveDesiredStateError) as raised:
+            self.uploader.build_desired_state()
+
+        self.assertEqual(raised.exception.source, 'json')
+
+    def test_desired_state_json_error_includes_uuid_not_full_payload(self):
+        secret_marker = 'do-not-leak-this-entire-payload-marker'
+        self.uploader.get_formatted_metadata.return_value = (
+            '["{}", NaN]'.format(secret_marker).encode('utf-8'))
+
+        with self.assertRaises(InternetArchiveDesiredStateError) as raised:
+            self.uploader.build_desired_state()
+
+        message = str(raised.exception)
+        self.assertEqual(raised.exception.source, 'json')
+        self.assertIn(WORK_ID, message)
+        self.assertNotIn(secret_marker, message)
+
+
+class TestJsonSidecarNormalisation(unittest.TestCase):
+    """Pure canonicalisation contract for IAUploader._normalise_json_sidecar."""
+
+    def normalise(self, metadata_bytes):
+        return IAUploader._normalise_json_sidecar(metadata_bytes)
+
+    def test_different_top_level_timestamps_produce_identical_bytes_and_md5(self):
+        early = self.normalise(
+            b'{"jsonGeneratedAt":"2026-01-01T00:00:00Z","title":"Book"}')
+        late = self.normalise(
+            b'{"jsonGeneratedAt":"2026-12-31T23:59:59Z","title":"Book"}')
+
+        self.assertEqual(early, late)
+        self.assertEqual(
+            hashlib.md5(early).hexdigest(), hashlib.md5(late).hexdigest())
+
+    def test_key_order_and_whitespace_do_not_affect_output(self):
+        compact = self.normalise(b'{"a":1,"b":2,"c":3}')
+        reordered = self.normalise(
+            b'{\n  "c": 3,\n  "b": 2,\n  "a": 1\n}\n')
+
+        self.assertEqual(compact, reordered)
+
+    def test_non_ascii_text_is_preserved(self):
+        result = self.normalise(
+            '{"title":"Café Möbius — 日本語"}'.encode('utf-8'))
+
+        self.assertEqual(
+            result, '{"title":"Café Möbius — 日本語"}\n'.encode('utf-8'))
+        self.assertEqual(
+            json.loads(result.decode('utf-8'))['title'],
+            'Café Möbius — 日本語')
+
+    def test_real_metadata_change_produces_different_bytes_and_md5(self):
+        original = self.normalise(
+            b'{"jsonGeneratedAt":"2026-01-01T00:00:00Z","title":"Book"}')
+        changed = self.normalise(
+            b'{"jsonGeneratedAt":"2026-01-01T00:00:00Z","title":"Revised"}')
+
+        self.assertNotEqual(original, changed)
+        self.assertNotEqual(
+            hashlib.md5(original).hexdigest(),
+            hashlib.md5(changed).hexdigest())
+
+    def test_missing_top_level_timestamp_is_accepted(self):
+        result = self.normalise(b'{"title":"Book"}')
+
+        self.assertEqual(result, b'{"title":"Book"}\n')
+
+    def test_nested_timestamp_field_is_preserved(self):
+        result = self.normalise(
+            b'{"jsonGeneratedAt":"2026-01-01T00:00:00Z",'
+            b'"work":{"jsonGeneratedAt":"nested-value","id":"x"}}')
+
+        payload = json.loads(result.decode('utf-8'))
+        self.assertNotIn('jsonGeneratedAt', payload)
+        self.assertEqual(payload['work']['jsonGeneratedAt'], 'nested-value')
+
+    def test_only_top_level_timestamp_field_is_removed(self):
+        result = self.normalise(
+            b'{"jsonGeneratedAt":"t","keep":"me","also":"here"}')
+
+        payload = json.loads(result.decode('utf-8'))
+        self.assertEqual(payload, {'keep': 'me', 'also': 'here'})
+
+    def test_output_is_exact_documented_canonical_representation(self):
+        result = self.normalise(
+            b'{\n  "b": "second",\n'
+            b'  "jsonGeneratedAt": "2026-01-01T00:00:00Z",\n'
+            b'  "a": "first"\n}\n')
+
+        self.assertEqual(result, b'{"a":"first","b":"second"}\n')
+
+    def test_output_is_idempotent(self):
+        once = self.normalise(
+            b'{"jsonGeneratedAt":"2026-01-01T00:00:00Z","x":[1,2,{"y":"z"}]}')
+        twice = self.normalise(once)
+
+        self.assertEqual(once, twice)
+
+    def test_non_bytes_input_is_rejected(self):
+        for value in ('a string', {'a': 'dict'}, 42, None, ['list']):
+            with self.subTest(value=value):
+                with self.assertRaises(
+                        InternetArchiveDesiredStateError) as raised:
+                    self.normalise(value)
+                self.assertEqual(raised.exception.source, 'json')
+
+    def test_invalid_utf8_is_rejected(self):
+        with self.assertRaises(InternetArchiveDesiredStateError) as raised:
+            self.normalise(b'{"title": "\xff\xfe"}')
+        self.assertEqual(raised.exception.source, 'json')
+
+    def test_malformed_json_is_rejected(self):
+        with self.assertRaises(InternetArchiveDesiredStateError) as raised:
+            self.normalise(b'{"title": ')
+        self.assertEqual(raised.exception.source, 'json')
+
+    def test_non_object_roots_are_rejected(self):
+        for raw in (b'[1,2,3]', b'"a string"', b'42', b'true', b'null'):
+            with self.subTest(raw=raw):
+                with self.assertRaises(
+                        InternetArchiveDesiredStateError) as raised:
+                    self.normalise(raw)
+                self.assertEqual(raised.exception.source, 'json')
+
+    def test_values_canonical_json_refuses_are_rejected(self):
+        # Python's json.loads accepts NaN/Infinity, but canonical serialisation
+        # must refuse them rather than emit invalid JSON. They are now rejected
+        # during parsing (parse_constant) before any non-finite float is built.
+        for raw in (b'{"x": NaN}', b'{"x": Infinity}', b'{"x": -Infinity}'):
+            with self.subTest(raw=raw):
+                with self.assertRaises(
+                        InternetArchiveDesiredStateError) as raised:
+                    self.normalise(raw)
+                self.assertEqual(raised.exception.source, 'json')
+
+    def test_high_precision_decimal_is_not_rounded_through_binary_float(self):
+        # Regression for the P2 precision-preservation finding: a decimal token
+        # needing more precision than a binary float must survive exactly.
+        # 9007199254740993.0 is not representable as a double and ordinary
+        # json.loads would round it down to 9007199254740992.0.
+        result = self.normalise(b'{"value":9007199254740993.0}')
+
+        self.assertIn(b'9007199254740993.0', result)
+        self.assertNotIn(b'9007199254740992.0', result)
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(parsed['value'], Decimal('9007199254740993.0'))
+
+    def test_adjacent_high_precision_decimals_stay_distinct(self):
+        # The two tokens collapse to the same Python float; the canonical
+        # bytes and MD5s must nonetheless differ.
+        higher = self.normalise(b'{"value":9007199254740993.0}')
+        lower = self.normalise(b'{"value":9007199254740992.0}')
+
+        self.assertNotEqual(higher, lower)
+        self.assertNotEqual(
+            hashlib.md5(higher).hexdigest(),
+            hashlib.md5(lower).hexdigest())
+
+    def test_long_fractional_value_is_preserved_exactly(self):
+        raw = b'{"value":0.123456789012345678901234567890}'
+        result = self.normalise(raw)
+
+        self.assertIn(b'0.123456789012345678901234567890', result)
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(
+            parsed['value'], Decimal('0.123456789012345678901234567890'))
+
+    def test_exact_decimals_survive_in_nested_structures(self):
+        raw = (
+            b'{"obj":{"n":1.5},'
+            b'"arr":[2.5,3.5],'
+            b'"obj_in_arr":[{"n":4.5}]}')
+        result = self.normalise(raw)
+
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(parsed['obj']['n'], Decimal('1.5'))
+        self.assertEqual(parsed['arr'], [Decimal('2.5'), Decimal('3.5')])
+        self.assertEqual(parsed['obj_in_arr'][0]['n'], Decimal('4.5'))
+
+    def test_negative_and_exponent_decimals_are_preserved(self):
+        raw = b'{"neg":-3.14,"exp":6.022e23,"small":1e-7}'
+        result = self.normalise(raw)
+
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(parsed['neg'], Decimal('-3.14'))
+        self.assertEqual(parsed['exp'], Decimal('6.022e23'))
+        self.assertEqual(parsed['small'], Decimal('1e-7'))
+
+    def test_numbers_remain_json_numbers_not_quoted_strings(self):
+        result = self.normalise(
+            b'{"i":42,"f":1.5,"big":9007199254740993.0}')
+
+        # Parse without parse_float so a quoted number would surface as str.
+        parsed = json.loads(result.decode('utf-8'))
+        self.assertIsInstance(parsed['i'], int)
+        self.assertIsInstance(parsed['f'], float)
+        self.assertIsInstance(parsed['big'], float)
+        self.assertNotIsInstance(parsed['big'], str)
+
+    def test_output_with_exact_decimals_is_idempotent(self):
+        once = self.normalise(
+            b'{"jsonGeneratedAt":"t",'
+            b'"value":9007199254740993.0,'
+            b'"nested":{"long":0.123456789012345678901234567890},'
+            b'"arr":[-3.14,6.022e23]}')
+        twice = self.normalise(once)
+
+        self.assertEqual(once, twice)
 
 
 class TestDisseminatorCLI(unittest.TestCase):

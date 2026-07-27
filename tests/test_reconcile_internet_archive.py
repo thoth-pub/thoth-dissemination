@@ -30,7 +30,12 @@ WORK_ID_3 = '33333333-4444-5555-6666-777777777777'
 PUBLISHER_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 PUBLICATION_ID = '99999999-8888-7777-6666-555555555555'
 PDF_BYTES = b'current PDF bytes'
-JSON_BYTES = b'{"current":"metadata"}'
+# Canonical sidecar bytes: the deterministic representation produced by
+# IAUploader._normalise_json_sidecar (sorted keys, compact separators, single
+# trailing newline). Using the canonical form means the raw export and its
+# normalisation are byte-identical, so remote originals seeded with these bytes
+# still compare as current.
+JSON_BYTES = b'{"current":"metadata"}\n'
 PDF_MD5 = hashlib.md5(PDF_BYTES).hexdigest()
 PDF_NAME = '{}.pdf'.format(WORK_ID)
 JSON_NAME = '{}.json'.format(WORK_ID)

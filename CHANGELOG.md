@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+  - Normalise the Internet Archive JSON sidecar into a deterministic canonical representation before upload and checksum calculation, stripping only the volatile top-level `jsonGeneratedAt` generation timestamp, so semantically unchanged Thoth metadata no longer produces a different expected JSON MD5 on every run and managed JSON originals can converge to `current`
+  - Preserve exact JSON numbers when canonicalising the Internet Archive sidecar: fractional tokens are parsed with `parse_float=Decimal` and re-serialised as unquoted JSON numbers by an explicit canonical encoder, so a high-precision metadata value (e.g. `9007199254740993.0`) is no longer silently rounded through a binary float and distinct source values can no longer collapse to the same expected MD5; non-standard `NaN`/`Infinity` constants are now rejected during parsing before any non-finite float is constructed
 
 ## [[1.6.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.6.2) - 2026-07-27
 ### Fixed
