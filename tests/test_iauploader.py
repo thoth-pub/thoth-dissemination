@@ -3,6 +3,7 @@ import importlib
 import json
 import sys
 import unittest
+from decimal import Decimal
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -1696,13 +1697,88 @@ class TestJsonSidecarNormalisation(unittest.TestCase):
 
     def test_values_canonical_json_refuses_are_rejected(self):
         # Python's json.loads accepts NaN/Infinity, but canonical serialisation
-        # with allow_nan=False must refuse them rather than emit invalid JSON.
+        # must refuse them rather than emit invalid JSON. They are now rejected
+        # during parsing (parse_constant) before any non-finite float is built.
         for raw in (b'{"x": NaN}', b'{"x": Infinity}', b'{"x": -Infinity}'):
             with self.subTest(raw=raw):
                 with self.assertRaises(
                         InternetArchiveDesiredStateError) as raised:
                     self.normalise(raw)
                 self.assertEqual(raised.exception.source, 'json')
+
+    def test_high_precision_decimal_is_not_rounded_through_binary_float(self):
+        # Regression for the P2 precision-preservation finding: a decimal token
+        # needing more precision than a binary float must survive exactly.
+        # 9007199254740993.0 is not representable as a double and ordinary
+        # json.loads would round it down to 9007199254740992.0.
+        result = self.normalise(b'{"value":9007199254740993.0}')
+
+        self.assertIn(b'9007199254740993.0', result)
+        self.assertNotIn(b'9007199254740992.0', result)
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(parsed['value'], Decimal('9007199254740993.0'))
+
+    def test_adjacent_high_precision_decimals_stay_distinct(self):
+        # The two tokens collapse to the same Python float; the canonical
+        # bytes and MD5s must nonetheless differ.
+        higher = self.normalise(b'{"value":9007199254740993.0}')
+        lower = self.normalise(b'{"value":9007199254740992.0}')
+
+        self.assertNotEqual(higher, lower)
+        self.assertNotEqual(
+            hashlib.md5(higher).hexdigest(),
+            hashlib.md5(lower).hexdigest())
+
+    def test_long_fractional_value_is_preserved_exactly(self):
+        raw = b'{"value":0.123456789012345678901234567890}'
+        result = self.normalise(raw)
+
+        self.assertIn(b'0.123456789012345678901234567890', result)
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(
+            parsed['value'], Decimal('0.123456789012345678901234567890'))
+
+    def test_exact_decimals_survive_in_nested_structures(self):
+        raw = (
+            b'{"obj":{"n":1.5},'
+            b'"arr":[2.5,3.5],'
+            b'"obj_in_arr":[{"n":4.5}]}')
+        result = self.normalise(raw)
+
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(parsed['obj']['n'], Decimal('1.5'))
+        self.assertEqual(parsed['arr'], [Decimal('2.5'), Decimal('3.5')])
+        self.assertEqual(parsed['obj_in_arr'][0]['n'], Decimal('4.5'))
+
+    def test_negative_and_exponent_decimals_are_preserved(self):
+        raw = b'{"neg":-3.14,"exp":6.022e23,"small":1e-7}'
+        result = self.normalise(raw)
+
+        parsed = json.loads(result.decode('utf-8'), parse_float=Decimal)
+        self.assertEqual(parsed['neg'], Decimal('-3.14'))
+        self.assertEqual(parsed['exp'], Decimal('6.022e23'))
+        self.assertEqual(parsed['small'], Decimal('1e-7'))
+
+    def test_numbers_remain_json_numbers_not_quoted_strings(self):
+        result = self.normalise(
+            b'{"i":42,"f":1.5,"big":9007199254740993.0}')
+
+        # Parse without parse_float so a quoted number would surface as str.
+        parsed = json.loads(result.decode('utf-8'))
+        self.assertIsInstance(parsed['i'], int)
+        self.assertIsInstance(parsed['f'], float)
+        self.assertIsInstance(parsed['big'], float)
+        self.assertNotIsInstance(parsed['big'], str)
+
+    def test_output_with_exact_decimals_is_idempotent(self):
+        once = self.normalise(
+            b'{"jsonGeneratedAt":"t",'
+            b'"value":9007199254740993.0,'
+            b'"nested":{"long":0.123456789012345678901234567890},'
+            b'"arr":[-3.14,6.022e23]}')
+        twice = self.normalise(once)
+
+        self.assertEqual(once, twice)
 
 
 class TestDisseminatorCLI(unittest.TestCase):

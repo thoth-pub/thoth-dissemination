@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from decimal import Decimal
 from io import BytesIO
 from time import sleep
 
@@ -22,6 +23,68 @@ from errors import (
     InternetArchiveVerificationError,
 )
 from uploader import Uploader, Location
+
+
+def _reject_non_standard_json_constant(token):
+    """Reject the non-standard JSON constants ``json.loads`` otherwise accepts.
+
+    ``json.loads`` calls this for the bare tokens ``NaN``, ``Infinity`` and
+    ``-Infinity``. Rejecting them here means we never construct a non-finite
+    binary float in the first place; the raised ``ValueError`` is caught by the
+    normalisation caller and reported as an ``InternetArchiveDesiredStateError``
+    for the ``json`` component. Only the offending token name is surfaced, never
+    the surrounding payload.
+    """
+    raise ValueError(
+        'non-finite JSON constant {!r} is not permitted'.format(token))
+
+
+def _canonical_json_encode(value):
+    """Serialise ``value`` as canonical JSON text preserving exact numbers.
+
+    Unlike ``json.dumps``, this encodes ``Decimal`` values (produced by parsing
+    JSON fractional tokens with ``parse_float=Decimal``) as unquoted JSON
+    numbers holding their exact decimal value, so no metadata number is ever
+    rounded through a binary float. It implements exactly the JSON data model
+    (object, array, string, number, ``true``/``false``, ``null``) with sorted
+    object keys and no insignificant whitespace. Unsupported internal types are
+    rejected rather than coerced.
+    """
+    # ``bool`` must be checked before ``int`` because it subclasses ``int``.
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if value is None:
+        return 'null'
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, int):
+        # ``int`` preserves arbitrary precision exactly; base-10 is canonical.
+        return str(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError(
+                'non-finite decimal number is not permitted in canonical JSON')
+        # ``str(Decimal)`` yields the exact value as a valid JSON number token
+        # (plain or E-notation) without any binary-float rounding.
+        return str(value)
+    if isinstance(value, dict):
+        items = []
+        for key in sorted(value):
+            if not isinstance(key, str):
+                raise ValueError(
+                    'JSON object keys must be strings, got {}'.format(
+                        type(key).__name__))
+            items.append(
+                '{}:{}'.format(
+                    json.dumps(key, ensure_ascii=False),
+                    _canonical_json_encode(value[key])))
+        return '{' + ','.join(items) + '}'
+    if isinstance(value, (list, tuple)):
+        return '[' + ','.join(
+            _canonical_json_encode(element) for element in value) + ']'
+    raise ValueError(
+        'value of type {} is not part of the JSON data model'.format(
+            type(value).__name__))
 
 
 @dataclass(frozen=True)
@@ -161,6 +224,14 @@ class IAUploader(Uploader):
         (or by whitespace or key ordering) yield identical bytes while any real
         metadata change still yields different bytes.
 
+        Fractional JSON numbers are parsed with ``parse_float=Decimal`` and
+        re-serialised as unquoted JSON numbers by an explicit canonical encoder,
+        so an exact metadata value is never silently rounded through a binary
+        float (e.g. ``9007199254740993.0`` is preserved rather than collapsing
+        to ``9007199254740992.0``). Integers keep Python's arbitrary precision.
+        Non-standard constants (``NaN``, ``Infinity``, ``-Infinity``) are
+        rejected during parsing before any non-finite float can be constructed.
+
         Failures raise ``InternetArchiveDesiredStateError`` for the ``json``
         component with a concise reason and never expose the full payload; the
         caller adds the work UUID. The raw response is never used as a silent
@@ -179,7 +250,11 @@ class IAUploader(Uploader):
                 'json', 'response was not valid UTF-8: {}'.format(error),
             ) from error
         try:
-            payload = json.loads(decoded)
+            payload = json.loads(
+                decoded,
+                parse_float=Decimal,
+                parse_constant=_reject_non_standard_json_constant,
+            )
         except ValueError as error:
             raise InternetArchiveDesiredStateError(
                 'json', 'response was not valid JSON: {}'.format(error),
@@ -194,13 +269,7 @@ class IAUploader(Uploader):
         # field of the same name is deliberately left untouched.
         payload.pop('jsonGeneratedAt', None)
         try:
-            canonical = json.dumps(
-                payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(',', ':'),
-                allow_nan=False,
-            )
+            canonical = _canonical_json_encode(payload)
         except ValueError as error:
             raise InternetArchiveDesiredStateError(
                 'json',
