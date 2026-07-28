@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from requests import exceptions as req_except
+
 from errors import (
     DisseminationError,
     InternetArchiveDesiredStateError,
@@ -2564,7 +2566,8 @@ class TestPostLocationJsonStaging(unittest.TestCase):
     # ---- Deferred-stage revalidation and truthful no-op reporting ----------
 
     def _apply_prepared(self, item, harness, upload=None,
-                        publication_details=None, get_formatted_metadata=None):
+                        publication_details=None, get_formatted_metadata=None,
+                        credentials=CREDENTIALS):
         """Drive a real reconcile_one apply against a caller-owned harness.
 
         Mirrors ``_run`` but takes an already-constructed ``harness`` so a test
@@ -2601,7 +2604,7 @@ class TestPostLocationJsonStaging(unittest.TestCase):
                 patch('iauploader.upload',
                       side_effect=(upload or harness.upload)):
             result = reconciler.reconcile_one(
-                WORK_ID, apply=True, credentials=CREDENTIALS)
+                WORK_ID, apply=True, credentials=credentials)
         return result, harness, upsert
 
     def _apply_with_rebuild_failure(self, error):
@@ -3148,6 +3151,111 @@ class TestPostLocationJsonStaging(unittest.TestCase):
         self.assertIn('post-apply reinspection failed', result['error'])
         self.assertIn('reinspection boom', result['error'])
         self.assertIn('item_missing', result['before']['issues'])
+
+    # ---- Only the progress callback may record an attempted JSON upload -----
+
+    # 40. upload_json_sidecar()'s initial item.refresh() fails before the upload
+    #     callback: no upload request, and the JSON attempt is not fabricated.
+    def test_refresh_failure_before_callback_records_no_attempt(self):
+        # An item that is fully current except for the missing location, so
+        # stage one performs no refresh/upload and the very first refresh is the
+        # one upload_json_sidecar() runs at the start of the deferred stage.
+        item = self._current_item_without_location()
+        harness = DeferredJsonHarness(item, [])
+
+        def boom():
+            raise req_except.ConnectionError('refresh boom')
+
+        self._mutate_on_deferred_refresh(item, harness, boom)
+        result, harness, upsert = self._apply_prepared(item, harness)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('archive_mutation_failed', result['issues'])
+        upsert.assert_called_once()
+        # No JSON upload request occurred.
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn(JSON_NAME, harness.uploaded_names)
+        # The pre-callback failure is not fabricated as an attempt.
+        self.assertNotIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertNotIn('upload_json_original', result['uncertain_actions'])
+        # The original refresh error is preserved.
+        self.assertIn('refresh boom', result['error'])
+        self.assertIn('Unable to refresh', result['error'])
+        # Best-effort read-only reinspection still ran: the applied location and
+        # existing item are shown; `before` keeps the pre-apply snapshot.
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        self.assertTrue(result['internet_archive']['exists'])
+        self.assertEqual(result['thoth_location']['state'], 'current')
+        self.assertIn('location_missing', result['before']['issues'])
+
+    # 41. Credential retrieval fails before the upload callback: the JSON attempt
+    #     is not recorded and _upload_files() is never called.
+    def test_credential_failure_before_callback_records_no_attempt(self):
+        # Current-except-location item, so stage one needs no credentials; the
+        # deferred stage must fetch them because the post-location JSON differs
+        # from the remote original. Supply falsy IA credentials so the env
+        # fallback fires, and make that fallback raise before the callback.
+        item = self._current_item_without_location()
+        harness = DeferredJsonHarness(item, [])
+        upload = MagicMock()
+        falsy_credentials = {
+            'ia_s3_access': '', 'ia_s3_secret': '', 'THOTH_PAT': 'token'}
+        with patch.object(
+                IAUploader, 'get_variable_from_env',
+                side_effect=DisseminationError(
+                    'Error uploading to Internet Archive: missing value for '
+                    'ia_s3_access')) as get_env:
+            result, harness, upsert = self._apply_prepared(
+                item, harness, upload=upload, credentials=falsy_credentials)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('archive_mutation_failed', result['issues'])
+        upsert.assert_called_once()
+        # Credential retrieval was reached, but _upload_files() was not called.
+        get_env.assert_called()
+        upload.assert_not_called()
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn(JSON_NAME, harness.uploaded_names)
+        # The pre-callback failure is not fabricated as an attempt.
+        self.assertNotIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertNotIn('upload_json_original', result['uncertain_actions'])
+        # The original credential error is preserved and state is reinspected.
+        self.assertIn('missing value for ia_s3_access', result['error'])
+        self.assertTrue(result['internet_archive']['exists'])
+        self.assertIn('create_thoth_location', result['applied_actions'])
+
+    # 42. A pre-callback failure whose reinspection also fails must still not
+    #     invent an upload attempt.
+    def test_reinspection_failure_does_not_invent_attempt(self):
+        item = self._current_item_without_location()
+        harness = DeferredJsonHarness(item, [])
+
+        def boom():
+            raise req_except.ConnectionError('refresh boom')
+
+        self._mutate_on_deferred_refresh(item, harness, boom)
+        with patch.object(
+                InternetArchiveReconciler, '_inspect_after_apply',
+                side_effect=RuntimeError('reinspection boom')):
+            result, harness, upsert = self._apply_prepared(item, harness)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('archive_mutation_failed', result['issues'])
+        upsert.assert_called_once()
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn(JSON_NAME, harness.uploaded_names)
+        # Even with the reinspection failing, no upload attempt is fabricated.
+        self.assertNotIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertNotIn('upload_json_original', result['uncertain_actions'])
+        # Original refresh error preserved, reinspection error appended, safe
+        # fallback to the pre-apply snapshot.
+        self.assertIn('refresh boom', result['error'])
+        self.assertIn('post-apply reinspection failed', result['error'])
+        self.assertIn('reinspection boom', result['error'])
+        self.assertIn('location_missing', result['before']['issues'])
 
 
 if __name__ == '__main__':

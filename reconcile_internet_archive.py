@@ -1194,13 +1194,17 @@ class InternetArchiveReconciler:
                 before, context, attempted_actions, applied_actions,
                 uncertain_actions, issue, str(error))
         except Exception as error:
-            # A synchronous rejection or any other upload failure after the
-            # attempt was made: report it as attempted, never applied, and never
-            # re-upload the sidecar as content. Reinspect so the top-level report
-            # shows the already-applied PDF/item/location state and whether any
-            # JSON original is currently visible.
-            if 'upload_json_original' not in attempted_actions:
-                attempted_actions.append('upload_json_original')
+            # The progress callback that fires immediately before
+            # ``_upload_files`` is the single source of truth for whether a JSON
+            # upload was attempted. A synchronous ``_upload_files`` rejection is
+            # already recorded by that callback (so ``upload_json_original`` is
+            # in ``attempted_actions`` here); a failure *before* the callback
+            # (``item.refresh``, ownership/restricted-metadata revalidation, the
+            # pre-upload comparison, or credential retrieval) recorded no attempt
+            # and must not be fabricated as one. Preserve the callback-derived
+            # action lists unchanged and reinspect so the top-level report shows
+            # the already-applied PDF/item/location state and whether any JSON
+            # original is currently visible.
             return self._post_location_failure_result(
                 before, context, attempted_actions, applied_actions,
                 uncertain_actions, 'archive_mutation_failed', str(error))
