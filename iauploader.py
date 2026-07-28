@@ -16,6 +16,7 @@ from requests import exceptions as req_except
 
 from errors import (
     DisseminationError,
+    InternetArchiveConsistencyError,
     InternetArchiveDesiredStateError,
     InternetArchiveIdentifierCollisionError,
     InternetArchiveImmutableMetadataError,
@@ -553,19 +554,29 @@ class IAUploader(Uploader):
 
     def apply_archive_repairs(
             self, item, desired, inspection=None, access_key=None,
-            secret_key=None, progress=None):
-        """Apply only the file and metadata differences found by inspection."""
+            secret_key=None, progress=None, defer_json_upload=False):
+        """Apply only the file and metadata differences found by inspection.
+
+        When ``defer_json_upload`` is set the JSON original is neither uploaded
+        nor verified here: the caller is going to mutate the Thoth location
+        (which changes the ``json::thoth`` export) and will upload the final,
+        post-location sidecar separately via :meth:`upload_json_sidecar`. In
+        that mode only the PDF original and managed metadata are uploaded and
+        strictly verified, so the location is only created once the archive item
+        and its PDF are known-good. The PDF verified MD5 is still returned.
+        """
         inspection = inspection or self.inspect_item(item, desired)
         if inspection['ownership'] == 'collision':
             self._raise_item_collision(inspection['ownership_reason'])
         self._assert_restricted_metadata_current(item, desired)
 
+        pdf_name = '{}.pdf'.format(desired.identifier)
+        json_name = '{}.json'.format(desired.identifier)
+        managed_names = (
+            (pdf_name,) if defer_json_upload else (pdf_name, json_name)
+        )
         files_to_upload = [
-            name
-            for name in (
-                '{}.pdf'.format(desired.identifier),
-                '{}.json'.format(desired.identifier),
-            )
+            name for name in managed_names
             if not inspection['files'][name]['current']
         ]
         creating_item = not inspection['exists']
@@ -589,11 +600,7 @@ class IAUploader(Uploader):
                 item, desired, ownership=current_ownership)
             self._assert_restricted_metadata_current(item, desired)
             files_to_upload = [
-                name
-                for name in (
-                    '{}.pdf'.format(desired.identifier),
-                    '{}.json'.format(desired.identifier),
-                )
+                name for name in managed_names
                 if not inspection['files'][name]['current']
             ]
             creating_item = not inspection['exists']
@@ -645,13 +652,109 @@ class IAUploader(Uploader):
             if progress is not None:
                 progress('update_archive_metadata', 'completed')
 
+        verification_md5s = (
+            {pdf_name: desired.expected_md5s[pdf_name]}
+            if defer_json_upload else desired.expected_md5s
+        )
         return self._verify_final_state(
+            item,
+            verification_md5s,
+            desired.metadata,
+            desired.absent_metadata_fields,
+            uploaded_file_names=frozenset(uploaded_file_names),
+        )
+
+    def upload_json_sidecar(
+            self, item, desired, access_key=None, secret_key=None,
+            progress=None):
+        """Upload the post-location JSON original exactly once and verify it.
+
+        Called after a Thoth location mutation has changed the ``json::thoth``
+        export, so ``desired`` must be a freshly rebuilt state reflecting the new
+        location. The mutation target is revalidated immediately before any
+        mutation: the item must still exist, still be safely Thoth-owned (or an
+        accepted legacy Thoth item), and still satisfy the initial-only and
+        admin-only metadata invariants. These are the same safety checks the
+        primary mutation path performs immediately before writing, so a JSON-only
+        stage can never create or hijack an item that changed after stage-one
+        PDF/metadata verification. If the item disappeared it is never recreated
+        here (no ``metadata=None`` upload to a missing identifier).
+
+        The JSON original is uploaded only if the remote copy does not already
+        match, then the final remote MD5s and managed metadata are strictly
+        verified (the PDF and metadata are re-verified for safety). A synchronous
+        rejection is never retried; an accepted-but-pending original goes through
+        the existing bounded propagation verification without any re-upload.
+
+        Returns a mutation summary ``{'verified': ..., 'uploaded': bool}`` so the
+        caller can report the JSON action truthfully: ``uploaded`` is ``True``
+        only when a JSON upload was actually performed, and ``False`` when the
+        rebuilt sidecar already matched the remote original (a no-op that must
+        not be reported as an attempted or applied action).
+        """
+        json_name = '{}.json'.format(desired.identifier)
+        try:
+            item.refresh()
+        except req_except.RequestException as error:
+            raise DisseminationError(
+                'Unable to refresh Internet Archive item {} before uploading '
+                'the post-location JSON sidecar: {}'.format(
+                    desired.identifier, error)
+            ) from error
+
+        # Revalidate the mutation target before comparing, loading credentials,
+        # reporting the upload as attempted, or writing anything. The item may
+        # have disappeared, changed ownership, or drifted on restricted metadata
+        # between stage-one verification and this deferred stage.
+        ownership = self.classify_item_ownership(item)
+        if ownership['status'] == 'missing' or not item.exists:
+            raise InternetArchiveConsistencyError(
+                'Internet Archive item {} disappeared after PDF verification; '
+                'refusing to create or modify it through the deferred JSON '
+                'sidecar stage'.format(desired.identifier))
+        # Reject collisions and mismatched thoth-work-id; permit owned and
+        # accepted legacy items exactly as the primary mutation path does.
+        # ``missing`` is already handled above, so this never tolerates a
+        # disappeared item the way the bare helper would on the create path.
+        self._assert_item_owned_by_thoth(
+            item, ownership=ownership, warn_legacy=False)
+        # Re-check the initial-only (e.g. mediatype) and admin-only (collection)
+        # invariants before mutating.
+        self._assert_restricted_metadata_current(item, desired)
+
+        comparison = self.compare_original_files(
+            self._original_files(item.files),
+            {json_name: desired.expected_md5s[json_name]},
+        )
+        uploaded = False
+        uploaded_file_names = set()
+        if not comparison[json_name]['current']:
+            access_key = access_key or self.get_variable_from_env(
+                'ia_s3_access', 'Internet Archive')
+            secret_key = secret_key or self.get_variable_from_env(
+                'ia_s3_secret', 'Internet Archive')
+            if progress is not None:
+                progress('upload_json_original', 'attempted')
+            self._upload_files(
+                desired.identifier,
+                {json_name: BytesIO(desired.file_bytes[json_name])},
+                None,
+                access_key,
+                secret_key,
+            )
+            uploaded = True
+            uploaded_file_names.add(json_name)
+            if progress is not None:
+                progress('upload_json_original', 'completed')
+
+        verified = self._verify_final_state(
             item,
             desired.expected_md5s,
             desired.metadata,
             desired.absent_metadata_fields,
             uploaded_file_names=frozenset(uploaded_file_names),
         )
+        return {'verified': verified, 'uploaded': uploaded}
 
     def _assert_item_owned_by_thoth(
             self, item, ownership=None, warn_legacy=True):
@@ -862,6 +965,21 @@ class IAUploader(Uploader):
         return cls._clean_metadata_value(current_value) \
             == cls._clean_metadata_value(desired_value)
 
+    @staticmethod
+    def _canonicalise_ia_string(value):
+        """Normalise line endings the way Internet Archive stores them.
+
+        Internet Archive canonicalises metadata string line endings, collapsing
+        ``\\r\\n`` and bare ``\\r`` to ``\\n``. We apply the same canonicalisation
+        to every metadata string we build, compare, patch, and verify so the
+        representation we send always equals the representation IA returns; this
+        prevents a value that differs only by line ending from looking like a
+        perpetual metadata discrepancy. No other whitespace is collapsed and no
+        meaningful leading/trailing whitespace is stripped here (the existing
+        blank-value handling in :meth:`_clean_metadata_value` is unchanged).
+        """
+        return value.replace('\r\n', '\n').replace('\r', '\n')
+
     @classmethod
     def _as_metadata_list(cls, value):
         if isinstance(value, (list, tuple, set)):
@@ -870,26 +988,36 @@ class IAUploader(Uploader):
             values = []
         else:
             values = [value]
-        return [
-            cleaned for cleaned in (
-                cls._clean_metadata_value(entry) for entry in values)
-            if cleaned is not None
-        ]
+        # Canonicalise each value and drop exact duplicates that collapse to the
+        # same stored representation (e.g. a ``\\r\\n`` and a ``\\n`` variant of
+        # the same subject), preserving first-occurrence order. IA stores only
+        # the distinct canonical values, so a comparison that kept the duplicate
+        # would never converge.
+        deduplicated = []
+        for entry in values:
+            cleaned = cls._clean_metadata_value(entry)
+            if cleaned is not None and cleaned not in deduplicated:
+                deduplicated.append(cleaned)
+        return deduplicated
 
     @classmethod
     def _clean_metadata_value(cls, value):
         if value is None:
             return None
         if isinstance(value, (list, tuple, set)):
-            cleaned_values = [
-                cleaned for cleaned in (
-                    cls._clean_metadata_value(entry) for entry in value)
-                if cleaned is not None
-            ]
+            # Canonicalise then drop exact post-canonicalisation duplicates,
+            # preserving first-occurrence order, so a repeatable field we build
+            # or send carries only the distinct values IA can store.
+            cleaned_values = []
+            for entry in value:
+                cleaned = cls._clean_metadata_value(entry)
+                if cleaned is not None and cleaned not in cleaned_values:
+                    cleaned_values.append(cleaned)
             return cleaned_values or None
-        if isinstance(value, str) \
-                and (not value.strip() or value == 'None'):
-            return None
+        if isinstance(value, str):
+            value = cls._canonicalise_ia_string(value)
+            if not value.strip() or value == 'None':
+                return None
         return value
 
     @classmethod

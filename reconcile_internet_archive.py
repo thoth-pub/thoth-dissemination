@@ -16,7 +16,11 @@ from thothlibrary import ThothError
 
 from errors import (
     DisseminationError,
+    InternetArchiveConsistencyError,
     InternetArchiveDesiredStateError,
+    InternetArchiveIdentifierCollisionError,
+    InternetArchiveImmutableMetadataError,
+    InternetArchiveRestrictedMetadataError,
     InternetArchiveVerificationError,
 )
 from iauploader import IAUploader
@@ -72,6 +76,7 @@ ISSUE_ORDER = (
     'duplicate_locations',
     'archive_mutation_failed',
     'thoth_location_mutation_failed',
+    'pdf_source_drift',
     'verification_failed',
 )
 
@@ -133,6 +138,7 @@ ISSUE_STATUS = {
     'duplicate_locations': 'duplicate_locations',
     'archive_mutation_failed': 'error',
     'thoth_location_mutation_failed': 'error',
+    'pdf_source_drift': 'error',
     'verification_failed': 'error',
 }
 
@@ -766,8 +772,20 @@ class InternetArchiveReconciler:
         result['recommended_actions'] = actions
         result['status'] = _status_for_issues(issues)
         result['error'] = '; '.join(_ordered_unique(errors, ())) or None
-        result['auto_applicable_actions'] = self._auto_applicable_actions(
-            result)
+        auto_applicable = self._auto_applicable_actions(result)
+        # A Thoth location mutation changes the json::thoth export (it embeds
+        # the publication's locations), so any JSON sidecar built before the
+        # mutation is immediately stale. Whenever a location mutation will be
+        # auto-applied, predict the post-location JSON upload in the plan too,
+        # so apply performs no mutation absent from the dry-run action plan.
+        if ({'create_thoth_location', 'update_thoth_location'}
+                & set(auto_applicable)
+                and 'upload_json_original' not in auto_applicable):
+            auto_applicable = _ordered_unique(
+                auto_applicable + ['upload_json_original'], ACTION_ORDER)
+            result['recommended_actions'] = _ordered_unique(
+                actions + ['upload_json_original'], ACTION_ORDER)
+        result['auto_applicable_actions'] = auto_applicable
         return result
 
     @staticmethod
@@ -821,7 +839,18 @@ class InternetArchiveReconciler:
             action for action in before['auto_applicable_actions']
             if action in LOCATION_ACTIONS
         ]
+        # A location mutation rewrites the json::thoth export, so when one is
+        # planned alongside a JSON upload we defer the JSON to a post-location
+        # stage: upload/verify the PDF and metadata, mutate the location, then
+        # rebuild the sidecar from the post-location export and upload it once.
+        defer_json = bool(location_actions) and (
+            'upload_json_original' in before['auto_applicable_actions'])
+        stage_one_archive_actions = [
+            action for action in archive_actions
+            if not (defer_json and action == 'upload_json_original')
+        ]
 
+        # --- Stage 1: archive item / PDF / managed metadata (JSON deferred) ---
         try:
             if archive_actions:
                 context['uploader'].apply_archive_repairs(
@@ -831,10 +860,11 @@ class InternetArchiveReconciler:
                     access_key=credentials['ia_s3_access'],
                     secret_key=credentials['ia_s3_secret'],
                     progress=record_progress,
+                    defer_json_upload=defer_json,
                 )
                 # Preserve compatibility with test doubles or alternate
                 # uploaders that return success without progress callbacks.
-                for action in archive_actions:
+                for action in stage_one_archive_actions:
                     if action not in attempted_actions:
                         attempted_actions.append(action)
                     if action not in applied_actions:
@@ -860,6 +890,7 @@ class InternetArchiveReconciler:
                 before, attempted_actions, applied_actions,
                 uncertain_actions, 'archive_mutation_failed', str(error))
 
+        # --- Stage 2: Thoth location mutation (only after PDF/metadata pass) ---
         try:
             if location_actions:
                 location_result = upsert_location(
@@ -893,6 +924,14 @@ class InternetArchiveReconciler:
                 failure_base, attempted_actions, applied_actions,
                 uncertain_actions, 'thoth_location_mutation_failed',
                 failure_error, before=before)
+
+        # --- Stage 3: post-location JSON sidecar (rebuilt from fresh export) ---
+        if defer_json:
+            failure = self._stage_post_location_json(
+                before, context, credentials, record_progress,
+                attempted_actions, applied_actions, uncertain_actions)
+            if failure is not None:
+                return failure
 
         final = self._inspect_after_apply(before, context)
         final['before'] = before
@@ -937,6 +976,249 @@ class InternetArchiveReconciler:
             context['desired'],
             verification_context,
         )
+
+    def _reinspected_failure_base(self, before, context, original_error):
+        """Re-read current IA and Thoth state for a post-location failure report.
+
+        Read-only: reuses the post-location desired state stored in
+        ``context['desired']`` and the item already fetched during apply, so
+        nothing is uploaded or re-run. Returns ``(base, error)`` where ``base``
+        is the reinspection to use as the failed-result base (showing the item
+        and location as they now are) and ``error`` is the message to report. If
+        the reinspection itself fails, falls back safely to ``before`` and
+        appends the reinspection error without hiding the original failure.
+        """
+        try:
+            return self._inspect_after_apply(before, context), original_error
+        except Exception as inspection_error:
+            return before, (
+                '{}; post-apply reinspection failed: {}'.format(
+                    original_error, inspection_error))
+
+    def _post_location_failure_result(
+            self, before, context, attempted_actions, applied_actions,
+            uncertain_actions, issue, error,
+            json_desired_authoritative=True):
+        """Build a post-location failure result from a read-only reinspection.
+
+        Once the Thoth location mutation has succeeded, the pre-apply ``before``
+        snapshot no longer reflects reality (it still shows the item and the
+        location as missing while listing their creation as applied), so every
+        post-location failure exit re-reads the current IA item and Thoth
+        location and uses that as the top-level base. The reinspection is
+        strictly read-only -- nothing is uploaded or re-run -- and the original
+        pre-apply report is preserved unchanged under ``result['before']``. If
+        the reinspection itself fails, the result falls back safely to
+        ``before`` with the reinspection error appended and nothing further is
+        mutated.
+
+        ``json_desired_authoritative`` is ``False`` when the fresh post-location
+        desired state could not be rebuilt (``context['desired']`` still holds
+        the pre-location export). The reinspected JSON comparison is then made
+        against a stale desired, so it must not be presented as proof that the
+        remote JSON is current.
+        """
+        failure_base, failure_error = self._reinspected_failure_base(
+            before, context, error)
+        result = self._failed_apply_result(
+            failure_base, attempted_actions, applied_actions,
+            uncertain_actions, issue, failure_error, before=before)
+        if not json_desired_authoritative:
+            self._mark_json_state_unverified(result)
+        return result
+
+    @staticmethod
+    def _mark_json_state_unverified(result):
+        """Flag a reinspected JSON comparison built from a stale desired state.
+
+        When the fresh post-location desired could not be rebuilt, a matching
+        remote JSON only proves it matches the *old* export, so drop the
+        ``current`` assertion for the JSON original and mark it unverified,
+        without hiding whether the file is present or the rest of the item and
+        location state.
+        """
+        archive = result.get('internet_archive')
+        if not isinstance(archive, dict):
+            return
+        archive['json_state_unverified'] = True
+        identifier = archive.get('identifier')
+        files = archive.get('files')
+        if not identifier or not isinstance(files, dict):
+            return
+        json_name = '{}.json'.format(identifier)
+        state = files.get(json_name)
+        if isinstance(state, dict):
+            state['current'] = False
+
+    def _stage_post_location_json(
+            self, before, context, credentials, record_progress,
+            attempted_actions, applied_actions, uncertain_actions):
+        """Rebuild desired state after a location mutation and upload JSON once.
+
+        The location has already been created/updated, so its export now
+        includes the IA location and the pre-location sidecar is stale. Rebuild
+        the desired state from the fresh Thoth export, confirm the PDF is
+        unchanged, upload the post-location JSON original exactly once, and
+        verify it. Returns ``None`` on success or a failed-apply result; every
+        failure here reports the location as applied and the JSON as
+        not-applied or uncertain, and never re-uploads a rejected sidecar.
+        The mutated ``attempted``/``applied``/``uncertain`` lists are shared
+        with the caller.
+        """
+        uploader = context['uploader']
+        original_desired = context['desired']
+        pdf_name = '{}.pdf'.format(original_desired.identifier)
+
+        try:
+            rebuilt = uploader.build_desired_state()
+        except InternetArchiveDesiredStateError as error:
+            # build_desired_state() reports which component failed via
+            # ``error.source``. Preserve that classification exactly as the
+            # initial inspection path does, so a PDF or metadata outage is never
+            # mislabelled as a JSON export outage in reports or aggregated
+            # counts. The nested source-specific message (already scrubbed of
+            # credentials and payloads at construction) is retained.
+            issue = {
+                'pdf': 'pdf_source_unavailable',
+                'json': 'json_export_unavailable',
+                'metadata': 'malformed_metadata',
+            }.get(error.source, 'malformed_metadata')
+            # The fresh post-location desired could not be rebuilt, so
+            # ``context['desired']`` still holds the pre-location export.
+            # Reinspection can still show the current IA item and Thoth location
+            # (the reviewer's concern: no more stale "item_missing"/
+            # "location_missing"), but the stale JSON comparison must not be
+            # presented as authoritative.
+            return self._post_location_failure_result(
+                before, context, attempted_actions, applied_actions,
+                uncertain_actions, issue,
+                'The Thoth location was created or updated, but rebuilding the '
+                'post-location desired state failed ({} source); the JSON '
+                'sidecar was not uploaded and no rollback was attempted: '
+                '{}'.format(error.source, error),
+                json_desired_authoritative=False)
+        except Exception as error:
+            # An unexpected (non desired-state) failure is a generic apply
+            # failure, not a JSON source outage; do not mislabel it. The
+            # post-location desired is still unavailable, so the JSON comparison
+            # stays non-authoritative for the reinspection.
+            return self._post_location_failure_result(
+                before, context, attempted_actions, applied_actions,
+                uncertain_actions, 'archive_mutation_failed',
+                'The Thoth location was created or updated, but rebuilding the '
+                'post-location desired state failed unexpectedly; the JSON '
+                'sidecar was not uploaded and no rollback was attempted: '
+                '{}'.format(error),
+                json_desired_authoritative=False)
+
+        if (rebuilt.expected_md5s[pdf_name]
+                != original_desired.expected_md5s[pdf_name]):
+            # ``context['desired']`` is still the pre-location desired that
+            # matches the verified remote PDF, so reinspect against it (the
+            # remote PDF is shown current) rather than the drifted rebuild; the
+            # JSON comparison stays non-authoritative for the same reason.
+            return self._post_location_failure_result(
+                before, context, attempted_actions, applied_actions,
+                uncertain_actions, 'pdf_source_drift',
+                'The PDF source MD5 changed between the initial and '
+                'post-location desired state ({} -> {}); the location was '
+                'applied but the JSON sidecar was not uploaded to avoid '
+                'describing different PDF bytes'.format(
+                    original_desired.expected_md5s[pdf_name],
+                    rebuilt.expected_md5s[pdf_name]),
+                json_desired_authoritative=False)
+
+        # The final inspection and any post-upload reinspection must use the
+        # rebuilt post-location desired state.
+        context['desired'] = rebuilt
+
+        try:
+            stage_result = uploader.upload_json_sidecar(
+                context['item'],
+                rebuilt,
+                access_key=credentials['ia_s3_access'],
+                secret_key=credentials['ia_s3_secret'],
+                progress=record_progress,
+            )
+        except InternetArchiveVerificationError as error:
+            # Distinguish a genuinely attempted JSON upload from a skipped
+            # no-op. The progress callback fires immediately before
+            # ``_upload_files`` and only for an actual upload, so
+            # ``attempted_actions`` is the authoritative record of whether an
+            # upload request occurred. A verification failure caused by an
+            # unrelated PDF/metadata discrepancy or an IA refresh failure after
+            # a skipped (already-current) JSON upload must not falsely claim the
+            # JSON was attempted or is uncertain.
+            json_attempted = 'upload_json_original' in attempted_actions
+            if (json_attempted
+                    and 'upload_json_original' not in uncertain_actions):
+                uncertain_actions.append('upload_json_original')
+            applied_actions[:] = [
+                action for action in applied_actions
+                if action != 'upload_json_original'
+            ]
+            # The PDF/item/metadata/location mutations already succeeded (and,
+            # when an upload was attempted, IA accepted the JSON but has not yet
+            # exposed it). Base the failure report on a fresh read-only
+            # reinspection of the current IA item and Thoth location so it shows
+            # the item as existing and the location as present, instead of the
+            # stale pre-apply "item_missing" snapshot. The rebuilt post-location
+            # desired is authoritative here, so the JSON comparison is trusted.
+            return self._post_location_failure_result(
+                before, context, attempted_actions, applied_actions,
+                uncertain_actions, 'verification_failed', str(error))
+        except (InternetArchiveConsistencyError,
+                InternetArchiveIdentifierCollisionError,
+                InternetArchiveRestrictedMetadataError) as error:
+            # The deferred stage revalidated the item immediately before
+            # mutating and refused: it disappeared, changed ownership, or drifted
+            # on restricted metadata after stage-one verification. No JSON upload
+            # was attempted and no JSON-only item is ever recreated, so the JSON
+            # action is reported neither as attempted nor as applied. The issue
+            # mirrors the specific safety violation. Reinspect so the top-level
+            # report reflects the current IA item and location state (e.g. the
+            # disappearance or the collision) rather than the pre-apply snapshot.
+            if isinstance(error, InternetArchiveIdentifierCollisionError):
+                issue = 'identifier_collision'
+            elif isinstance(error, InternetArchiveImmutableMetadataError):
+                issue = 'archive_immutable_metadata_conflict'
+            elif isinstance(error, InternetArchiveRestrictedMetadataError):
+                issue = 'archive_collection_membership_conflict'
+            else:
+                issue = 'archive_mutation_failed'
+            applied_actions[:] = [
+                action for action in applied_actions
+                if action != 'upload_json_original'
+            ]
+            return self._post_location_failure_result(
+                before, context, attempted_actions, applied_actions,
+                uncertain_actions, issue, str(error))
+        except Exception as error:
+            # The progress callback that fires immediately before
+            # ``_upload_files`` is the single source of truth for whether a JSON
+            # upload was attempted. A synchronous ``_upload_files`` rejection is
+            # already recorded by that callback (so ``upload_json_original`` is
+            # in ``attempted_actions`` here); a failure *before* the callback
+            # (``item.refresh``, ownership/restricted-metadata revalidation, the
+            # pre-upload comparison, or credential retrieval) recorded no attempt
+            # and must not be fabricated as one. Preserve the callback-derived
+            # action lists unchanged and reinspect so the top-level report shows
+            # the already-applied PDF/item/location state and whether any JSON
+            # original is currently visible.
+            return self._post_location_failure_result(
+                before, context, attempted_actions, applied_actions,
+                uncertain_actions, 'archive_mutation_failed', str(error))
+
+        # Report the JSON action only when a JSON upload actually happened. A
+        # no-op (the rebuilt sidecar already matched the remote original) must
+        # not be recorded as attempted or applied merely because the dry-run
+        # conservatively predicted a possible upload.
+        if stage_result['uploaded']:
+            if 'upload_json_original' not in attempted_actions:
+                attempted_actions.append('upload_json_original')
+            if 'upload_json_original' not in applied_actions:
+                applied_actions.append('upload_json_original')
+        return None
 
     @staticmethod
     def _failed_apply_result(

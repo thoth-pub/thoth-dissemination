@@ -1781,6 +1781,180 @@ class TestJsonSidecarNormalisation(unittest.TestCase):
         self.assertEqual(once, twice)
 
 
+class TestMetadataLineEndingCanonicalisation(unittest.TestCase):
+    """Part A: Internet Archive metadata string canonicalisation.
+
+    Internet Archive collapses ``\\r\\n`` and bare ``\\r`` to ``\\n`` in managed
+    metadata. We apply the same canonicalisation to desired metadata, the
+    current-state comparison, patches, and final verification so a value that
+    differs only by line ending never looks like a perpetual discrepancy, and
+    repeatable values that collapse to the same stored string are deduplicated.
+    """
+
+    ABSENT = frozenset()
+
+    def _uploader(self, work):
+        uploader = IAUploader.__new__(IAUploader)
+        uploader.work_id = WORK_ID
+        uploader.version = '1.6.3'
+        uploader.metadata = {'data': {'work': work}}
+        return uploader
+
+    def _work(self, **overrides):
+        work = {
+            'fullTitle': 'A Test Book',
+            'publicationDate': '2026-01-02',
+            'longAbstract': 'A long description',
+            'pageCount': 10,
+            'doi': 'https://doi.org/10.0000/test',
+            'contributions': [
+                {'fullName': 'First Author', 'mainContribution': True},
+            ],
+            'publications': [
+                {'publicationType': 'PDF', 'publicationId': 'p',
+                 'isbn': '978-1-234-56789-0'},
+            ],
+            'subjects': [{'subjectCode': 'ABC123'}],
+            'languages': [{'languageCode': 'eng'}],
+            'issues': [],
+            'imprint': {'publisher': {'publisherName': 'Test Publisher'}},
+        }
+        work.update(overrides)
+        return work
+
+    # 1. CRLF and LF compare equal.
+    def test_crlf_and_lf_compare_equal(self):
+        self.assertTrue(IAUploader._metadata_values_equal(
+            'title', 'Line one\r\nLine two', 'Line one\nLine two'))
+
+    # 2. Bare CR and LF compare equal.
+    def test_bare_cr_and_lf_compare_equal(self):
+        self.assertTrue(IAUploader._metadata_values_equal(
+            'title', 'Line one\rLine two', 'Line one\nLine two'))
+
+    # 3. Desired metadata is built/sent using LF.
+    def test_desired_metadata_uses_lf(self):
+        uploader = self._uploader(self._work(
+            fullTitle='Tragic\r\nHomer',
+            subjects=[{'subjectCode': 'Ancient\r\nGreek Thought'}]))
+        desired = uploader.parse_metadata()
+        self.assertEqual(desired['title'], 'Tragic\nHomer')
+        self.assertEqual(desired['subject'], ['Ancient\nGreek Thought'])
+        self.assertNotIn('\r', desired['title'])
+        self.assertNotIn('\r', desired['subject'][0])
+
+    # 4. Duplicate repeatable values created by line-ending normalisation are
+    #    removed; 5. first-occurrence order preserved.
+    def test_repeatable_line_ending_duplicates_removed_in_order(self):
+        result = IAUploader._as_metadata_list([
+            'Ancient\nGreek Thought',
+            'Ancient\r\nGreek Thought',
+            'Classical Reception',
+        ])
+        self.assertEqual(
+            result, ['Ancient\nGreek Thought', 'Classical Reception'])
+
+    def test_desired_subject_deduplicates_line_ending_variants_in_order(self):
+        uploader = self._uploader(self._work(subjects=[
+            {'subjectCode': 'Ancient\nGreek Thought'},
+            {'subjectCode': 'Ancient\r\nGreek Thought'},
+            {'subjectCode': 'Classical Reception'},
+        ]))
+        desired = uploader.parse_metadata()
+        self.assertEqual(
+            desired['subject'],
+            ['Ancient\nGreek Thought', 'Classical Reception'])
+
+    # 6. Distinct repeatable values remain distinct.
+    def test_distinct_repeatable_values_remain_distinct(self):
+        self.assertEqual(
+            IAUploader._as_metadata_list(['Alpha', 'Beta', 'Alpha ']),
+            ['Alpha', 'Beta', 'Alpha '])
+
+    # 7. A CRLF/LF duplicate subject does not produce a metadata patch.
+    def test_crlf_duplicate_subject_produces_no_patch(self):
+        uploader = self._uploader(self._work(subjects=[
+            {'subjectCode': 'Ancient\nGreek Thought'},
+            {'subjectCode': 'Ancient\r\nGreek Thought'},
+        ]))
+        desired = uploader.parse_metadata()
+        # IA returns the single normalised value it actually stored.
+        current = dict(desired)
+        current['subject'] = ['Ancient\nGreek Thought']
+        patch = uploader._managed_metadata_patch(current, desired)
+        self.assertNotIn('subject', patch)
+
+    # 8. Final verification accepts the IA-normalised representation.
+    def test_final_verification_accepts_ia_normalised_subject(self):
+        uploader = self._uploader(self._work(subjects=[
+            {'subjectCode': 'Ancient\nGreek Thought'},
+            {'subjectCode': 'Ancient\r\nGreek Thought'},
+        ]))
+        desired = uploader.parse_metadata()
+        current = dict(desired)
+        current['subject'] = ['Ancient\nGreek Thought']
+        problems = uploader._metadata_verification_problems(
+            current, desired, self.ABSENT)
+        self.assertEqual(problems, [])
+
+    # 9. A genuinely different subject still produces a patch and a problem.
+    def test_genuinely_different_subject_still_flagged(self):
+        uploader = self._uploader(self._work(
+            subjects=[{'subjectCode': 'Ancient Greek Thought'}]))
+        desired = uploader.parse_metadata()
+        current = dict(desired)
+        current['subject'] = ['Something Else Entirely']
+        patch = uploader._managed_metadata_patch(current, desired)
+        self.assertEqual(patch['subject'], ['Ancient Greek Thought'])
+        problems = uploader._metadata_verification_problems(
+            current, desired, self.ABSENT)
+        self.assertTrue(any('subject' in problem for problem in problems))
+
+    # 10. Non-repeatable metadata strings use the same canonicalisation.
+    def test_non_repeatable_string_is_canonicalised(self):
+        self.assertEqual(
+            IAUploader._clean_metadata_value('a\r\nb\rc'), 'a\nb\nc')
+        self.assertTrue(IAUploader._metadata_values_equal(
+            'description', 'para one\r\npara two', 'para one\npara two'))
+
+    # 11. Internal spaces and ordinary newlines are otherwise preserved.
+    def test_internal_spaces_and_newlines_preserved(self):
+        self.assertEqual(
+            IAUploader._clean_metadata_value('a  b\nc   d'), 'a  b\nc   d')
+        self.assertEqual(
+            IAUploader._canonicalise_ia_string('a  b\nc'), 'a  b\nc')
+
+    # 12a. REMOVE_TAG behaviour remains intact.
+    def test_remove_tag_behaviour_intact(self):
+        uploader = self._uploader(self._work())
+        desired = uploader.parse_metadata()
+        desired.pop('description', None)
+        current = uploader.parse_metadata()
+        current['description'] = 'obsolete abstract'
+        patch = uploader._managed_metadata_patch(current, desired)
+        self.assertEqual(patch['description'], 'REMOVE_TAG')
+
+    # 12b. Restricted-field (initial-only) behaviour remains intact.
+    def test_restricted_initial_only_still_detected(self):
+        uploader = self._uploader(self._work())
+        desired = uploader.parse_metadata()
+        current = dict(desired)
+        current['mediatype'] = 'audio'
+        problems = uploader._metadata_verification_problems(
+            current, desired, self.ABSENT,
+            fields=IAUploader.INITIAL_ONLY_METADATA_FIELDS)
+        self.assertTrue(any('mediatype' in problem for problem in problems))
+
+    # 12c. Repeatable-field list shape is preserved through canonicalisation.
+    def test_repeatable_field_stays_list(self):
+        uploader = self._uploader(self._work(contributions=[
+            {'fullName': 'First Author', 'mainContribution': True},
+            {'fullName': 'Second Author', 'mainContribution': True},
+        ]))
+        desired = uploader.parse_metadata()
+        self.assertEqual(desired['creator'], ['First Author', 'Second Author'])
+
+
 class TestDisseminatorCLI(unittest.TestCase):
     def test_main_returns_success_or_converts_uploader_error_to_failure(self):
         modules = {
