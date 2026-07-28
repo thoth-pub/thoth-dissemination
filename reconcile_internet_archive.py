@@ -977,6 +977,24 @@ class InternetArchiveReconciler:
             verification_context,
         )
 
+    def _reinspected_failure_base(self, before, context, original_error):
+        """Re-read current IA and Thoth state for a post-location failure report.
+
+        Read-only: reuses the post-location desired state stored in
+        ``context['desired']`` and the item already fetched during apply, so
+        nothing is uploaded or re-run. Returns ``(base, error)`` where ``base``
+        is the reinspection to use as the failed-result base (showing the item
+        and location as they now are) and ``error`` is the message to report. If
+        the reinspection itself fails, falls back safely to ``before`` and
+        appends the reinspection error without hiding the original failure.
+        """
+        try:
+            return self._inspect_after_apply(before, context), original_error
+        except Exception as inspection_error:
+            return before, (
+                '{}; post-apply reinspection failed: {}'.format(
+                    original_error, inspection_error))
+
     def _stage_post_location_json(
             self, before, context, credentials, record_progress,
             attempted_actions, applied_actions, uncertain_actions):
@@ -998,13 +1016,35 @@ class InternetArchiveReconciler:
 
         try:
             rebuilt = uploader.build_desired_state()
-        except Exception as error:
+        except InternetArchiveDesiredStateError as error:
+            # build_desired_state() reports which component failed via
+            # ``error.source``. Preserve that classification exactly as the
+            # initial inspection path does, so a PDF or metadata outage is never
+            # mislabelled as a JSON export outage in reports or aggregated
+            # counts. The nested source-specific message (already scrubbed of
+            # credentials and payloads at construction) is retained.
+            issue = {
+                'pdf': 'pdf_source_unavailable',
+                'json': 'json_export_unavailable',
+                'metadata': 'malformed_metadata',
+            }.get(error.source, 'malformed_metadata')
             return self._failed_apply_result(
                 before, attempted_actions, applied_actions, uncertain_actions,
-                'json_export_unavailable',
-                'The Thoth location was applied but rebuilding the desired '
-                'state for the post-location JSON sidecar failed; the JSON was '
-                'not uploaded: {}'.format(error), before=before)
+                issue,
+                'The Thoth location was created or updated, but rebuilding the '
+                'post-location desired state failed ({} source); the JSON '
+                'sidecar was not uploaded and no rollback was attempted: '
+                '{}'.format(error.source, error), before=before)
+        except Exception as error:
+            # An unexpected (non desired-state) failure is a generic apply
+            # failure, not a JSON source outage; do not mislabel it.
+            return self._failed_apply_result(
+                before, attempted_actions, applied_actions, uncertain_actions,
+                'archive_mutation_failed',
+                'The Thoth location was created or updated, but rebuilding the '
+                'post-location desired state failed unexpectedly; the JSON '
+                'sidecar was not uploaded and no rollback was attempted: '
+                '{}'.format(error), before=before)
 
         if (rebuilt.expected_md5s[pdf_name]
                 != original_desired.expected_md5s[pdf_name]):
@@ -1039,9 +1079,18 @@ class InternetArchiveReconciler:
                 action for action in applied_actions
                 if action != 'upload_json_original'
             ]
+            # The PDF/item/metadata/location mutations already succeeded and IA
+            # accepted the JSON (it is merely not yet visible). Base the failure
+            # report on a fresh read-only reinspection of the current IA item and
+            # Thoth location so it shows the item as existing and the location as
+            # present, instead of the stale pre-apply "item_missing" snapshot.
+            # The original pre-apply report stays in ``before``.
+            failure_base, failure_error = self._reinspected_failure_base(
+                before, context, str(error))
             return self._failed_apply_result(
-                before, attempted_actions, applied_actions, uncertain_actions,
-                'verification_failed', str(error), before=before)
+                failure_base, attempted_actions, applied_actions,
+                uncertain_actions, 'verification_failed', failure_error,
+                before=before)
         except (InternetArchiveConsistencyError,
                 InternetArchiveIdentifierCollisionError,
                 InternetArchiveRestrictedMetadataError) as error:

@@ -8,7 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from errors import DisseminationError, InternetArchiveVerificationError
+from errors import (
+    DisseminationError,
+    InternetArchiveDesiredStateError,
+    InternetArchiveVerificationError,
+)
 from iauploader import IAUploader
 from reconcile_internet_archive import (
     InternetArchiveReconciler,
@@ -2538,7 +2542,8 @@ class TestPostLocationJsonStaging(unittest.TestCase):
 
     # ---- Deferred-stage revalidation and truthful no-op reporting ----------
 
-    def _apply_prepared(self, item, harness, upload=None):
+    def _apply_prepared(self, item, harness, upload=None,
+                        publication_details=None, get_formatted_metadata=None):
         """Drive a real reconcile_one apply against a caller-owned harness.
 
         Mirrors ``_run`` but takes an already-constructed ``harness`` so a test
@@ -2551,12 +2556,21 @@ class TestPostLocationJsonStaging(unittest.TestCase):
         publication = Publication(
             'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
             'https://source.example/book.pdf')
+        format_side = (
+            get_formatted_metadata if get_formatted_metadata is not None
+            else (lambda s: harness.export_bytes(s)))
+        if callable(publication_details):
+            details_kwargs = {'side_effect': publication_details}
+        else:
+            details_kwargs = {'return_value': (
+                publication if publication_details is None
+                else publication_details)}
         with patch.object(
                 IAUploader, 'get_formatted_metadata',
-                side_effect=lambda s: harness.export_bytes(s)), \
+                side_effect=format_side), \
                 patch.object(
                     IAUploader, 'get_publication_details',
-                    return_value=publication), \
+                    **details_kwargs), \
                 patch('reconcile_internet_archive.get_item',
                       return_value=item), \
                 patch('reconcile_internet_archive.retrieve_existing_locations',
@@ -2568,6 +2582,27 @@ class TestPostLocationJsonStaging(unittest.TestCase):
             result = reconciler.reconcile_one(
                 WORK_ID, apply=True, credentials=CREDENTIALS)
         return result, harness, upsert
+
+    def _apply_with_rebuild_failure(self, error):
+        """Apply a new item where the post-location rebuild raises ``error``.
+
+        The first ``build_desired_state`` (initial inspection) succeeds so the
+        apply proceeds; the second (post-location) call raises, exercising the
+        rebuild-failure classification in ``_stage_post_location_json``.
+        """
+        item = self._missing_item()
+        harness = DeferredJsonHarness(item, [])
+        real_build = IAUploader.build_desired_state
+
+        def build(uploader):
+            if harness.location_created:
+                raise error
+            return real_build(uploader)
+
+        with patch.object(
+                IAUploader, 'build_desired_state',
+                autospec=True, side_effect=build):
+            return self._apply_prepared(item, harness)
 
     @staticmethod
     def _mutate_on_deferred_refresh(item, harness, mutate):
@@ -2747,6 +2782,211 @@ class TestPostLocationJsonStaging(unittest.TestCase):
         upload_mock.assert_not_called()
         get_env.assert_not_called()
         verify.assert_called_once()
+
+    # ---- P2-A: preserve the post-location rebuild failure source -----------
+
+    # 28. A PDF-source rebuild failure is reported as pdf_source_unavailable.
+    def test_rebuild_pdf_failure_reports_pdf_source(self):
+        error = InternetArchiveDesiredStateError(
+            'pdf', 'PDF source unavailable for {}: connection reset'.format(
+                WORK_ID))
+        result, harness, upsert = self._apply_with_rebuild_failure(error)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('pdf_source_unavailable', result['issues'])
+        self.assertNotIn('json_export_unavailable', result['issues'])
+        # The location was applied; the JSON was never attempted or applied.
+        upsert.assert_called_once()
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        # The original source-specific text is retained.
+        self.assertIn('pdf source', result['error'])
+        self.assertIn('connection reset', result['error'])
+        self.assertIn('no rollback was attempted', result['error'])
+
+    # 29. A JSON-export rebuild failure is reported as json_export_unavailable.
+    def test_rebuild_json_failure_reports_json_export(self):
+        error = InternetArchiveDesiredStateError(
+            'json', 'JSON export unavailable for {}: 503'.format(WORK_ID))
+        result, harness, upsert = self._apply_with_rebuild_failure(error)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('json_export_unavailable', result['issues'])
+        upsert.assert_called_once()
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertIn('503', result['error'])
+
+    # 30. A metadata rebuild failure is reported as malformed_metadata.
+    def test_rebuild_metadata_failure_reports_malformed_metadata(self):
+        error = InternetArchiveDesiredStateError(
+            'metadata',
+            'Malformed Thoth metadata for {}: missing required fields '
+            'title'.format(WORK_ID))
+        result, harness, upsert = self._apply_with_rebuild_failure(error)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('malformed_metadata', result['issues'])
+        self.assertNotIn('json_export_unavailable', result['issues'])
+        upsert.assert_called_once()
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertIn('missing required fields', result['error'])
+
+    # 31. An unknown desired-state source falls back to malformed_metadata,
+    #     matching the initial inspection path.
+    def test_rebuild_unknown_source_falls_back_to_malformed_metadata(self):
+        error = InternetArchiveDesiredStateError(
+            'somewhere-else', 'unexpected component failed')
+        result, _, upsert = self._apply_with_rebuild_failure(error)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('malformed_metadata', result['issues'])
+        self.assertNotIn('json_export_unavailable', result['issues'])
+        upsert.assert_called_once()
+
+    # 32. A non-DesiredStateError rebuild failure is generic, not a JSON outage.
+    def test_rebuild_unexpected_error_is_generic_not_json(self):
+        result, harness, upsert = self._apply_with_rebuild_failure(
+            RuntimeError('unexpected programming error'))
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('archive_mutation_failed', result['issues'])
+        self.assertNotIn('json_export_unavailable', result['issues'])
+        self.assertNotIn('pdf_source_unavailable', result['issues'])
+        upsert.assert_called_once()
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertIn('unexpected programming error', result['error'])
+
+    # ---- P2-B: reinspect current state after deferred verification timeout --
+
+    @staticmethod
+    def _accept_json_without_exposing(harness):
+        """Upload side effect: expose the PDF, accept but hide the JSON."""
+        def upload(**kwargs):
+            names = list(kwargs['files'])
+            if any(name.endswith('.json') for name in names):
+                harness.json_upload_count += 1
+                return [_ok_response() for _ in kwargs['files']]
+            return DeferredJsonHarness.upload(harness, **kwargs)
+        return upload
+
+    # 33. First-time create + accepted-but-unverified JSON: the top-level report
+    #     reflects the real partial state, and `before` keeps the pre-apply one.
+    def test_timeout_reinspects_first_time_partial_state(self):
+        item = self._missing_item()
+        harness = DeferredJsonHarness(item, [])
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 1), \
+                patch.object(IAUploader, 'UPLOAD_PROPAGATION_ATTEMPTS', 1):
+            result, harness, upsert = self._apply_prepared(
+                item, harness,
+                upload=self._accept_json_without_exposing(harness))
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('verification_failed', result['issues'])
+        # Top-level report shows the actual mutated IA and Thoth state.
+        self.assertTrue(result['internet_archive']['exists'])
+        self.assertTrue(
+            result['internet_archive']['files'][PDF_NAME]['current'])
+        self.assertEqual(result['thoth_location']['state'], 'current')
+        # The completed mutations remain applied.
+        self.assertIn('create_archive_item', result['applied_actions'])
+        self.assertIn('upload_pdf_original', result['applied_actions'])
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        # The JSON is attempted and uncertain, never applied.
+        self.assertIn('upload_json_original', result['attempted_actions'])
+        self.assertEqual(result['uncertain_actions'], ['upload_json_original'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        # The top-level report no longer claims the item/location are missing.
+        self.assertNotIn('item_missing', result['issues'])
+        self.assertNotIn('location_missing', result['issues'])
+        # The original pre-apply snapshot is preserved under `before`.
+        self.assertIn('item_missing', result['before']['issues'])
+        self.assertIn('location_missing', result['before']['issues'])
+        # No re-upload happened during reinspection.
+        self.assertEqual(harness.uploaded_names.count(PDF_NAME), 1)
+        self.assertEqual(harness.json_upload_count, 1)
+
+    # 34. The same reinspection holds for an existing item + missing location.
+    def test_timeout_reinspects_existing_item_missing_location(self):
+        item = self._current_item_without_location()
+        harness = DeferredJsonHarness(item, [])
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 1), \
+                patch.object(IAUploader, 'UPLOAD_PROPAGATION_ATTEMPTS', 1):
+            result, harness, upsert = self._apply_prepared(
+                item, harness,
+                upload=self._accept_json_without_exposing(harness))
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('verification_failed', result['issues'])
+        self.assertTrue(result['internet_archive']['exists'])
+        self.assertTrue(
+            result['internet_archive']['files'][PDF_NAME]['current'])
+        self.assertEqual(result['thoth_location']['state'], 'current')
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        self.assertIn('upload_json_original', result['attempted_actions'])
+        self.assertEqual(result['uncertain_actions'], ['upload_json_original'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertNotIn('location_missing', result['issues'])
+        self.assertIn('location_missing', result['before']['issues'])
+        self.assertEqual(harness.json_upload_count, 1)
+
+    # 35. If the post-timeout reinspection itself fails, the original timeout
+    #     error is preserved and the reinspection error appended; safe fallback.
+    def test_timeout_reinspection_failure_is_reported_and_falls_back(self):
+        item = self._missing_item()
+        harness = DeferredJsonHarness(item, [])
+        with patch.object(IAUploader, 'VERIFICATION_ATTEMPTS', 1), \
+                patch.object(IAUploader, 'UPLOAD_PROPAGATION_ATTEMPTS', 1), \
+                patch.object(
+                    InternetArchiveReconciler, '_inspect_after_apply',
+                    side_effect=RuntimeError('reinspection boom')):
+            result, harness, upsert = self._apply_prepared(
+                item, harness,
+                upload=self._accept_json_without_exposing(harness))
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('verification_failed', result['issues'])
+        # The original timeout is not hidden, and the reinspection error is
+        # appended.
+        self.assertIn('post-apply reinspection failed', result['error'])
+        self.assertIn('reinspection boom', result['error'])
+        # JSON reporting semantics are unchanged.
+        self.assertIn('upload_json_original', result['attempted_actions'])
+        self.assertEqual(result['uncertain_actions'], ['upload_json_original'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        # Safe fallback to the pre-apply base (no further mutation).
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        self.assertEqual(harness.json_upload_count, 1)
+
+    # 36. A synchronous JSON rejection is still attempted, never applied or
+    #     uncertain, and is not retried (unchanged by the reinspection work).
+    def test_synchronous_rejection_reporting_unchanged(self):
+        def upload(**kwargs):
+            names = list(kwargs['files'])
+            if any(name.endswith('.json') for name in names):
+                harness.json_upload_count += 1
+                raise DisseminationError(
+                    'Internet Archive file upload failed: unacceptable')
+            return DeferredJsonHarness.upload(harness, **kwargs)
+
+        item = self._missing_item()
+        harness = DeferredJsonHarness(item, [])
+        result, _, upsert = self._apply_prepared(item, harness, upload=upload)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('archive_mutation_failed', result['issues'])
+        upsert.assert_called_once()
+        self.assertEqual(harness.json_upload_count, 1)
+        self.assertIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertNotIn('upload_json_original', result['uncertain_actions'])
 
 
 if __name__ == '__main__':
