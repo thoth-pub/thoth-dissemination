@@ -862,6 +862,21 @@ class IAUploader(Uploader):
         return cls._clean_metadata_value(current_value) \
             == cls._clean_metadata_value(desired_value)
 
+    @staticmethod
+    def _canonicalise_ia_string(value):
+        """Normalise line endings the way Internet Archive stores them.
+
+        Internet Archive canonicalises metadata string line endings, collapsing
+        ``\\r\\n`` and bare ``\\r`` to ``\\n``. We apply the same canonicalisation
+        to every metadata string we build, compare, patch, and verify so the
+        representation we send always equals the representation IA returns; this
+        prevents a value that differs only by line ending from looking like a
+        perpetual metadata discrepancy. No other whitespace is collapsed and no
+        meaningful leading/trailing whitespace is stripped here (the existing
+        blank-value handling in :meth:`_clean_metadata_value` is unchanged).
+        """
+        return value.replace('\r\n', '\n').replace('\r', '\n')
+
     @classmethod
     def _as_metadata_list(cls, value):
         if isinstance(value, (list, tuple, set)):
@@ -870,26 +885,36 @@ class IAUploader(Uploader):
             values = []
         else:
             values = [value]
-        return [
-            cleaned for cleaned in (
-                cls._clean_metadata_value(entry) for entry in values)
-            if cleaned is not None
-        ]
+        # Canonicalise each value and drop exact duplicates that collapse to the
+        # same stored representation (e.g. a ``\\r\\n`` and a ``\\n`` variant of
+        # the same subject), preserving first-occurrence order. IA stores only
+        # the distinct canonical values, so a comparison that kept the duplicate
+        # would never converge.
+        deduplicated = []
+        for entry in values:
+            cleaned = cls._clean_metadata_value(entry)
+            if cleaned is not None and cleaned not in deduplicated:
+                deduplicated.append(cleaned)
+        return deduplicated
 
     @classmethod
     def _clean_metadata_value(cls, value):
         if value is None:
             return None
         if isinstance(value, (list, tuple, set)):
-            cleaned_values = [
-                cleaned for cleaned in (
-                    cls._clean_metadata_value(entry) for entry in value)
-                if cleaned is not None
-            ]
+            # Canonicalise then drop exact post-canonicalisation duplicates,
+            # preserving first-occurrence order, so a repeatable field we build
+            # or send carries only the distinct values IA can store.
+            cleaned_values = []
+            for entry in value:
+                cleaned = cls._clean_metadata_value(entry)
+                if cleaned is not None and cleaned not in cleaned_values:
+                    cleaned_values.append(cleaned)
             return cleaned_values or None
-        if isinstance(value, str) \
-                and (not value.strip() or value == 'None'):
-            return None
+        if isinstance(value, str):
+            value = cls._canonicalise_ia_string(value)
+            if not value.strip() or value == 'None':
+                return None
         return value
 
     @classmethod
