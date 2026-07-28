@@ -28,6 +28,16 @@ class InternetArchiveVerificationError(DisseminationError):
     """Report an Internet Archive upload which could not be verified in time."""
 
 
+class InternetArchiveConsistencyError(DisseminationError):
+    """Report an Archive item that changed inconsistently mid-reconciliation.
+
+    Raised when a target item that passed an earlier stage of a multi-stage
+    reconciliation (for example the PDF/metadata verification that precedes the
+    deferred JSON sidecar upload) has since disappeared. The item is never
+    recreated from the later stage.
+    """
+
+
 class InternetArchiveDesiredStateError(DisseminationError):
     """Report which source failed while constructing Archive desired state."""
 
