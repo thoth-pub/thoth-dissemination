@@ -16,7 +16,11 @@ from thothlibrary import ThothError
 
 from errors import (
     DisseminationError,
+    InternetArchiveConsistencyError,
     InternetArchiveDesiredStateError,
+    InternetArchiveIdentifierCollisionError,
+    InternetArchiveImmutableMetadataError,
+    InternetArchiveRestrictedMetadataError,
     InternetArchiveVerificationError,
 )
 from iauploader import IAUploader
@@ -1019,7 +1023,7 @@ class InternetArchiveReconciler:
         context['desired'] = rebuilt
 
         try:
-            uploader.upload_json_sidecar(
+            stage_result = uploader.upload_json_sidecar(
                 context['item'],
                 rebuilt,
                 access_key=credentials['ia_s3_access'],
@@ -1038,19 +1042,49 @@ class InternetArchiveReconciler:
             return self._failed_apply_result(
                 before, attempted_actions, applied_actions, uncertain_actions,
                 'verification_failed', str(error), before=before)
+        except (InternetArchiveConsistencyError,
+                InternetArchiveIdentifierCollisionError,
+                InternetArchiveRestrictedMetadataError) as error:
+            # The deferred stage revalidated the item immediately before
+            # mutating and refused: it disappeared, changed ownership, or drifted
+            # on restricted metadata after stage-one verification. No JSON upload
+            # was attempted and no JSON-only item is ever recreated, so the JSON
+            # action is reported neither as attempted nor as applied. The issue
+            # mirrors the specific safety violation.
+            if isinstance(error, InternetArchiveIdentifierCollisionError):
+                issue = 'identifier_collision'
+            elif isinstance(error, InternetArchiveImmutableMetadataError):
+                issue = 'archive_immutable_metadata_conflict'
+            elif isinstance(error, InternetArchiveRestrictedMetadataError):
+                issue = 'archive_collection_membership_conflict'
+            else:
+                issue = 'archive_mutation_failed'
+            applied_actions[:] = [
+                action for action in applied_actions
+                if action != 'upload_json_original'
+            ]
+            return self._failed_apply_result(
+                before, attempted_actions, applied_actions, uncertain_actions,
+                issue, str(error), before=before)
         except Exception as error:
-            # A synchronous rejection or any other upload failure: report it and
-            # never re-upload the sidecar as content.
+            # A synchronous rejection or any other upload failure after the
+            # attempt was made: report it as attempted, never applied, and never
+            # re-upload the sidecar as content.
             if 'upload_json_original' not in attempted_actions:
                 attempted_actions.append('upload_json_original')
             return self._failed_apply_result(
                 before, attempted_actions, applied_actions, uncertain_actions,
                 'archive_mutation_failed', str(error), before=before)
 
-        if 'upload_json_original' not in attempted_actions:
-            attempted_actions.append('upload_json_original')
-        if 'upload_json_original' not in applied_actions:
-            applied_actions.append('upload_json_original')
+        # Report the JSON action only when a JSON upload actually happened. A
+        # no-op (the rebuilt sidecar already matched the remote original) must
+        # not be recorded as attempted or applied merely because the dry-run
+        # conservatively predicted a possible upload.
+        if stage_result['uploaded']:
+            if 'upload_json_original' not in attempted_actions:
+                attempted_actions.append('upload_json_original')
+            if 'upload_json_original' not in applied_actions:
+                applied_actions.append('upload_json_original')
         return None
 
     @staticmethod

@@ -2045,6 +2045,29 @@ class DeferredJsonHarness:
         return [_ok_response() for _ in kwargs['files']]
 
 
+def _standalone_uploader():
+    """Build an IAUploader wired only for direct build/upload_json_sidecar use."""
+    uploader = IAUploader.__new__(IAUploader)
+    uploader.work_id = WORK_ID
+    uploader.version = __version__
+    uploader.metadata = work_metadata()
+    return uploader
+
+
+def _post_location_desired():
+    """A freshly rebuilt post-location desired state (JSON == POST_JSON)."""
+    uploader = _standalone_uploader()
+    publication = Publication(
+        'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+        'https://source.example/book.pdf')
+    with patch.object(
+            IAUploader, 'get_formatted_metadata', return_value=POST_EXPORT), \
+            patch.object(
+                IAUploader, 'get_publication_details',
+                return_value=publication):
+        return uploader.build_desired_state()
+
+
 class TestPostLocationJsonStaging(unittest.TestCase):
     """Part B: defer the JSON sidecar until after the Thoth location mutation."""
 
@@ -2361,7 +2384,10 @@ class TestPostLocationJsonStaging(unittest.TestCase):
         self.assertIn('archive_mutation_failed', result['issues'])
         upsert.assert_called_once()
         self.assertEqual(harness.json_upload_count, 1)
+        # A synchronous rejection is attempted but neither applied nor uncertain.
+        self.assertIn('upload_json_original', result['attempted_actions'])
         self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertNotIn('upload_json_original', result['uncertain_actions'])
 
     # 16. Deferred JSON propagation timeout records uncertainty, no re-upload.
     def test_deferred_json_propagation_timeout_is_uncertain(self):
@@ -2384,6 +2410,9 @@ class TestPostLocationJsonStaging(unittest.TestCase):
         upsert.assert_called_once()
         self.assertEqual(harness.json_upload_count, 1)
         self.assertEqual(result['uncertain_actions'], ['upload_json_original'])
+        # Accepted-but-unverified: attempted and uncertain, never applied.
+        self.assertIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
         self.assertIn('create_thoth_location', result['applied_actions'])
 
     # 17. Final inspection uses the rebuilt (post-location) desired state.
@@ -2506,6 +2535,218 @@ class TestPostLocationJsonStaging(unittest.TestCase):
              'upload_json_original', 'create_thoth_location'])
         self.assertEqual(result['internet_archive']['metadata']['patch_fields'],
                          [])
+
+    # ---- Deferred-stage revalidation and truthful no-op reporting ----------
+
+    def _apply_prepared(self, item, harness, upload=None):
+        """Drive a real reconcile_one apply against a caller-owned harness.
+
+        Mirrors ``_run`` but takes an already-constructed ``harness`` so a test
+        can wire item mutations that must fire between stage-one verification
+        and the deferred JSON stage.
+        """
+        thoth = MagicMock()
+        thoth.work_by_id.return_value = json.dumps(work_metadata())
+        reconciler = InternetArchiveReconciler(thoth=thoth)
+        publication = Publication(
+            'PDF', PUBLICATION_ID, PDF_BYTES, '.pdf',
+            'https://source.example/book.pdf')
+        with patch.object(
+                IAUploader, 'get_formatted_metadata',
+                side_effect=lambda s: harness.export_bytes(s)), \
+                patch.object(
+                    IAUploader, 'get_publication_details',
+                    return_value=publication), \
+                patch('reconcile_internet_archive.get_item',
+                      return_value=item), \
+                patch('reconcile_internet_archive.retrieve_existing_locations',
+                      side_effect=harness.locations), \
+                patch('reconcile_internet_archive.upsert_location',
+                      side_effect=harness.upsert) as upsert, \
+                patch('iauploader.upload',
+                      side_effect=(upload or harness.upload)):
+            result = reconciler.reconcile_one(
+                WORK_ID, apply=True, credentials=CREDENTIALS)
+        return result, harness, upsert
+
+    @staticmethod
+    def _mutate_on_deferred_refresh(item, harness, mutate):
+        """Apply ``mutate`` on the first item.refresh() after location creation.
+
+        That refresh is the one performed by ``upload_json_sidecar`` at the start
+        of the deferred JSON stage, so the mutation lands exactly between
+        stage-one verification and the deferred revalidation.
+        """
+        state = {'fired': False}
+
+        def refresh():
+            if harness.location_created and not state['fired']:
+                state['fired'] = True
+                mutate()
+
+        item.refresh = MagicMock(side_effect=refresh)
+
+    # 21. Item disappears after stage-one PDF verification: never recreated.
+    def test_item_missing_before_deferred_json_is_not_recreated(self):
+        item = self._missing_item()
+        harness = DeferredJsonHarness(item, [])
+
+        def vanish():
+            item.exists = False
+            item.files = []
+            item.metadata = {}
+
+        self._mutate_on_deferred_refresh(item, harness, vanish)
+        result, harness, upsert = self._apply_prepared(item, harness)
+
+        self.assertEqual(result['status'], 'error')
+        # The location may already have been applied; that is not rolled back.
+        upsert.assert_called_once()
+        self.assertIn('create_thoth_location', result['applied_actions'])
+        # No JSON-only item is recreated and the JSON is neither attempted nor
+        # applied.
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn(JSON_NAME, harness.uploaded_names)
+        self.assertNotIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+
+    # 22. thoth-work-id changes to another UUID before the deferred stage.
+    def test_work_id_change_before_deferred_json_blocks_upload(self):
+        item = self._current_item_without_location()
+        harness = DeferredJsonHarness(item, [])
+
+        def hijack():
+            item.metadata = dict(item.metadata)
+            item.metadata['thoth-work-id'] = WORK_ID_2
+
+        self._mutate_on_deferred_refresh(item, harness, hijack)
+        result, harness, upsert = self._apply_prepared(item, harness)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('identifier_collision', result['issues'])
+        upsert.assert_called_once()
+        # No credentials are used and no JSON upload is attempted.
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+
+    # 23. The item loses the Thoth collection before the deferred stage.
+    def test_collection_loss_before_deferred_json_blocks_upload(self):
+        item = self._current_item_without_location()
+        harness = DeferredJsonHarness(item, [])
+
+        def drop_collection():
+            item.metadata = {
+                field: value for field, value in item.metadata.items()
+                if field != 'collection'
+            }
+
+        self._mutate_on_deferred_refresh(item, harness, drop_collection)
+        result, harness, upsert = self._apply_prepared(item, harness)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn(
+            'archive_collection_membership_conflict', result['issues'])
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+
+    # 24. mediatype changes incompatibly before the deferred stage.
+    def test_mediatype_change_before_deferred_json_blocks_upload(self):
+        item = self._current_item_without_location()
+        harness = DeferredJsonHarness(item, [])
+
+        def change_mediatype():
+            item.metadata = dict(item.metadata)
+            item.metadata['mediatype'] = 'audio'
+
+        self._mutate_on_deferred_refresh(item, harness, change_mediatype)
+        result, harness, upsert = self._apply_prepared(item, harness)
+
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('archive_immutable_metadata_conflict', result['issues'])
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+
+    # 25. A legitimate owned item reports the JSON upload exactly once and
+    #     uploads it exactly once.
+    def test_owned_deferred_json_reported_and_uploaded_once(self):
+        result, harness, upsert = self._run(
+            self._current_item_without_location(), [])
+
+        self.assertEqual(result['status'], 'current')
+        upsert.assert_called_once()
+        self.assertEqual(harness.json_upload_count, 1)
+        self.assertEqual(harness.uploaded_names.count(JSON_NAME), 1)
+        self.assertEqual(
+            result['attempted_actions'].count('upload_json_original'), 1)
+        self.assertEqual(
+            result['applied_actions'].count('upload_json_original'), 1)
+
+    # 26. The rebuilt post-location JSON already matches the remote original: a
+    #     truthful no-op that is neither attempted nor applied.
+    def test_post_location_json_already_current_is_noop(self):
+        item = FakeItem(
+            exists=True,
+            metadata=desired_metadata(),
+            files=[
+                original_file(PDF_NAME, PDF_BYTES),
+                original_file(JSON_NAME, POST_JSON),
+            ],
+        )
+        harness = DeferredJsonHarness(item, [])
+        get_env = MagicMock()
+        with patch.object(IAUploader, 'get_variable_from_env', get_env):
+            result, harness, upsert = self._apply_prepared(item, harness)
+
+        self.assertEqual(result['status'], 'current')
+        upsert.assert_called_once()
+        # No upload happened, so no credentials were read solely for the JSON.
+        self.assertEqual(harness.json_upload_count, 0)
+        self.assertEqual(harness.uploaded_names, [])
+        get_env.assert_not_called()
+        # The predicted-but-unperformed upload must not be reported.
+        self.assertNotIn('upload_json_original', result['attempted_actions'])
+        self.assertNotIn('upload_json_original', result['applied_actions'])
+        self.assertEqual(result['applied_actions'], ['create_thoth_location'])
+        # Strict final verification still ran and confirmed the JSON original.
+        self.assertTrue(
+            result['internet_archive']['files'][JSON_NAME]['current'])
+
+    # 27. The deferred revalidation accepts an owned-legacy Thoth item under the
+    #     repository's existing legacy policy rather than rejecting it.
+    def test_deferred_stage_accepts_legacy_item(self):
+        desired = _post_location_desired()
+        item = FakeItem(
+            exists=True,
+            identifier=WORK_ID,
+            metadata={
+                'collection': IAUploader.THOTH_COLLECTION,
+                'mediatype': 'texts',
+            },
+            files=[
+                original_file(PDF_NAME, PDF_BYTES),
+                original_file(JSON_NAME, POST_JSON),
+            ],
+        )
+        uploader = _standalone_uploader()
+        upload_mock = MagicMock()
+        get_env = MagicMock()
+        with patch('iauploader.upload', upload_mock), \
+                patch.object(IAUploader, 'get_variable_from_env', get_env), \
+                patch.object(
+                    IAUploader, '_verify_final_state',
+                    return_value={JSON_NAME: POST_JSON_MD5}) as verify:
+            result = uploader.upload_json_sidecar(
+                item, desired, access_key='key', secret_key='secret')
+
+        # Legacy is accepted (no collision), the current JSON is not re-uploaded,
+        # credentials are not read for the skipped upload, and strict final
+        # verification still runs.
+        self.assertEqual(
+            result, {'verified': {JSON_NAME: POST_JSON_MD5}, 'uploaded': False})
+        upload_mock.assert_not_called()
+        get_env.assert_not_called()
+        verify.assert_called_once()
 
 
 if __name__ == '__main__':
