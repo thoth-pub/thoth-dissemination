@@ -553,19 +553,29 @@ class IAUploader(Uploader):
 
     def apply_archive_repairs(
             self, item, desired, inspection=None, access_key=None,
-            secret_key=None, progress=None):
-        """Apply only the file and metadata differences found by inspection."""
+            secret_key=None, progress=None, defer_json_upload=False):
+        """Apply only the file and metadata differences found by inspection.
+
+        When ``defer_json_upload`` is set the JSON original is neither uploaded
+        nor verified here: the caller is going to mutate the Thoth location
+        (which changes the ``json::thoth`` export) and will upload the final,
+        post-location sidecar separately via :meth:`upload_json_sidecar`. In
+        that mode only the PDF original and managed metadata are uploaded and
+        strictly verified, so the location is only created once the archive item
+        and its PDF are known-good. The PDF verified MD5 is still returned.
+        """
         inspection = inspection or self.inspect_item(item, desired)
         if inspection['ownership'] == 'collision':
             self._raise_item_collision(inspection['ownership_reason'])
         self._assert_restricted_metadata_current(item, desired)
 
+        pdf_name = '{}.pdf'.format(desired.identifier)
+        json_name = '{}.json'.format(desired.identifier)
+        managed_names = (
+            (pdf_name,) if defer_json_upload else (pdf_name, json_name)
+        )
         files_to_upload = [
-            name
-            for name in (
-                '{}.pdf'.format(desired.identifier),
-                '{}.json'.format(desired.identifier),
-            )
+            name for name in managed_names
             if not inspection['files'][name]['current']
         ]
         creating_item = not inspection['exists']
@@ -589,11 +599,7 @@ class IAUploader(Uploader):
                 item, desired, ownership=current_ownership)
             self._assert_restricted_metadata_current(item, desired)
             files_to_upload = [
-                name
-                for name in (
-                    '{}.pdf'.format(desired.identifier),
-                    '{}.json'.format(desired.identifier),
-                )
+                name for name in managed_names
                 if not inspection['files'][name]['current']
             ]
             creating_item = not inspection['exists']
@@ -644,6 +650,65 @@ class IAUploader(Uploader):
             )
             if progress is not None:
                 progress('update_archive_metadata', 'completed')
+
+        verification_md5s = (
+            {pdf_name: desired.expected_md5s[pdf_name]}
+            if defer_json_upload else desired.expected_md5s
+        )
+        return self._verify_final_state(
+            item,
+            verification_md5s,
+            desired.metadata,
+            desired.absent_metadata_fields,
+            uploaded_file_names=frozenset(uploaded_file_names),
+        )
+
+    def upload_json_sidecar(
+            self, item, desired, access_key=None, secret_key=None,
+            progress=None):
+        """Upload the post-location JSON original exactly once and verify it.
+
+        Called after a Thoth location mutation has changed the ``json::thoth``
+        export, so ``desired`` must be a freshly rebuilt state reflecting the new
+        location. The JSON original is uploaded only if the remote copy does not
+        already match, then the final remote MD5s and managed metadata are
+        strictly verified (the PDF and metadata are re-verified for safety). A
+        synchronous rejection is never retried; an accepted-but-pending original
+        goes through the existing bounded propagation verification without any
+        re-upload.
+        """
+        json_name = '{}.json'.format(desired.identifier)
+        try:
+            item.refresh()
+        except req_except.RequestException as error:
+            raise DisseminationError(
+                'Unable to refresh Internet Archive item {} before uploading '
+                'the post-location JSON sidecar: {}'.format(
+                    desired.identifier, error)
+            ) from error
+
+        comparison = self.compare_original_files(
+            self._original_files(item.files),
+            {json_name: desired.expected_md5s[json_name]},
+        )
+        uploaded_file_names = set()
+        if not comparison[json_name]['current']:
+            access_key = access_key or self.get_variable_from_env(
+                'ia_s3_access', 'Internet Archive')
+            secret_key = secret_key or self.get_variable_from_env(
+                'ia_s3_secret', 'Internet Archive')
+            if progress is not None:
+                progress('upload_json_original', 'attempted')
+            self._upload_files(
+                desired.identifier,
+                {json_name: BytesIO(desired.file_bytes[json_name])},
+                None,
+                access_key,
+                secret_key,
+            )
+            uploaded_file_names.add(json_name)
+            if progress is not None:
+                progress('upload_json_original', 'completed')
 
         return self._verify_final_state(
             item,

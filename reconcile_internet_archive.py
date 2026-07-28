@@ -72,6 +72,7 @@ ISSUE_ORDER = (
     'duplicate_locations',
     'archive_mutation_failed',
     'thoth_location_mutation_failed',
+    'pdf_source_drift',
     'verification_failed',
 )
 
@@ -133,6 +134,7 @@ ISSUE_STATUS = {
     'duplicate_locations': 'duplicate_locations',
     'archive_mutation_failed': 'error',
     'thoth_location_mutation_failed': 'error',
+    'pdf_source_drift': 'error',
     'verification_failed': 'error',
 }
 
@@ -766,8 +768,20 @@ class InternetArchiveReconciler:
         result['recommended_actions'] = actions
         result['status'] = _status_for_issues(issues)
         result['error'] = '; '.join(_ordered_unique(errors, ())) or None
-        result['auto_applicable_actions'] = self._auto_applicable_actions(
-            result)
+        auto_applicable = self._auto_applicable_actions(result)
+        # A Thoth location mutation changes the json::thoth export (it embeds
+        # the publication's locations), so any JSON sidecar built before the
+        # mutation is immediately stale. Whenever a location mutation will be
+        # auto-applied, predict the post-location JSON upload in the plan too,
+        # so apply performs no mutation absent from the dry-run action plan.
+        if ({'create_thoth_location', 'update_thoth_location'}
+                & set(auto_applicable)
+                and 'upload_json_original' not in auto_applicable):
+            auto_applicable = _ordered_unique(
+                auto_applicable + ['upload_json_original'], ACTION_ORDER)
+            result['recommended_actions'] = _ordered_unique(
+                actions + ['upload_json_original'], ACTION_ORDER)
+        result['auto_applicable_actions'] = auto_applicable
         return result
 
     @staticmethod
@@ -821,7 +835,18 @@ class InternetArchiveReconciler:
             action for action in before['auto_applicable_actions']
             if action in LOCATION_ACTIONS
         ]
+        # A location mutation rewrites the json::thoth export, so when one is
+        # planned alongside a JSON upload we defer the JSON to a post-location
+        # stage: upload/verify the PDF and metadata, mutate the location, then
+        # rebuild the sidecar from the post-location export and upload it once.
+        defer_json = bool(location_actions) and (
+            'upload_json_original' in before['auto_applicable_actions'])
+        stage_one_archive_actions = [
+            action for action in archive_actions
+            if not (defer_json and action == 'upload_json_original')
+        ]
 
+        # --- Stage 1: archive item / PDF / managed metadata (JSON deferred) ---
         try:
             if archive_actions:
                 context['uploader'].apply_archive_repairs(
@@ -831,10 +856,11 @@ class InternetArchiveReconciler:
                     access_key=credentials['ia_s3_access'],
                     secret_key=credentials['ia_s3_secret'],
                     progress=record_progress,
+                    defer_json_upload=defer_json,
                 )
                 # Preserve compatibility with test doubles or alternate
                 # uploaders that return success without progress callbacks.
-                for action in archive_actions:
+                for action in stage_one_archive_actions:
                     if action not in attempted_actions:
                         attempted_actions.append(action)
                     if action not in applied_actions:
@@ -860,6 +886,7 @@ class InternetArchiveReconciler:
                 before, attempted_actions, applied_actions,
                 uncertain_actions, 'archive_mutation_failed', str(error))
 
+        # --- Stage 2: Thoth location mutation (only after PDF/metadata pass) ---
         try:
             if location_actions:
                 location_result = upsert_location(
@@ -893,6 +920,14 @@ class InternetArchiveReconciler:
                 failure_base, attempted_actions, applied_actions,
                 uncertain_actions, 'thoth_location_mutation_failed',
                 failure_error, before=before)
+
+        # --- Stage 3: post-location JSON sidecar (rebuilt from fresh export) ---
+        if defer_json:
+            failure = self._stage_post_location_json(
+                before, context, credentials, record_progress,
+                attempted_actions, applied_actions, uncertain_actions)
+            if failure is not None:
+                return failure
 
         final = self._inspect_after_apply(before, context)
         final['before'] = before
@@ -937,6 +972,86 @@ class InternetArchiveReconciler:
             context['desired'],
             verification_context,
         )
+
+    def _stage_post_location_json(
+            self, before, context, credentials, record_progress,
+            attempted_actions, applied_actions, uncertain_actions):
+        """Rebuild desired state after a location mutation and upload JSON once.
+
+        The location has already been created/updated, so its export now
+        includes the IA location and the pre-location sidecar is stale. Rebuild
+        the desired state from the fresh Thoth export, confirm the PDF is
+        unchanged, upload the post-location JSON original exactly once, and
+        verify it. Returns ``None`` on success or a failed-apply result; every
+        failure here reports the location as applied and the JSON as
+        not-applied or uncertain, and never re-uploads a rejected sidecar.
+        The mutated ``attempted``/``applied``/``uncertain`` lists are shared
+        with the caller.
+        """
+        uploader = context['uploader']
+        original_desired = context['desired']
+        pdf_name = '{}.pdf'.format(original_desired.identifier)
+
+        try:
+            rebuilt = uploader.build_desired_state()
+        except Exception as error:
+            return self._failed_apply_result(
+                before, attempted_actions, applied_actions, uncertain_actions,
+                'json_export_unavailable',
+                'The Thoth location was applied but rebuilding the desired '
+                'state for the post-location JSON sidecar failed; the JSON was '
+                'not uploaded: {}'.format(error), before=before)
+
+        if (rebuilt.expected_md5s[pdf_name]
+                != original_desired.expected_md5s[pdf_name]):
+            return self._failed_apply_result(
+                before, attempted_actions, applied_actions, uncertain_actions,
+                'pdf_source_drift',
+                'The PDF source MD5 changed between the initial and '
+                'post-location desired state ({} -> {}); the location was '
+                'applied but the JSON sidecar was not uploaded to avoid '
+                'describing different PDF bytes'.format(
+                    original_desired.expected_md5s[pdf_name],
+                    rebuilt.expected_md5s[pdf_name]),
+                before=before)
+
+        # The final inspection must use the rebuilt post-location desired state.
+        context['desired'] = rebuilt
+
+        try:
+            uploader.upload_json_sidecar(
+                context['item'],
+                rebuilt,
+                access_key=credentials['ia_s3_access'],
+                secret_key=credentials['ia_s3_secret'],
+                progress=record_progress,
+            )
+        except InternetArchiveVerificationError as error:
+            if 'upload_json_original' not in attempted_actions:
+                attempted_actions.append('upload_json_original')
+            if 'upload_json_original' not in uncertain_actions:
+                uncertain_actions.append('upload_json_original')
+            applied_actions[:] = [
+                action for action in applied_actions
+                if action != 'upload_json_original'
+            ]
+            return self._failed_apply_result(
+                before, attempted_actions, applied_actions, uncertain_actions,
+                'verification_failed', str(error), before=before)
+        except Exception as error:
+            # A synchronous rejection or any other upload failure: report it and
+            # never re-upload the sidecar as content.
+            if 'upload_json_original' not in attempted_actions:
+                attempted_actions.append('upload_json_original')
+            return self._failed_apply_result(
+                before, attempted_actions, applied_actions, uncertain_actions,
+                'archive_mutation_failed', str(error), before=before)
+
+        if 'upload_json_original' not in attempted_actions:
+            attempted_actions.append('upload_json_original')
+        if 'upload_json_original' not in applied_actions:
+            applied_actions.append('upload_json_original')
+        return None
 
     @staticmethod
     def _failed_apply_result(
