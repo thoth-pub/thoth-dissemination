@@ -256,10 +256,14 @@ relying on it:
   emits work IDs; it is the input to dissemination, not itself an upload.
 - `write_locations.py` is a write path with no inspection-only mode.
 - `.github/workflows/ia_reconcile.yml` is `workflow_dispatch` with dry-run as
-  the default. Its apply path is gated on `confirm_apply` being exactly
-  `APPLY`, on running from `develop`, and on approval through the protected
-  `disseminate` GitHub environment, which is where write credentials are
-  mapped in.
+  the default. Its apply path is gated in workflow and script logic on apply
+  being explicitly selected, on `confirm_apply` being exactly `APPLY`, and on
+  `GITHUB_REF` being exactly `refs/heads/develop`
+  (`.github/scripts/ia_reconcile_workflow.py`, `validate --mode apply`, which
+  also caps an apply batch at 7 works). The apply job declares
+  `environment: disseminate`, which is where the write credentials are mapped
+  in. These are input and branch guards; none of them is a human approval
+  gate. See section 8.6 before treating the environment as a safety control.
 
 Read-only and dry-run paths that are designed to be credential-free must stay
 credential-free. Do not "fix" a dry-run by giving it write credentials.
@@ -324,10 +328,10 @@ dispatch it to "confirm" an unrelated change.
 workflows perform real platform actions and follow-up operations on schedules or
 manual dispatch.
 
-`disseminate.yml` is the shared job logic. It runs in the protected
-`disseminate` environment, runs `disseminator.py`, uploads an output artifact
-for some platforms, and then conditionally runs follow-up jobs (section 8.5).
-Its concurrency group is per platform/work pair.
+`disseminate.yml` is the shared job logic. Its jobs declare
+`environment: disseminate` (see section 8.6), run `disseminator.py`, upload an
+output artifact for some platforms, and then conditionally run follow-up jobs
+(section 8.5). Its concurrency group is per platform/work pair.
 
 A workflow file is not a documentation file. Editing workflow YAML, changing a
 schedule, changing environment or permission blocks, and dispatching or
@@ -353,6 +357,42 @@ platform does **not** thereby authorize Thoth write-back or outbound email:
 those downstream effects must be explicitly named in scope. Conversely, when an
 authorized upload will trigger them, say so in the task record rather than
 discovering it afterwards.
+
+### 8.6 The `disseminate` GitHub environment is not an approval gate
+
+Operational workflows target the GitHub environment named `disseminate`. That
+environment is where the relevant workflow credentials are made available to a
+job. It is not, by itself, evidence of any review or approval control.
+
+Verified by live GitHub inspection at the time of writing, the `disseminate`
+environment has:
+
+```text
+protection_rules: []
+deployment_branch_policy: null
+can_admins_bypass: true
+```
+
+There are therefore currently **no required reviewers, no approval gate and no
+deployment branch restriction** on that environment, and none may be assumed.
+`ia_reconcile.yml`'s own comment states the position correctly: required
+reviewers must be configured on the GitHub environment itself, because workflow
+YAML cannot create environment protection rules.
+
+Before any future task relies on environment protection as a safety control, it
+must verify the **live** GitHub environment configuration — required reviewers,
+wait timers, branch/deployment policy and admin bypass behaviour — rather than
+inferring protection from the presence of an `environment:` key in YAML. Record
+what was observed. Configuring or changing environment protection is a GitHub
+repository-configuration mutation and is a separately authorized action; it is
+not implied by authorization to edit files in this repository.
+
+Regardless of whether environment protection exists, the deny-by-default rule
+stands on its own and is the controlling safeguard: workflow dispatch, apply
+mode, dissemination, provider writes, Thoth location/state write-back, outbound
+email and production-credential use each require explicit authorization in the
+owning task. Absent or weak platform-side protection never lowers that bar, and
+present protection never substitutes for it.
 
 ## 9. Cross-repository impact
 
