@@ -9,11 +9,14 @@ import unittest
 from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 
+from thothlibrary import errors
+
 from internet_archive_policy import SUPPORTED_WORK_TYPES
 from obtain_new_ids import (
     DEFAULT_IA_LOOKBACK_HOURS,
     DEFAULT_IA_MAX_IDS,
     IA_QUERY_PAGE_SIZE,
+    IDFinder,
     InternetArchiveIDFinder,
     InternetArchiveSelectionError,
     MonthlyIDFinder,
@@ -712,6 +715,244 @@ class TestOapenLocationsPostProcess(unittest.TestCase):
         self.finder.post_process()
 
         self.assertEqual(self.finder.thoth_ids, [])
+
+
+class OrdinaryIDFinderCharacterizationTestCase(unittest.TestCase):
+    """
+    Pre-refactor characterization of the ordinary (non-Internet Archive)
+    `IDFinder` publisher/exception/stdout/exit contract required by DIS-01.
+
+    These tests record existing behaviour exactly as implemented at the
+    DIS-01 baseline, including behaviour that is arguably surprising. They
+    are the compatibility baseline for `env` and legacy-authoritative
+    `compare` mode and must keep passing unchanged.
+    """
+
+    def setUp(self):
+        self.thoth = MagicMock()
+        self.thoth.publisher.return_value = SimpleNamespace(
+            publisherId=PUBLISHER_ID)
+        self.thoth.works.return_value = []
+        client = patch(
+            'obtain_new_ids.get_thoth_client', return_value=self.thoth)
+        client.start()
+        self.addCleanup(client.stop)
+        self.environment = patch.dict(os.environ, {
+            'ENV_PUBLISHERS': json.dumps([PUBLISHER_ID]),
+        }, clear=False)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        os.environ.pop('ENV_EXCEPTIONS', None)
+
+    def finder(self):
+        return IDFinder()
+
+
+class TestOrdinaryPublisherConfigurationCharacterization(
+        OrdinaryIDFinderCharacterizationTestCase):
+
+    def test_valid_publishers_are_confirmed_and_re_serialised_verbatim(self):
+        second_publisher = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        os.environ['ENV_PUBLISHERS'] = json.dumps(
+            [second_publisher, PUBLISHER_ID])
+        finder = self.finder()
+        finder.get_publishers()
+        self.assertEqual(
+            finder.publishers,
+            json.dumps([second_publisher, PUBLISHER_ID]),
+        )
+        self.assertEqual(
+            [call.kwargs['publisher_id']
+             for call in self.thoth.publisher.call_args_list],
+            [second_publisher, PUBLISHER_ID],
+        )
+
+    def test_publisher_order_and_duplicates_are_preserved(self):
+        os.environ['ENV_PUBLISHERS'] = json.dumps(
+            [PUBLISHER_ID, PUBLISHER_ID])
+        finder = self.finder()
+        finder.get_publishers()
+        self.assertEqual(
+            finder.publishers, json.dumps([PUBLISHER_ID, PUBLISHER_ID]))
+
+    def test_publisher_ids_are_not_normalised_or_validated_as_uuids(self):
+        os.environ['ENV_PUBLISHERS'] = json.dumps([PUBLISHER_ID.upper()])
+        finder = self.finder()
+        finder.get_publishers()
+        self.assertEqual(
+            finder.publishers, json.dumps([PUBLISHER_ID.upper()]))
+
+    def test_missing_publisher_variable_exits_one(self):
+        os.environ.pop('ENV_PUBLISHERS')
+        finder = self.finder()
+        with self.assertRaises(SystemExit) as raised:
+            finder.get_publishers()
+        self.assertEqual(raised.exception.code, 1)
+        self.thoth.publisher.assert_not_called()
+
+    def test_empty_publisher_list_exits_one(self):
+        os.environ['ENV_PUBLISHERS'] = '[]'
+        finder = self.finder()
+        with self.assertRaises(SystemExit) as raised:
+            finder.get_publishers()
+        self.assertEqual(raised.exception.code, 1)
+        self.thoth.publisher.assert_not_called()
+
+    def test_malformed_publisher_configuration_exits_one(self):
+        for value in ('not-json', '[', '[1, 2', ''):
+            with self.subTest(value=value):
+                os.environ['ENV_PUBLISHERS'] = value
+                finder = self.finder()
+                with self.assertRaises(SystemExit) as raised:
+                    finder.get_publishers()
+                self.assertEqual(raised.exception.code, 1)
+
+    def test_unsized_json_publishers_raise_type_error_rather_than_exiting(
+            self):
+        # Characterization only: the existing bare `except` covers the JSON
+        # decode, not the subsequent length check, so a valid but unsized
+        # JSON value propagates a TypeError instead of the exit-1
+        # configuration failure.
+        for value in ('null', 'true', '3'):
+            with self.subTest(value=value):
+                os.environ['ENV_PUBLISHERS'] = value
+                finder = self.finder()
+                with self.assertRaises(TypeError):
+                    finder.get_publishers()
+
+    def test_json_object_publishers_are_accepted_as_their_keys(self):
+        # Characterization only: any non-empty JSON container passes the
+        # emptiness check, so an object's keys are confirmed as publisher IDs
+        # and re-serialised verbatim.
+        os.environ['ENV_PUBLISHERS'] = '{"' + PUBLISHER_ID + '": true}'
+        finder = self.finder()
+        finder.get_publishers()
+        self.assertEqual(
+            self.thoth.publisher.call_args.kwargs['publisher_id'],
+            PUBLISHER_ID,
+        )
+        self.assertEqual(
+            finder.publishers, json.dumps({PUBLISHER_ID: True}))
+
+    def test_unknown_publisher_exits_one(self):
+        self.thoth.publisher.side_effect = errors.ThothError(
+            'publisher query', 'no record')
+        finder = self.finder()
+        with self.assertRaises(SystemExit) as raised:
+            finder.get_publishers()
+        self.assertEqual(raised.exception.code, 1)
+
+
+class TestOrdinaryExceptionCharacterization(
+        OrdinaryIDFinderCharacterizationTestCase):
+
+    def apply_exceptions(self, work_ids, raw_exceptions):
+        finder = self.finder()
+        finder.thoth_ids = list(work_ids)
+        if raw_exceptions is None:
+            os.environ.pop('ENV_EXCEPTIONS', None)
+        else:
+            os.environ['ENV_EXCEPTIONS'] = raw_exceptions
+        finder.remove_exceptions()
+        return finder.thoth_ids
+
+    def test_unset_and_empty_exceptions_preserve_the_list_exactly(self):
+        work_ids = ['b', 'a', 'c']
+        for value in (None, ''):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.apply_exceptions(work_ids, value), work_ids)
+
+    def test_configured_exceptions_are_removed_as_a_set_difference(self):
+        remaining = self.apply_exceptions(
+            [WORK_ID, 'aaaaaaaa-0000-4000-8000-000000000001'],
+            json.dumps([WORK_ID]),
+        )
+        self.assertEqual(
+            set(remaining), {'aaaaaaaa-0000-4000-8000-000000000001'})
+
+    def test_exception_values_are_lowercased_before_comparison(self):
+        remaining = self.apply_exceptions(
+            [WORK_ID], json.dumps([WORK_ID.upper()]))
+        self.assertEqual(remaining, [])
+
+    def test_uppercase_selected_ids_are_not_matched_by_exceptions(self):
+        # Characterization only: only the exception configuration is
+        # lowercased, so an upper-case selected ID is never matched.
+        mixed_case_work_id = 'AAAAAAAA-1111-4111-8111-111111111111'
+        remaining = self.apply_exceptions(
+            [mixed_case_work_id], json.dumps([mixed_case_work_id]))
+        self.assertEqual(remaining, [mixed_case_work_id])
+
+    def test_malformed_exception_configuration_exits_one(self):
+        for value in ('not-json', '['):
+            with self.subTest(value=value):
+                with self.assertRaises(SystemExit) as raised:
+                    self.apply_exceptions([WORK_ID], value)
+                self.assertEqual(raised.exception.code, 1)
+
+
+class TestOrdinaryOutputAndExitCharacterization(
+        OrdinaryIDFinderCharacterizationTestCase):
+
+    def test_run_prints_compact_json_array_with_trailing_newline(self):
+        finder = self.finder()
+        self.thoth.bookIds.return_value = [
+            SimpleNamespace(workId=WORK_ID),
+            SimpleNamespace(workId='22222222-2222-4222-8222-222222222222'),
+        ]
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            finder.run()
+        self.assertEqual(
+            sorted(json.loads(stdout.getvalue())),
+            [WORK_ID, '22222222-2222-4222-8222-222222222222'],
+        )
+        self.assertEqual(
+            stdout.getvalue(),
+            json.dumps(finder.thoth_ids, separators=(',', ':')) + '\n',
+        )
+
+    def test_run_passes_the_verbatim_publisher_list_to_the_work_query(self):
+        finder = self.finder()
+        self.thoth.bookIds.return_value = []
+        with redirect_stdout(StringIO()):
+            finder.run()
+        self.assertEqual(
+            self.thoth.bookIds.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_ID]),
+        )
+
+    def test_empty_result_prints_empty_json_array(self):
+        finder = self.finder()
+        self.thoth.bookIds.return_value = []
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            finder.run()
+        self.assertEqual(stdout.getvalue(), '[]\n')
+
+    def test_successful_ordinary_selection_returns_zero(self):
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            status = main(['--platform', 'OAPEN'])
+        self.assertEqual(status, 0)
+        self.assertEqual(stdout.getvalue(), '[]\n')
+
+    def test_legacy_publisher_failure_exits_one_through_main(self):
+        os.environ['ENV_PUBLISHERS'] = 'not-json'
+        with self.assertRaises(SystemExit) as raised:
+            main(['--platform', 'OAPEN'])
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_legacy_exception_failure_exits_one_through_main(self):
+        os.environ['ENV_EXCEPTIONS'] = 'not-json'
+        with self.assertRaises(SystemExit) as raised, redirect_stdout(
+                StringIO()):
+            main(['--platform', 'OAPEN'])
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_unknown_platform_returns_one(self):
+        self.assertEqual(main(['--platform', 'NotAPlatform']), 1)
 
 
 if __name__ == '__main__':
