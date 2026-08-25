@@ -81,12 +81,12 @@ class TestIABulkDisseminateWorkflow(unittest.TestCase):
             if step.get('name') == 'Install selection dependencies')
         self.assertIn('requirements_obtain_new_ids.txt', install['run'])
 
-    def test_selection_step_passes_only_publisher_and_exception_variables(self):
+    def test_selection_step_passes_only_non_secret_selection_variables(self):
         step = next(
             step for step in self.workflow['jobs']['select']['steps']
             if step.get('name') == 'Select recently updated eligible works')
         self.assertEqual(set(step['env']), {
-            'ENV_PUBLISHERS', 'ENV_EXCEPTIONS'})
+            'ENV_PUBLISHERS', 'ENV_EXCEPTIONS', 'PUBLISHER_SOURCE_MODES'})
         serialised = json.dumps(step)
         for credential in (
                 'THOTH_PAT', 'IA_S3_ACCESS', 'IA_S3_SECRET',
@@ -105,6 +105,8 @@ class TestIABulkDisseminateWorkflow(unittest.TestCase):
         self.assertIn('max_works="${{ inputs.max_works }}"', command)
         self.assertIn('max_works=200', command)
         self.assertIn('--report internet-archive-selection.json', command)
+        self.assertIn(
+            '--comparison-report publisher-comparison.json', command)
 
     def test_selection_artifact_is_always_uploaded_for_30_days(self):
         step = next(
@@ -115,6 +117,7 @@ class TestIABulkDisseminateWorkflow(unittest.TestCase):
         self.assertEqual(step['with']['if-no-files-found'], 'warn')
         self.assertIn('internet-archive-selection.json', step['with']['path'])
         self.assertIn('internet-archive-selection.log', step['with']['path'])
+        self.assertIn('publisher-comparison.json', step['with']['path'])
         artifact = self.workflow['jobs']['select']['env']['ARTIFACT_NAME']
         self.assertIn('ia-selection-', artifact)
         self.assertIn('github.run_id', artifact)
@@ -133,6 +136,55 @@ class TestIABulkDisseminateWorkflow(unittest.TestCase):
             'work_ids', 'selected_count', 'omitted_count', 'truncated',
             'selection_exit_status', 'artifact_name',
         })
+
+    def test_selection_reads_the_central_publisher_source_variable(self):
+        step = next(
+            step for step in self.workflow['jobs']['select']['steps']
+            if step.get('name') == 'Select recently updated eligible works')
+        self.assertEqual(
+            step['env']['PUBLISHER_SOURCE_MODES'],
+            '${{ vars.PUBLISHER_SOURCE_MODES }}',
+        )
+
+    def test_publisher_comparison_summary_is_separate_and_non_gating(self):
+        steps = self.workflow['jobs']['select']['steps']
+        step = next(
+            step for step in steps
+            if step.get('name') == 'Summarise publisher comparison')
+        self.assertEqual(step['if'], '${{ always() }}')
+        self.assertTrue(step['continue-on-error'])
+        self.assertIn('publisher_source.py summary', step['run'])
+        self.assertIn('--platform InternetArchive', step['run'])
+        self.assertEqual(
+            step['env']['PUBLISHER_SOURCE_MODES'],
+            '${{ vars.PUBLISHER_SOURCE_MODES }}',
+        )
+
+    def test_publisher_comparison_does_not_change_the_selection_guards(self):
+        steps = self.workflow['jobs']['select']['steps']
+        guards = [
+            step for step in steps
+            if 'ia_selection_workflow.py' in step.get('run', '')
+        ]
+        self.assertEqual(len(guards), 3)
+        for step in guards:
+            with self.subTest(step=step.get('name')):
+                self.assertNotIn('publisher-comparison', step['run'])
+                self.assertNotIn('continue-on-error', step)
+
+    def test_ia_selection_helper_is_unchanged_by_this_task(self):
+        helper = HELPER.read_text(encoding='utf-8')
+        self.assertNotIn('publisher-comparison', helper)
+        self.assertNotIn('PUBLISHER_SOURCE_MODES', helper)
+        self.assertNotIn('publisher_source', helper)
+
+    def test_oapen_location_catchup_workflow_is_untouched(self):
+        workflow = load_yaml(
+            ROOT / '.github' / 'workflows' / 'oapen_catchup_locations.yaml')
+        serialised = json.dumps(workflow)
+        self.assertNotIn('PUBLISHER_SOURCE_MODES', serialised)
+        self.assertNotIn('publisher-comparison', serialised)
+        self.assertIn('--locations', serialised)
 
     def test_matrix_uses_only_selected_ids_with_four_way_parallelism(self):
         job = self.workflow['jobs']['disseminate']

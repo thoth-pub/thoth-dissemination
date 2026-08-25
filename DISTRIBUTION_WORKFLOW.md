@@ -25,7 +25,7 @@ This document describes the workflow currently implemented in `thoth-disseminati
 
 All automatic runs share these rules from `obtain_new_ids.py`:
 
-- `ENV_PUBLISHERS` is required, must be JSON, non-empty, and each publisher ID is validated against Thoth.
+- `ENV_PUBLISHERS` is required, must be JSON, non-empty, and each publisher ID is validated against Thoth. Publisher authority is `env` unless the repository variable described in section 9 says otherwise.
 - `ENV_EXCEPTIONS` is optional; if present, matching work IDs are removed.
 - Default target status is `ACTIVE`.
 - Automatic selection is book-focused:
@@ -295,3 +295,98 @@ From `disseminate.yml`, email job runs for:
 - `reconcile_internet_archive.py` supports bounded read-only inspection and
   guarded apply repair for explicit works or a publisher selection. Use it to
   review omitted or ambiguous scheduled-selection records.
+
+## 9) Publisher source modes (`PUBLISHER_SOURCE_MODES`)
+
+Publisher discovery for scheduled dissemination supports three modes,
+implemented in `publisher_source.py` and consumed by `obtain_new_ids.py`.
+
+| Mode | Publisher authority | Publisher Services API | Effect on selected works |
+|---|---|---|---|
+| `env` | environment configuration | not queried | current behaviour |
+| `compare` | environment configuration | queried observationally | none |
+| `api` | Publisher Services assignments | authoritative, fail-closed | selection follows API assignments |
+
+### Configuration
+
+One non-secret repository-level variable, `PUBLISHER_SOURCE_MODES`, holds a
+JSON object keyed by this repository's dissemination platform names:
+
+```json
+{
+  "OAPEN": "compare",
+  "InternetArchive": "compare"
+}
+```
+
+- a missing variable, an empty variable or a missing platform key means `env`;
+- the only accepted values are the exact lower-case strings `env`, `compare`
+  and `api`;
+- malformed JSON, a non-object value, a non-string mode, an unsupported mode,
+  an unknown platform key or a wildcard/default key is a visible configuration
+  failure for the affected pathway, never a silent activation;
+- no wildcard or default key can activate a non-`env` mode;
+- `compare` and `api` are rejected for destinations with no automated
+  publisher-discovery pathway (manual-only, pull-feed and inactive).
+
+`.github/workflows/bulk_disseminate.yml` reads
+`${{ vars.PUBLISHER_SOURCE_MODES }}` centrally, so the eleven platform-specific
+callers need no per-platform configuration.
+`.github/workflows/ia_bulk_disseminate.yml` reads the same variable.
+
+The variable does not currently exist. Creating or changing it is a separate
+authorized repository-configuration action; merging this source cannot make
+`compare` or `api` active.
+
+### Platform mapping
+
+The 17 pinned upstream `DistributionPlatform` values are classified
+exhaustively, with no wildcard, `OTHER` or nearest-match fallback. An
+unrecognised upstream platform is a contract incompatibility and fails closed.
+OAPEN and DOAB are queried and reconciled as two upstream platforms but
+projected onto the single existing OAPEN/DOAB execution adapter; a
+disagreement between their publisher sets is an error, never a silent union.
+
+### API discovery
+
+Every discovery request uses `publisherCountByDistributionPlatform`, then
+pages `publishersByDistributionPlatform` with an explicit positive limit of at
+most 100 and the deterministic order `{field: PUBLISHER_ID, direction: ASC}`,
+until the result is complete. Publisher UUIDs are normalized, and the fetched
+result is reconciled against the count query. A malformed page, a duplicate or
+invalid identity, or a count mismatch fails closed. An empty publisher set is
+legitimate only when the reported count is zero and the fully consumed result
+is empty; in `api` mode that is a successful empty selection which never
+broadens to all publishers. Discovery uses only public, anonymous reads and
+needs no credential.
+
+### Comparison evidence
+
+`compare` keeps the legacy publisher set authoritative. It never changes the
+selected work IDs, the work-ID JSON on stdout or the process exit status: an
+API or reporting failure is recorded as comparison status `ERROR` through the
+report file, workflow summary and stderr only, and a failed or missing report
+is never clean comparison evidence.
+
+The canonical report is written to its own file
+(`--comparison-report <path>`), versioned
+`thoth-dissemination-publisher-comparison/1`, deterministic, sorted, free of
+timestamps and secrets, with bounded sanitized GraphQL diagnostics. Generic
+bulk dissemination publishes it as a 30-day workflow artifact plus a step
+summary; Internet Archive adds it to the existing 30-day selection diagnostics
+artifact and its own summary step. Both reporting steps are non-gating.
+
+### The OAPEN/DOAB location catch-up is unaffected
+
+`obtain_new_ids.py --platform OAPEN --locations` enters forced legacy `env`
+behaviour before any mode resolution, so it never reads
+`PUBLISHER_SOURCE_MODES` and never calls Publisher Services discovery,
+whatever OAPEN's scheduled dissemination mode is.
+
+### Rollout and rollback
+
+Activation is staged separately per pathway: `compare` first, then evidence
+review, then `api`. Rollback is a configuration change only - set the affected
+platform back to `env` or remove its entry - because `compare` creates no
+dissemination, provider, location, email, job or configuration side effect and
+cannot suppress an otherwise successful legacy selection.

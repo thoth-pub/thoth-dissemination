@@ -35,11 +35,40 @@ jobs:
       - name: Get list of work IDs using Python script
         id: get-ids
         run: |
-          output=$(python obtain_new_ids.py --platform ${{ inputs.platform }})
+          output=$(python obtain_new_ids.py --platform ${{ inputs.platform }} --comparison-report publisher-comparison.json)
           echo "NEW_IDS=$output" >> $GITHUB_OUTPUT
         env:
           ENV_PUBLISHERS: ${{ inputs.env_publishers }}
           ENV_EXCEPTIONS: ${{ inputs.env_exceptions }}
+          # Publisher-source modes are resolved centrally here, so the
+          # platform-specific callers need no change. The variable is absent
+          # unless a separately authorized activation creates it, in which
+          # case every pathway keeps legacy `env` behaviour.
+          PUBLISHER_SOURCE_MODES: ${{ vars.PUBLISHER_SOURCE_MODES }}
+
+      # Comparison evidence is observational: it is published separately from
+      # the work-ID output contract and must never suppress an otherwise
+      # successful legacy selection.
+      - name: Summarise publisher comparison
+        if: ${{ always() }}
+        continue-on-error: true
+        run: >-
+          python publisher_source.py summary
+          --platform ${{ inputs.platform }}
+          --report publisher-comparison.json
+        env:
+          PUBLISHER_SOURCE_MODES: ${{ vars.PUBLISHER_SOURCE_MODES }}
+
+      - name: Upload publisher comparison report
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: publisher-comparison-${{ inputs.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: publisher-comparison.json
+          retention-days: 30
+          if-no-files-found: ignore
+          overwrite: false
 
   bulk-disseminate:
     needs: obtain-new-ids

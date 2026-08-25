@@ -20,6 +20,7 @@ from obtain_new_ids import (
     InternetArchiveIDFinder,
     InternetArchiveSelectionError,
     MonthlyIDFinder,
+    OapenLocationsIDFinder,
     WeeklyIDFinder,
     canonical_utc_timestamp,
     get_arguments,
@@ -28,6 +29,12 @@ from obtain_new_ids import (
     main,
     max_ids_type,
     parse_api_timestamp,
+)
+from publisher_source import (
+    MODE_API,
+    MODE_COMPARE,
+    MODE_ENV,
+    resolve_source_mode,
 )
 from thothapi import (
     INTERNET_ARCHIVE_SELECTION_QUERY,
@@ -595,6 +602,7 @@ class TestExistingFinderJSONCompatibility(unittest.TestCase):
         finder.thoth_ids = ['a', 'b']
         finder.get_publishers = MagicMock()
         finder.get_query_parameters = MagicMock()
+        finder.publisher_selection_is_empty = MagicMock(return_value=False)
         finder.get_thoth_ids = MagicMock()
         finder.remove_exceptions = MagicMock()
         finder.post_process = MagicMock()
@@ -953,6 +961,443 @@ class TestOrdinaryOutputAndExitCharacterization(
 
     def test_unknown_platform_returns_one(self):
         self.assertEqual(main(['--platform', 'NotAPlatform']), 1)
+
+
+PUBLISHER_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+
+
+def publisher_discovery_stub(assignments):
+    """Stand in for the reconciled Publisher Services discovery helper."""
+    def discover(_thoth, api_platform, page_size=None):
+        return sorted(assignments[api_platform])
+    return discover
+
+
+class PublisherSourceModeTestCase(unittest.TestCase):
+    """Shared fixtures for DIS-01 publisher-source mode behaviour."""
+
+    def setUp(self):
+        self.thoth = MagicMock()
+        self.thoth.publisher.return_value = SimpleNamespace(
+            publisherId=PUBLISHER_ID)
+        self.thoth.works.return_value = []
+        self.thoth.bookIds.return_value = [SimpleNamespace(workId=WORK_ID)]
+        client = patch(
+            'obtain_new_ids.get_thoth_client', return_value=self.thoth)
+        client.start()
+        self.addCleanup(client.stop)
+        self.environment = patch.dict(os.environ, {
+            'ENV_PUBLISHERS': json.dumps([PUBLISHER_ID]),
+        }, clear=False)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        for variable in ('ENV_EXCEPTIONS', 'PUBLISHER_SOURCE_MODES'):
+            os.environ.pop(variable, None)
+
+    def patch_discovery(self, assignments=None, side_effect=None):
+        """Patch the single Publisher Services page/count reconciliation."""
+        patcher = patch(
+            'publisher_source.get_distribution_platform_publisher_ids')
+        discovery = patcher.start()
+        self.addCleanup(patcher.stop)
+        if side_effect is not None:
+            discovery.side_effect = side_effect
+        else:
+            discovery.side_effect = publisher_discovery_stub(assignments or {})
+        return discovery
+
+    def ordinary_finder(self, source_mode=MODE_ENV, platform='OAPEN', **kwargs):
+        return IDFinder(
+            platform=platform,
+            source_mode=source_mode,
+            thoth=self.thoth,
+            **kwargs,
+        )
+
+    def run_finder(self, finder):
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            finder.run()
+        return stdout.getvalue()
+
+
+class TestEnvModeCompatibility(PublisherSourceModeTestCase):
+
+    def test_env_is_the_default_for_every_pathway(self):
+        for platform in ('OAPEN', 'InternetArchive', 'Crossref'):
+            with self.subTest(platform=platform):
+                self.assertEqual(
+                    resolve_source_mode(
+                        platform, os.environ.get('PUBLISHER_SOURCE_MODES')),
+                    MODE_ENV,
+                )
+
+    def test_ordinary_env_selection_makes_no_discovery_call(self):
+        discovery = self.patch_discovery()
+        finder = self.ordinary_finder()
+        stdout = self.run_finder(finder)
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+        self.assertEqual(
+            self.thoth.bookIds.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_ID]),
+        )
+        discovery.assert_not_called()
+        self.assertIsNone(finder.comparison_report)
+
+    def test_internet_archive_env_selection_makes_no_discovery_call(self):
+        discovery = self.patch_discovery()
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth, now_provider=lambda: NOW)
+        with patch(
+                'obtain_new_ids.get_internet_archive_selection_works',
+                return_value=[selection_work()]):
+            report = finder.select()
+        self.assertEqual(report['selected_count'], 1)
+        self.assertEqual(report['publisher_ids'], [PUBLISHER_ID])
+        discovery.assert_not_called()
+
+    def test_env_mode_preserves_ordinary_exception_behaviour(self):
+        self.patch_discovery()
+        os.environ['ENV_EXCEPTIONS'] = json.dumps([WORK_ID])
+        stdout = self.run_finder(self.ordinary_finder())
+        self.assertEqual(json.loads(stdout), [])
+
+    def test_env_mode_preserves_internet_archive_exception_behaviour(self):
+        self.patch_discovery()
+        os.environ['ENV_EXCEPTIONS'] = json.dumps([WORK_ID.upper()])
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth, now_provider=lambda: NOW)
+        with patch(
+                'obtain_new_ids.get_internet_archive_selection_works',
+                return_value=[selection_work()]):
+            report = finder.select()
+        self.assertEqual(report['exception_ids'], [WORK_ID])
+        self.assertEqual(report['selected_count'], 0)
+        self.assertEqual(
+            report['excluded_counts'], {'configured_exception': 1})
+
+
+class TestCompareModeCompatibility(PublisherSourceModeTestCase):
+
+    def test_compare_reports_match_without_changing_selection(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        finder = self.ordinary_finder(MODE_COMPARE)
+        stdout = self.run_finder(finder)
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+        self.assertEqual(finder.comparison_report['status'], 'MATCH')
+        self.assertEqual(
+            self.thoth.bookIds.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_ID]),
+        )
+
+    def test_compare_reports_diff_without_changing_selection(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID, PUBLISHER_B],
+            'DOAB': [PUBLISHER_ID, PUBLISHER_B],
+        })
+        finder = self.ordinary_finder(MODE_COMPARE)
+        stdout = self.run_finder(finder)
+        report = finder.comparison_report
+        self.assertEqual(report['status'], 'DIFF')
+        self.assertEqual(report['apiOnly'], [PUBLISHER_B])
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+        # An API-only publisher is never disseminated.
+        self.assertEqual(
+            self.thoth.bookIds.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_ID]),
+        )
+
+    def test_legacy_only_publishers_remain_selected(self):
+        self.patch_discovery({'OAPEN': [], 'DOAB': []})
+        finder = self.ordinary_finder(MODE_COMPARE)
+        stdout = self.run_finder(finder)
+        self.assertEqual(finder.comparison_report['legacyOnly'],
+                         [PUBLISHER_ID])
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+
+    def test_compare_stdout_is_byte_identical_to_env(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID, PUBLISHER_B],
+            'DOAB': [PUBLISHER_ID, PUBLISHER_B],
+        })
+        os.environ['ENV_EXCEPTIONS'] = json.dumps(
+            ['22222222-2222-4222-8222-222222222222'])
+        self.thoth.bookIds.return_value = [
+            SimpleNamespace(workId=WORK_ID),
+            SimpleNamespace(workId='33333333-3333-4333-8333-333333333333'),
+            SimpleNamespace(workId='22222222-2222-4222-8222-222222222222'),
+        ]
+        env_stdout = self.run_finder(self.ordinary_finder(MODE_ENV))
+        compare_stdout = self.run_finder(self.ordinary_finder(MODE_COMPARE))
+        self.assertEqual(env_stdout, compare_stdout)
+
+    def test_discovery_failure_preserves_ids_stdout_and_exit_status(self):
+        self.patch_discovery(
+            side_effect=RuntimeError('publisher discovery unavailable'))
+        env_stdout = self.run_finder(self.ordinary_finder(MODE_ENV))
+        finder = self.ordinary_finder(MODE_COMPARE)
+        compare_stdout = self.run_finder(finder)
+        self.assertEqual(compare_stdout, env_stdout)
+        self.assertEqual(finder.thoth_ids, [WORK_ID])
+        self.assertEqual(finder.comparison_report['status'], 'ERROR')
+        self.assertEqual(
+            finder.comparison_report['contractIssues'][0]['issue'],
+            'api_discovery_failed',
+        )
+
+    def test_comparison_error_is_reported_on_stderr_not_stdout(self):
+        self.patch_discovery(side_effect=RuntimeError('unavailable'))
+        finder = self.ordinary_finder(MODE_COMPARE)
+        stdout = StringIO()
+        with redirect_stdout(stdout), self.assertLogs(level='ERROR') as logs:
+            finder.run()
+        self.assertEqual(json.loads(stdout.getvalue()), [WORK_ID])
+        self.assertIn('Publisher comparison (ERROR)', '\n'.join(logs.output))
+        self.assertNotIn('Publisher comparison', stdout.getvalue())
+
+    def test_compare_discovery_failure_still_exits_zero(self):
+        self.patch_discovery(side_effect=RuntimeError('unavailable'))
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'compare'})}):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 0)
+        self.assertEqual(stdout.getvalue(), '[]\n')
+
+    def test_unexpected_comparison_failure_is_isolated(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        with patch(
+                'obtain_new_ids.build_comparison_report',
+                side_effect=RuntimeError('comparison exploded')):
+            finder = self.ordinary_finder(MODE_COMPARE)
+            stdout = self.run_finder(finder)
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+        self.assertEqual(finder.comparison_report['status'], 'ERROR')
+        self.assertEqual(
+            finder.comparison_report['contractIssues'][0]['issue'],
+            'comparison_failed',
+        )
+
+    def test_report_write_failure_preserves_stdout_and_exit_status(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        with patch(
+                'obtain_new_ids.write_comparison_report',
+                side_effect=OSError('read-only file system')):
+            finder = self.ordinary_finder(
+                MODE_COMPARE, comparison_report_path='publisher.json')
+            with self.assertLogs(level='ERROR'):
+                stdout = self.run_finder(finder)
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+        self.assertEqual(finder.comparison_report['status'], 'MATCH')
+
+    def test_comparison_report_is_written_to_its_own_file(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'publisher-comparison.json'
+            finder = self.ordinary_finder(
+                MODE_COMPARE, comparison_report_path=str(path))
+            stdout = self.run_finder(finder)
+            written = json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(written, finder.comparison_report)
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+        self.assertNotIn('schemaVersion', stdout)
+
+    def test_compare_never_calls_a_mutation_or_uploader(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        finder = self.ordinary_finder(MODE_COMPARE)
+        self.run_finder(finder)
+        for forbidden in (
+                'mutation', 'create_location', 'update_location',
+                'replacePublisherServiceConfiguration'):
+            self.assertFalse(
+                any(forbidden in str(call)
+                    for call in self.thoth.mock_calls),
+                forbidden,
+            )
+
+    def test_internet_archive_compare_preserves_selection_and_exceptions(self):
+        self.patch_discovery({'INTERNET_ARCHIVE': [PUBLISHER_B]})
+        os.environ['ENV_EXCEPTIONS'] = json.dumps([WORK_ID])
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth, now_provider=lambda: NOW,
+            source_mode=MODE_COMPARE)
+        with patch(
+                'obtain_new_ids.get_internet_archive_selection_works',
+                return_value=[selection_work()]):
+            report = finder.select()
+        self.assertEqual(report['publisher_ids'], [PUBLISHER_ID])
+        self.assertEqual(report['exception_ids'], [WORK_ID])
+        self.assertEqual(report['selected_count'], 0)
+        self.assertEqual(finder.comparison_report['status'], 'DIFF')
+        self.assertEqual(
+            finder.comparison_report['apiOnly'], [PUBLISHER_B])
+
+    def test_internet_archive_comparison_error_keeps_selection_successful(
+            self):
+        self.patch_discovery(side_effect=RuntimeError('unavailable'))
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth, now_provider=lambda: NOW,
+            source_mode=MODE_COMPARE)
+        with patch(
+                'obtain_new_ids.get_internet_archive_selection_works',
+                return_value=[selection_work()]):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                finder.run()
+        self.assertEqual(json.loads(stdout.getvalue()), [WORK_ID])
+        # The Internet Archive selection report records no failure status.
+        self.assertNotIn('status', finder.report)
+        self.assertEqual(finder.comparison_report['status'], 'ERROR')
+
+
+class TestApiModeAuthority(PublisherSourceModeTestCase):
+
+    def test_api_mode_selects_publishers_from_the_api(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_B], 'DOAB': [PUBLISHER_B]})
+        finder = self.ordinary_finder(MODE_API)
+        stdout = self.run_finder(finder)
+        self.assertEqual(
+            self.thoth.bookIds.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_B]),
+        )
+        self.assertEqual(json.loads(stdout), [WORK_ID])
+
+    def test_api_mode_ignores_environment_publishers(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_B], 'DOAB': [PUBLISHER_B]})
+        os.environ['ENV_PUBLISHERS'] = 'not-json'
+        finder = self.ordinary_finder(MODE_API)
+        self.run_finder(finder)
+        self.assertEqual(finder.api_publisher_ids, [PUBLISHER_B])
+
+    def test_api_failure_never_falls_back_to_environment_publishers(self):
+        self.patch_discovery(side_effect=RuntimeError('unavailable'))
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 1)
+        self.thoth.bookIds.assert_not_called()
+        self.thoth.works.assert_not_called()
+
+    def test_reconciled_zero_publishers_is_a_successful_empty_selection(self):
+        self.patch_discovery({'OAPEN': [], 'DOAB': []})
+        finder = self.ordinary_finder(MODE_API)
+        stdout = self.run_finder(finder)
+        self.assertEqual(stdout, '[]\n')
+        self.assertEqual(finder.thoth_ids, [])
+        # An empty publisher filter must never reach an existing work query,
+        # where it would select every publisher's works.
+        self.thoth.bookIds.assert_not_called()
+        self.thoth.works.assert_not_called()
+
+    def test_zero_publisher_api_selection_exits_zero(self):
+        self.patch_discovery({'OAPEN': [], 'DOAB': []})
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 0)
+        self.assertEqual(stdout.getvalue(), '[]\n')
+
+    def test_linked_platform_mismatch_fails_closed_in_api_mode(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_B]})
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 1)
+        self.thoth.works.assert_not_called()
+
+    def test_internet_archive_api_zero_publishers_queries_no_works(self):
+        self.patch_discovery({'INTERNET_ARCHIVE': []})
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth, now_provider=lambda: NOW, source_mode=MODE_API)
+        with patch(
+                'obtain_new_ids.get_internet_archive_selection_works') as query:
+            report = finder.select()
+        query.assert_not_called()
+        self.assertEqual(report['selected_count'], 0)
+        self.assertEqual(report['publisher_ids'], [])
+
+    def test_internet_archive_api_failure_reports_and_exits_one(self):
+        self.patch_discovery(side_effect=RuntimeError('unavailable'))
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / 'failure.json'
+            with patch.dict(os.environ, {
+                    'PUBLISHER_SOURCE_MODES': json.dumps(
+                        {'InternetArchive': 'api'})}):
+                status = main([
+                    '--platform', 'InternetArchive',
+                    '--report', str(report_path),
+                ], now_provider=lambda: NOW, thoth=self.thoth)
+            report = json.loads(report_path.read_text(encoding='utf-8'))
+        self.assertEqual(status, 1)
+        self.assertEqual(report['status'], 'failed')
+
+    def test_configuration_failure_exits_one_without_selecting(self):
+        self.patch_discovery()
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': 'not-json'}):
+            status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 1)
+        self.thoth.works.assert_not_called()
+
+
+class TestLocationsPathwayIsolation(PublisherSourceModeTestCase):
+
+    def locations_arguments(self):
+        return get_arguments(['--platform', 'OAPEN', '--locations'])
+
+    def test_locations_always_uses_legacy_env_publisher_authority(self):
+        for mode in ('compare', 'api'):
+            with self.subTest(mode=mode), patch.dict(os.environ, {
+                    'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': mode})}):
+                finder = get_id_finder(
+                    self.locations_arguments(), thoth=self.thoth)
+                self.assertIsInstance(finder, OapenLocationsIDFinder)
+                self.assertEqual(finder.source_mode, MODE_ENV)
+
+    def test_locations_makes_zero_publisher_services_calls(self):
+        discovery = self.patch_discovery({
+            'OAPEN': [PUBLISHER_B], 'DOAB': [PUBLISHER_B]})
+        for mode in ('compare', 'api'):
+            with self.subTest(mode=mode), patch.dict(os.environ, {
+                    'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': mode})}):
+                finder = get_id_finder(
+                    self.locations_arguments(), thoth=self.thoth)
+                self.thoth.work_by_id.return_value = SimpleNamespace(
+                    workId=WORK_ID, doi=None, publications=[])
+                stdout = StringIO()
+                with redirect_stdout(stdout):
+                    finder.run()
+                self.assertEqual(stdout.getvalue(), '[]\n')
+                self.assertEqual(
+                    self.thoth.bookIds.call_args.kwargs['publishers'],
+                    json.dumps([PUBLISHER_ID]),
+                )
+        discovery.assert_not_called()
+
+    def test_locations_never_resolves_the_publisher_source_configuration(self):
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}), patch(
+                    'obtain_new_ids.resolve_source_mode') as resolve:
+            get_id_finder(self.locations_arguments(), thoth=self.thoth)
+        resolve.assert_not_called()
+
+    def test_locations_ignores_even_malformed_publisher_source_modes(self):
+        with patch.dict(os.environ, {'PUBLISHER_SOURCE_MODES': 'not-json'}):
+            finder = get_id_finder(
+                self.locations_arguments(), thoth=self.thoth)
+        self.assertIsInstance(finder, OapenLocationsIDFinder)
+        self.assertEqual(finder.source_mode, MODE_ENV)
 
 
 if __name__ == '__main__':
