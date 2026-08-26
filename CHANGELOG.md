@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.7.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.7.0) - 2026-08-26
+
+### Added
+  - Added API-backed publisher discovery for automated dissemination using Thoth Publisher Services, with per-platform `env`, `compare` and `api` publisher-source modes controlled through the `PUBLISHER_SOURCE_MODES` repository variable.
+  - Added `compare` mode for safe rollout: existing environment-configured publishers remain authoritative for dissemination while the Publisher Services API is queried observationally and deterministic comparison reports are produced without changing selected works, stdout or successful exit behaviour.
+  - Added `api` mode for eventual cutover to Publisher Services as the authoritative publisher source, with complete paginated discovery, publisher-count reconciliation, strict UUID validation, fail-closed error handling and no fallback to legacy environment configuration.
+  - Added runtime validation of the pinned Thoth distribution-platform contract, including the complete supported platform inventory and linked OAPEN/DOAB consistency checks.
+  - Added deterministic publisher-source comparison artifacts and workflow summaries with bounded, sanitized diagnostics and 30-day artifact retention.
+
+### Changed
+  - Centralised automated dissemination publisher-source selection while preserving the existing platform-specific publisher variables and legacy `ENV_PUBLISHERS` behaviour in the default `env` mode.
+  - Kept OAPEN/DOAB location catch-up, manual dissemination and non-automated platform pathways outside Publisher Services cutover so their existing publisher-selection behaviour is unchanged.
+  - Hardened Publisher Services error reporting and credential redaction so API and comparison failures cannot expose authorization headers, bearer/basic credentials or other sensitive values.
+  - Strengthened repository-local engineering controls for this external-write repository, clearly separating safe local validation from real dissemination, Thoth location write-back, email, provider mutation and release/publication actions.
+
+### Deployment
+  - `env` remains the default publisher-source mode after release. `compare` and `api` remain inactive unless `PUBLISHER_SOURCE_MODES` is separately configured, allowing comparison and cutover to be activated per dissemination pathway under the controlled rollout process.
+
 ## [[1.6.4]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.6.4) - 2026-07-28
 ### Fixed
   - Canonicalise Internet Archive managed metadata line endings (collapsing `\r\n` and bare `\r` to `\n`) consistently across desired metadata, the current-state comparison, patches, and final verification, and deduplicate repeatable values (`collection`, `creator`, `isbn`, `subject`, `language`, `issn`) that collapse to the same stored string while preserving first-occurrence order, so a value differing only by line ending (e.g. a subject supplied as both `Ancient\r\nGreek Thought` and `Ancient\nGreek Thought`) is no longer treated as a perpetual metadata discrepancy that blocks convergence
