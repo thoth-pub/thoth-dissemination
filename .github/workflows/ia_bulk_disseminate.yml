@@ -54,6 +54,13 @@ jobs:
         env:
           ENV_PUBLISHERS: ${{ vars.IA_ENV_PUBLISHERS }}
           ENV_EXCEPTIONS: ${{ vars.IA_ENV_EXCEPTIONS }}
+          # The same repository variable as generic bulk dissemination. An
+          # absent or empty variable, or one without an `InternetArchive`
+          # key, keeps legacy `env` publisher authority; the variable can also
+          # configure `compare` or `api` for this pathway. Creating or
+          # changing the repository variable is a separate activation action
+          # that this change does not perform.
+          PUBLISHER_SOURCE_MODES: ${{ vars.PUBLISHER_SOURCE_MODES }}
         run: |
           lookback_hours="${{ inputs.lookback_hours }}"
           max_works="${{ inputs.max_works }}"
@@ -70,6 +77,7 @@ jobs:
             --lookback-hours "$lookback_hours" \
             --max-ids "$max_works" \
             --report internet-archive-selection.json \
+            --comparison-report publisher-comparison.json \
             > selected-work-ids.json \
             2> >(tee internet-archive-selection.log >&2)
           status=$?
@@ -94,6 +102,7 @@ jobs:
           path: |
             internet-archive-selection.json
             internet-archive-selection.log
+            publisher-comparison.json
           retention-days: 30
           if-no-files-found: warn
           overwrite: false
@@ -105,6 +114,19 @@ jobs:
           --report internet-archive-selection.json
           --status selection-exit-status.txt
           --artifact-name "$ARTIFACT_NAME"
+
+      # Publisher comparison evidence uses its own reporting channel so that
+      # a comparison ERROR can never turn a successful legacy selection into
+      # a selection failure.
+      - name: Summarise publisher comparison
+        if: ${{ always() }}
+        continue-on-error: true
+        run: >-
+          python3 publisher_source.py summary
+          --platform InternetArchive
+          --report publisher-comparison.json
+        env:
+          PUBLISHER_SOURCE_MODES: ${{ vars.PUBLISHER_SOURCE_MODES }}
 
       - name: Preserve selection failure status
         if: ${{ always() }}

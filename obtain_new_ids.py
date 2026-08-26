@@ -22,6 +22,20 @@ import sys
 from uuid import UUID
 
 from internet_archive_policy import SUPPORTED_WORK_TYPES
+from publisher_source import (
+    MODE_API,
+    MODE_COMPARE,
+    MODE_ENV,
+    PublisherDiscoveryError,
+    PublisherSourceConfigurationError,
+    build_comparison_report,
+    comparison_report_error,
+    discover_api_publisher_ids,
+    resolve_source_mode,
+    sanitise_detail,
+    summarise_comparison,
+    write_comparison_report,
+)
 from thothapi import (
     get_internet_archive_selection_works,
     get_thoth_client,
@@ -92,15 +106,22 @@ def max_ids_type(value):
 class IDFinder():
     """Common logic for retrieving work IDs for all platforms"""
 
-    def __init__(self):
+    def __init__(self, platform=None, source_mode=MODE_ENV,
+                 comparison_report_path=None, thoth=None):
         """Set up Thoth client instance and variables for use in other methods"""
-        self.thoth = get_thoth_client()
+        self.thoth = get_thoth_client() if thoth is None else thoth
         self.thoth_ids = []
         self.work_statuses = None
         self.work_types = None
         self.publishers = None
         self.order = None
         self.updated_at_with_relations = None
+        self.platform = platform
+        self.source_mode = source_mode
+        self.comparison_report_path = comparison_report_path
+        self.comparison_report = None
+        self.legacy_publisher_ids = None
+        self.api_publisher_ids = None
 
     def run(self):
         """
@@ -109,14 +130,70 @@ class IDFinder():
         """
         self.get_publishers()
         self.get_query_parameters()
-        self.get_thoth_ids()
+        if self.publisher_selection_is_empty():
+            # A reconciled empty API assignment set is a successful no-op.
+            # An empty publisher filter must never reach an existing work
+            # query, where it would mean "every publisher".
+            self.thoth_ids = []
+        else:
+            self.get_thoth_ids()
         self.remove_exceptions()
         self.post_process()
         logging.info('List of IDs found: {}'.format(self.thoth_ids))
         print(json.dumps(self.thoth_ids, separators=(',', ':')))
 
+    def publisher_selection_is_empty(self):
+        """Whether API-authoritative discovery resolved to no publishers."""
+        return self.source_mode == MODE_API and not self.api_publisher_ids
+
     def get_publishers(self):
-        """"Retrieve IDs for all publishers whose works should be included"""
+        """Retrieve IDs for all publishers whose works should be included"""
+        if self.source_mode == MODE_API:
+            self.get_api_publishers()
+            return
+        self.get_legacy_publishers()
+        if self.source_mode == MODE_COMPARE:
+            self.compare_publishers(self.legacy_publisher_ids)
+
+    def get_api_publishers(self):
+        """Resolve publishers solely from Publisher Services assignments"""
+        # Fails closed: there is deliberately no ENV_PUBLISHERS fallback.
+        self.api_publisher_ids = discover_api_publisher_ids(
+            self.thoth, self.platform)
+        self.publishers = json.dumps(self.api_publisher_ids)
+
+    def compare_publishers(self, legacy_publisher_ids):
+        """
+        Compare the authoritative legacy publisher set against Publisher
+        Services observationally.
+
+        The legacy selection has already succeeded when this runs. No failure
+        here may alter the selected works, contaminate the work-ID stdout
+        contract or change the process exit status.
+        """
+        try:
+            report = build_comparison_report(
+                self.thoth, self.platform, legacy_publisher_ids)
+        except Exception as error:
+            report = comparison_report_error(self.platform, error)
+        self.comparison_report = report
+
+        if self.comparison_report_path:
+            try:
+                write_comparison_report(self.comparison_report_path, report)
+            except Exception as error:
+                logging.error(
+                    'Unable to write the publisher comparison report: %s: %s',
+                    type(error).__name__, sanitise_detail(error))
+        # Comparison evidence never reaches stdout, which remains the
+        # work-ID contract, and an ERROR here never fails the selection.
+        log = (
+            logging.error if report['status'] == 'ERROR' else logging.info)
+        log('Publisher comparison (%s):\n%s',
+            report['status'], summarise_comparison(report))
+
+    def get_legacy_publishers(self):
+        """Retrieve IDs for all publishers configured in the environment"""
         # Check that a list of IDs of publishers whose works should be uploaded
         # has been provided as a JSON-formatted environment variable
         try:
@@ -144,6 +221,7 @@ class IDFinder():
                     publisher))
                 sys.exit(1)
 
+        self.legacy_publisher_ids = publishers_env
         self.publishers = json.dumps(publishers_env)
 
     def get_query_parameters(self):
@@ -268,12 +346,14 @@ class InternetArchiveIDFinder(IDFinder):
     def __init__(
             self, lookback_hours=DEFAULT_IA_LOOKBACK_HOURS,
             max_ids=DEFAULT_IA_MAX_IDS, report_path=None, now_provider=None,
-            thoth=None):
-        if thoth is None:
-            super().__init__()
-        else:
-            self.thoth = thoth
-            self.thoth_ids = []
+            thoth=None, platform='InternetArchive', source_mode=MODE_ENV,
+            comparison_report_path=None):
+        super().__init__(
+            platform=platform,
+            source_mode=source_mode,
+            comparison_report_path=comparison_report_path,
+            thoth=thoth,
+        )
         self.lookback_hours = lookback_hours
         self.max_ids = max_ids
         self.report_path = Path(report_path) if report_path else None
@@ -317,6 +397,13 @@ class InternetArchiveIDFinder(IDFinder):
 
     def get_publishers(self):
         """Validate, normalise and confirm every configured publisher."""
+        if self.source_mode == MODE_API:
+            # Fails closed: there is no ENV_PUBLISHERS fallback.
+            self.publisher_ids = discover_api_publisher_ids(
+                self.thoth, self.platform)
+            self.api_publisher_ids = self.publisher_ids
+            return
+
         self.publisher_ids = self._normalise_uuid_list(
             environ.get('ENV_PUBLISHERS'), 'ENV_PUBLISHERS', required=True)
         for publisher_id in self.publisher_ids:
@@ -330,6 +417,9 @@ class InternetArchiveIDFinder(IDFinder):
             if publisher is None:
                 raise InternetArchiveSelectionError(
                     'Publisher {} was not found'.format(publisher_id))
+        self.legacy_publisher_ids = list(self.publisher_ids)
+        if self.source_mode == MODE_COMPARE:
+            self.compare_publishers(self.legacy_publisher_ids)
 
     def get_exceptions(self):
         """Validate and normalise the optional configured work exceptions."""
@@ -436,7 +526,8 @@ class InternetArchiveIDFinder(IDFinder):
             self.window_start = self.window_end - timedelta(
                 hours=self.lookback_hours)
         report = self._base_report(self.window_end)
-        report['error'] = '{}: {}'.format(type(error).__name__, str(error))
+        report['error'] = sanitise_detail(
+            '{}: {}'.format(type(error).__name__, error))
         report['status'] = 'failed'
         self.report = report
         self._write_report(report)
@@ -454,13 +545,18 @@ class InternetArchiveIDFinder(IDFinder):
         self.get_publishers()
         self.get_exceptions()
         report = self._base_report(self.window_end)
-        works = get_internet_archive_selection_works(
-            self.thoth,
-            self.publisher_ids,
-            SUPPORTED_WORK_TYPES,
-            canonical_utc_timestamp(self.window_start),
-            page_size=IA_QUERY_PAGE_SIZE,
-        )
+        if self.publisher_selection_is_empty():
+            # A reconciled empty API assignment set selects nothing; an empty
+            # publisher filter must never reach the selection query.
+            works = []
+        else:
+            works = get_internet_archive_selection_works(
+                self.thoth,
+                self.publisher_ids,
+                SUPPORTED_WORK_TYPES,
+                canonical_utc_timestamp(self.window_start),
+                page_size=IA_QUERY_PAGE_SIZE,
+            )
         report['queried_count'] = len(works)
 
         newest_by_work_id = {}
@@ -740,6 +836,13 @@ def get_arguments(argv=None):
         '--report',
         help='write the Internet Archive selection report to this path',
     )
+    parser.add_argument(
+        '--comparison-report',
+        help=(
+            'write the compare-mode publisher comparison report to this '
+            'path (never written to stdout)'
+        ),
+    )
     args = parser.parse_args(argv)
     return args
 
@@ -748,10 +851,20 @@ def get_id_finder(args, now_provider=None, thoth=None):
     """Map parsed CLI arguments to the platform-specific finder."""
     platform = args.platform
     if args.locations:
+        # The OAPEN/DOAB location catch-up is a Thoth write-back pathway, not
+        # scheduled dissemination publisher discovery. It always retains
+        # legacy env publisher authority: PUBLISHER_SOURCE_MODES is not
+        # resolved and no Publisher Services discovery call is made.
         if platform == 'OAPEN':
-            return OapenLocationsIDFinder()
+            return OapenLocationsIDFinder(
+                platform=platform, source_mode=MODE_ENV, thoth=thoth)
         raise InternetArchiveSelectionError(
             'Locations option is only supported for OAPEN')
+
+    source_mode = resolve_source_mode(
+        platform, environ.get('PUBLISHER_SOURCE_MODES'))
+    comparison_report_path = (
+        args.comparison_report if source_mode == MODE_COMPARE else None)
 
     finder_classes = {
         'Crossref': CrossrefIDFinder,
@@ -773,6 +886,9 @@ def get_id_finder(args, now_provider=None, thoth=None):
             report_path=args.report,
             now_provider=now_provider,
             thoth=thoth,
+            platform=platform,
+            source_mode=source_mode,
+            comparison_report_path=comparison_report_path,
         )
     finder_class = finder_classes.get(platform)
     if finder_class is None:
@@ -780,7 +896,12 @@ def get_id_finder(args, now_provider=None, thoth=None):
             'Platform must be one of InternetArchive, Crossref, Figshare, '
             'Zenodo, CUL, GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, '
             'ProjectMUSE or ProQuest')
-    return finder_class()
+    return finder_class(
+        platform=platform,
+        source_mode=source_mode,
+        comparison_report_path=comparison_report_path,
+        thoth=thoth,
+    )
 
 
 def main(argv=None, now_provider=None, thoth=None):
@@ -799,6 +920,21 @@ def main(argv=None, now_provider=None, thoth=None):
                     'Unable to write Internet Archive failure report: %s',
                     report_error)
         logging.error('%s', error)
+        return 1
+    except (PublisherSourceConfigurationError,
+            PublisherDiscoveryError) as error:
+        # Publisher-source configuration and API-authoritative discovery both
+        # fail closed: no legacy fallback and no broadened selection.
+        if isinstance(finder, InternetArchiveIDFinder):
+            try:
+                finder.write_failure_report(error)
+            except Exception as report_error:
+                logging.error(
+                    'Unable to write Internet Archive failure report: %s',
+                    report_error)
+        logging.error(
+            'Publisher source resolution failed: %s: %s',
+            type(error).__name__, sanitise_detail(error))
         return 1
     except Exception as error:
         if isinstance(finder, InternetArchiveIDFinder):
