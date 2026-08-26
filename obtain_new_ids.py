@@ -32,6 +32,7 @@ from publisher_source import (
     comparison_report_error,
     discover_api_publisher_ids,
     resolve_source_mode,
+    sanitise_detail,
     summarise_comparison,
     write_comparison_report,
 )
@@ -183,7 +184,7 @@ class IDFinder():
             except Exception as error:
                 logging.error(
                     'Unable to write the publisher comparison report: %s: %s',
-                    type(error).__name__, error)
+                    type(error).__name__, sanitise_detail(error))
         # Comparison evidence never reaches stdout, which remains the
         # work-ID contract, and an ERROR here never fails the selection.
         log = (
@@ -525,7 +526,8 @@ class InternetArchiveIDFinder(IDFinder):
             self.window_start = self.window_end - timedelta(
                 hours=self.lookback_hours)
         report = self._base_report(self.window_end)
-        report['error'] = '{}: {}'.format(type(error).__name__, str(error))
+        report['error'] = sanitise_detail(
+            '{}: {}'.format(type(error).__name__, error))
         report['status'] = 'failed'
         self.report = report
         self._write_report(report)
@@ -932,7 +934,7 @@ def main(argv=None, now_provider=None, thoth=None):
                     report_error)
         logging.error(
             'Publisher source resolution failed: %s: %s',
-            type(error).__name__, error)
+            type(error).__name__, sanitise_detail(error))
         return 1
     except Exception as error:
         if isinstance(finder, InternetArchiveIDFinder):

@@ -32,6 +32,7 @@ import sys
 
 from thothapi import (
     DISTRIBUTION_PLATFORM_PAGE_SIZE,
+    get_distribution_platform_options,
     get_distribution_platform_publisher_ids,
 )
 
@@ -68,8 +69,23 @@ AUTOMATED_CLASSIFICATIONS = (
 
 LINKED_GROUP_OAPEN_DOAB = 'OAPEN_DOAB'
 
+# Pinned `BackCatalogueBehaviour` values.
+BACK_CATALOGUE_AUTOMATIC_PUSH = 'AUTOMATIC_PUSH'
+BACK_CATALOGUE_PULL_FEED = 'PULL_FEED'
+BACK_CATALOGUE_MANUAL = 'MANUAL'
+
+# The exact `distributionPlatformOptions` fields DIS-01 consumes.
+PLATFORM_OPTION_FIELDS = (
+    'platform',
+    'displayLabel',
+    'linkedGroup',
+    'backCatalogueBehaviour',
+    'assignable',
+)
+
 DETAIL_LENGTH_LIMIT = 300
 SUMMARY_PUBLISHER_LIMIT = 10
+PLATFORM_OPTION_ISSUE_SUMMARY_LIMIT = 3
 
 
 class PublisherSourceConfigurationError(RuntimeError):
@@ -89,16 +105,52 @@ class LinkedPlatformMismatchError(PublisherDiscoveryError):
         self.differing_publisher_ids = tuple(differing_publisher_ids)
 
 
+class PlatformOptionContractError(PublisherDiscoveryError):
+    """The running platform-option contract is incompatible with the pin."""
+
+    def __init__(self, issues):
+        issues = list(issues)
+        # Details are already sanitised; the message stays bounded and states
+        # the failure class rather than the whole response.
+        shown = [
+            '{}: {}'.format(issue['issue'], issue['detail'])
+            for issue in issues[:PLATFORM_OPTION_ISSUE_SUMMARY_LIMIT]
+        ]
+        remainder = len(issues) - len(shown)
+        if remainder > 0:
+            shown.append('(+{} more)'.format(remainder))
+        super().__init__(
+            'Publisher Services platform-option contract is incompatible '
+            'with the pinned Thoth v1.7.0 contract: {}'.format(
+                '; '.join(shown)))
+        self.issues = issues
+
+
 class _Destination:
-    """One pinned upstream platform and how this repository serves it."""
+    """
+    One pinned upstream platform, its pinned public descriptor, and how this
+    repository serves it.
+
+    `classification` and `dissemination_platform` are this repository's local
+    execution mapping. `display_label`, `linked_group`,
+    `back_catalogue_behaviour` and `assignable` are the pinned upstream
+    descriptor that the running API is validated against. The two are
+    deliberately independent: an execution mapping is never inferred from a
+    display label.
+    """
 
     def __init__(
             self, api_platform, classification, dissemination_platform=None,
-            linked_group=None):
+            linked_group=None, display_label=None,
+            back_catalogue_behaviour=BACK_CATALOGUE_AUTOMATIC_PUSH,
+            assignable=True):
         self.api_platform = api_platform
         self.classification = classification
         self.dissemination_platform = dissemination_platform
         self.linked_group = linked_group
+        self.display_label = display_label
+        self.back_catalogue_behaviour = back_catalogue_behaviour
+        self.assignable = assignable
 
     @property
     def supports_publisher_discovery(self):
@@ -109,36 +161,68 @@ class _Destination:
 
 
 # Exhaustive classification of the 17 pinned `DistributionPlatform` values of
-# thoth-pub/thoth v1.7.0 (commit 40e9c06d4ab76217c3ef277dd539d3b5580e2bb8).
-# The order is the canonical upstream declaration order. There is deliberately
-# no wildcard, `OTHER` or nearest-match entry: an upstream platform absent from
-# this table is a contract incompatibility and fails closed.
+# thoth-pub/thoth v1.7.0 (commit 40e9c06d4ab76217c3ef277dd539d3b5580e2bb8),
+# together with the pinned `distributionPlatformOptions` descriptor of each.
+# The order is the canonical upstream declaration order, which the upstream
+# inventory declares binding for `distributionPlatformOptions`. There is
+# deliberately no wildcard, `OTHER` or nearest-match entry: an upstream
+# platform absent from this table is a contract incompatibility and fails
+# closed.
 DESTINATIONS = (
     _Destination(
-        'INTERNET_ARCHIVE', CLASSIFICATION_UPLOADER, 'InternetArchive'),
+        'INTERNET_ARCHIVE', CLASSIFICATION_UPLOADER, 'InternetArchive',
+        display_label='Internet Archive'),
     _Destination(
         'OAPEN', CLASSIFICATION_SHARED_ADAPTER, 'OAPEN',
-        LINKED_GROUP_OAPEN_DOAB),
+        LINKED_GROUP_OAPEN_DOAB, display_label='OAPEN'),
     # DOAB shares the single OAPEN/DOAB execution adapter and is never a
     # second upload, so it has no dissemination platform of its own.
     _Destination(
-        'DOAB', CLASSIFICATION_SHARED_ADAPTER, None, LINKED_GROUP_OAPEN_DOAB),
-    _Destination('SCIENCE_OPEN', CLASSIFICATION_MANUAL, 'ScienceOpen'),
+        'DOAB', CLASSIFICATION_SHARED_ADAPTER, None, LINKED_GROUP_OAPEN_DOAB,
+        display_label='DOAB'),
     _Destination(
-        'CAMBRIDGE_UNIVERSITY_LIBRARY', CLASSIFICATION_UPLOADER, 'CUL'),
-    _Destination('CROSSREF', CLASSIFICATION_UPLOADER, 'Crossref'),
-    _Destination('FIGSHARE', CLASSIFICATION_UPLOADER, 'Figshare'),
-    _Destination('ZENODO', CLASSIFICATION_UPLOADER, 'Zenodo'),
-    _Destination('PROJECT_MUSE', CLASSIFICATION_UPLOADER, 'ProjectMUSE'),
-    _Destination('JSTOR', CLASSIFICATION_UPLOADER, 'JSTOR'),
-    _Destination('EBSCO_HOST', CLASSIFICATION_UPLOADER, 'EBSCOHost'),
+        'SCIENCE_OPEN', CLASSIFICATION_MANUAL, 'ScienceOpen',
+        display_label='ScienceOpen',
+        back_catalogue_behaviour=BACK_CATALOGUE_MANUAL),
     _Destination(
-        'PROQUEST_EBOOK_CENTRAL', CLASSIFICATION_UPLOADER, 'ProQuest'),
-    _Destination('GOOGLE_PLAY', CLASSIFICATION_UPLOADER, 'GooglePlay'),
-    _Destination('BKCI', CLASSIFICATION_UPLOADER, 'BKCI'),
-    _Destination('OCLC_KB', CLASSIFICATION_PULL_FEED),
-    _Destination('EX_LIBRIS_KB', CLASSIFICATION_PULL_FEED),
-    _Destination('JISC_NBK', CLASSIFICATION_INACTIVE),
+        'CAMBRIDGE_UNIVERSITY_LIBRARY', CLASSIFICATION_UPLOADER, 'CUL',
+        display_label='Cambridge University Library'),
+    _Destination(
+        'CROSSREF', CLASSIFICATION_UPLOADER, 'Crossref',
+        display_label='Crossref'),
+    _Destination(
+        'FIGSHARE', CLASSIFICATION_UPLOADER, 'Figshare',
+        display_label='Figshare'),
+    _Destination(
+        'ZENODO', CLASSIFICATION_UPLOADER, 'Zenodo', display_label='Zenodo'),
+    _Destination(
+        'PROJECT_MUSE', CLASSIFICATION_UPLOADER, 'ProjectMUSE',
+        display_label='Project MUSE'),
+    _Destination(
+        'JSTOR', CLASSIFICATION_UPLOADER, 'JSTOR', display_label='JSTOR'),
+    _Destination(
+        'EBSCO_HOST', CLASSIFICATION_UPLOADER, 'EBSCOHost',
+        display_label='EBSCOHost'),
+    _Destination(
+        'PROQUEST_EBOOK_CENTRAL', CLASSIFICATION_UPLOADER, 'ProQuest',
+        display_label='ProQuest Ebook Central'),
+    _Destination(
+        'GOOGLE_PLAY', CLASSIFICATION_UPLOADER, 'GooglePlay',
+        display_label='Google Play Books'),
+    _Destination(
+        'BKCI', CLASSIFICATION_UPLOADER, 'BKCI',
+        display_label='Book Citation Index'),
+    _Destination(
+        'OCLC_KB', CLASSIFICATION_PULL_FEED,
+        display_label='OCLC Knowledge Base',
+        back_catalogue_behaviour=BACK_CATALOGUE_PULL_FEED),
+    _Destination(
+        'EX_LIBRIS_KB', CLASSIFICATION_PULL_FEED,
+        display_label='Ex Libris Knowledge Base',
+        back_catalogue_behaviour=BACK_CATALOGUE_PULL_FEED),
+    _Destination(
+        'JISC_NBK', CLASSIFICATION_INACTIVE, display_label='Jisc NBK',
+        assignable=False),
 )
 
 DESTINATIONS_BY_API_PLATFORM = {
@@ -167,17 +251,43 @@ _UUID_PATTERN = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 _USERINFO_PATTERN = re.compile(r'://[^/\s@]+@')
+
+# A credential may be introduced by `:` or `=`, may be quoted, and may be
+# preceded by an authentication scheme word. The scheme is consumed together
+# with the credential that follows it, so that `Authorization: Bearer <value>`
+# cannot redact only the word `Bearer`.
+_SEPARATOR = r'["\']?\s*[=:]\s*["\']?'
+_SCHEME = r'(?:bearer|basic|digest|token|apikey|api[_-]key)\b[ \t]*'
+_VALUE = r'[^\s"\']*'
+
+_AUTHORIZATION_PATTERN = re.compile(
+    r'(?i)(authorization)' + _SEPARATOR + r'(?:' + _SCHEME + r')?' + _VALUE)
 _CREDENTIAL_PATTERN = re.compile(
-    r'(?i)(token|secret|password|passwd|api[_-]?key|access[_-]?key|'
-    r'authorization)\s*[=:]\s*\S+')
+    r'(?i)(token|secret|password|passwd|api[_-]?key|access[_-]?key)'
+    + _SEPARATOR + r'(?:' + _SCHEME + r')?' + _VALUE)
+# A bare scheme/credential pair that reached a diagnostic without its header
+# name is redacted too, rather than only the forms seen so far.
+_BEARER_PATTERN = re.compile(r'(?i)\b(bearer)\s+[^\s"\']+')
+
+
+def _redacted(match):
+    return '{}=[redacted]'.format(match.group(1))
 
 
 def sanitise_detail(value, limit=DETAIL_LENGTH_LIMIT):
-    """Reduce a diagnostic to bounded, single-line, non-sensitive text."""
-    text = _USERINFO_PATTERN.sub('://[redacted]@', str(value))
-    text = _CREDENTIAL_PATTERN.sub(
-        lambda match: '{}=[redacted]'.format(match.group(1)), text)
-    text = ' '.join(text.split())
+    """
+    Reduce a diagnostic to bounded, single-line, non-sensitive text.
+
+    Whitespace is collapsed before redaction so that a credential wrapped
+    across lines cannot evade it, and every recognised form is redacted whole:
+    the scheme word and the credential after it are removed together. What
+    survives identifies the failure class, never the secret.
+    """
+    text = ' '.join(str(value).split())
+    text = _USERINFO_PATTERN.sub('://[redacted]@', text)
+    text = _AUTHORIZATION_PATTERN.sub(_redacted, text)
+    text = _CREDENTIAL_PATTERN.sub(_redacted, text)
+    text = _BEARER_PATTERN.sub(_redacted, text)
     if len(text) > limit:
         text = text[:limit] + '...(truncated)'
     return text
@@ -190,6 +300,161 @@ def destination_for_api_platform(api_platform):
         raise PublisherSourceConfigurationError(
             'Unknown distribution platform {}'.format(api_platform))
     return destination
+
+
+def expected_platform_options():
+    """
+    Return the pinned v1.7.0 `distributionPlatformOptions` contract.
+
+    The rows are in the canonical upstream declaration order, which that
+    contract declares binding.
+    """
+    return [
+        {
+            'platform': destination.api_platform,
+            'displayLabel': destination.display_label,
+            'linkedGroup': destination.linked_group,
+            'backCatalogueBehaviour': destination.back_catalogue_behaviour,
+            'assignable': destination.assignable,
+        }
+        for destination in DESTINATIONS
+    ]
+
+
+def _platform_option_issue(issue, platform, detail):
+    return {
+        'issue': issue,
+        'platform': platform,
+        'detail': sanitise_detail(detail),
+    }
+
+
+def _platform_option_descriptor_issues(platform, option, pinned):
+    """Compare one usable option row against its pinned descriptor."""
+    issues = []
+    for field, issue in (
+            ('displayLabel', 'platform_option_display_label_mismatch'),
+            ('linkedGroup', 'platform_option_linked_group_mismatch'),
+            ('backCatalogueBehaviour',
+             'platform_option_back_catalogue_behaviour_mismatch'),
+            ('assignable', 'platform_option_assignable_mismatch')):
+        # `assignable` is compared by identity so that a non-boolean value is
+        # drift rather than a truthy match.
+        actual = option[field]
+        expected = pinned[field]
+        differs = (
+            actual is not expected if field == 'assignable'
+            else actual != expected)
+        if differs:
+            issues.append(_platform_option_issue(
+                issue, platform,
+                '{} was {!r}, pinned contract expects {!r}'.format(
+                    field, actual, expected)))
+    return issues
+
+
+def validate_platform_options(options):
+    """
+    Validate one live `distributionPlatformOptions` response against the
+    pinned v1.7.0 contract and return deterministic contract issues.
+
+    An empty result means the running API is compatible. The check covers
+    structural usability, the exact platform inventory, duplicates, unknown
+    platforms, canonical ordering and every pinned descriptor value. It is
+    independent of this repository's local dissemination execution mapping and
+    never replaces it: no execution behaviour is inferred from a display
+    label.
+    """
+    if not isinstance(options, list):
+        return [_platform_option_issue(
+            'platform_option_response_malformed', None,
+            'distributionPlatformOptions was not a list')]
+
+    pinned = {
+        option['platform']: option for option in expected_platform_options()}
+    seen = {}
+    received_order = []
+    issues = []
+    inventory_is_exact = True
+
+    for index, option in enumerate(options):
+        if not isinstance(option, dict):
+            issues.append(_platform_option_issue(
+                'platform_option_malformed', None,
+                'option {} was not an object'.format(index)))
+            inventory_is_exact = False
+            continue
+        platform = option.get('platform')
+        if not isinstance(platform, str) or not platform:
+            issues.append(_platform_option_issue(
+                'platform_option_malformed', None,
+                'option {} carried no usable platform value'.format(index)))
+            inventory_is_exact = False
+            continue
+        received_order.append(platform)
+        if platform in seen:
+            issues.append(_platform_option_issue(
+                'platform_option_duplicate_platform', platform,
+                'platform was returned more than once'))
+            inventory_is_exact = False
+            continue
+        seen[platform] = option
+        if platform not in pinned:
+            issues.append(_platform_option_issue(
+                'platform_option_unknown_platform', platform,
+                'platform is absent from the pinned contract'))
+            inventory_is_exact = False
+            continue
+        missing_fields = [
+            field for field in PLATFORM_OPTION_FIELDS if field not in option]
+        if missing_fields:
+            issues.append(_platform_option_issue(
+                'platform_option_field_missing', platform,
+                'option omitted {}'.format(', '.join(missing_fields))))
+            inventory_is_exact = False
+            continue
+        issues.extend(_platform_option_descriptor_issues(
+            platform, option, pinned[platform]))
+
+    for platform in pinned:
+        if platform not in seen:
+            issues.append(_platform_option_issue(
+                'platform_option_missing_platform', platform,
+                'pinned platform was not returned'))
+            inventory_is_exact = False
+
+    # Ordering is only meaningful once the inventory itself is exact;
+    # reporting it alongside a missing or unknown platform would be noise.
+    if inventory_is_exact and received_order != list(pinned):
+        issues.append(_platform_option_issue(
+            'platform_option_order_mismatch', None,
+            'platform order was {}, pinned contract expects {}'.format(
+                ', '.join(received_order), ', '.join(pinned))))
+
+    return sorted(issues, key=lambda issue: json.dumps(issue, sort_keys=True))
+
+
+def validate_platform_option_contract(thoth):
+    """
+    Read and validate the running platform-option contract.
+
+    A query or transport failure is itself a contract issue: an unreadable
+    descriptor surface is never treated as a compatible one.
+    """
+    try:
+        options = get_distribution_platform_options(thoth)
+    except Exception as error:
+        return [_platform_option_issue(
+            'platform_option_query_failed', None,
+            '{}: {}'.format(type(error).__name__, error))]
+    return validate_platform_options(options)
+
+
+def require_platform_option_contract(thoth):
+    """Fail closed unless the running platform-option contract is compatible."""
+    issues = validate_platform_option_contract(thoth)
+    if issues:
+        raise PlatformOptionContractError(issues)
 
 
 def api_platforms_for(dissemination_platform):
@@ -358,7 +623,15 @@ def reconcile_linked_publisher_sets(dissemination_platform, publisher_sets):
 def discover_api_publisher_ids(
         thoth, dissemination_platform,
         page_size=DISTRIBUTION_PLATFORM_PAGE_SIZE):
-    """Return the authoritative API publisher set for one platform."""
+    """
+    Return the authoritative API publisher set for one platform.
+
+    The running platform-option contract is validated first, so an
+    incompatible API fails closed before any work selection happens. There is
+    no legacy fallback: the caller either receives a reconciled publisher set
+    or an error.
+    """
+    require_platform_option_contract(thoth)
     publisher_sets = discover_platform_publisher_sets(
         thoth, dissemination_platform, page_size=page_size)
     return reconcile_linked_publisher_sets(
@@ -392,6 +665,7 @@ def _empty_comparison_report(mode, dissemination_platform):
         'apiPlatforms': [],
         'destinationClassifications': {},
         'apiPlatformPublisherCounts': {},
+        'platformContractValidated': False,
         'legacyPublisherIds': [],
         'apiPublisherIds': [],
         'legacyOnly': [],
@@ -447,6 +721,15 @@ def build_comparison_report(
 
     api_publisher_ids = []
     if api_platforms:
+        # The running platform-option contract is validated before any
+        # Publisher Services assignment is treated as usable comparison
+        # evidence, so an incompatible descriptor surface can never be
+        # reported as a reconciled MATCH.
+        option_issues = validate_platform_option_contract(thoth)
+        contract_issues.extend(option_issues)
+        report['platformContractValidated'] = not option_issues
+
+    if api_platforms and report['platformContractValidated']:
         publisher_sets = {}
         try:
             publisher_sets = discover_platform_publisher_sets(
@@ -527,6 +810,9 @@ def summarise_comparison(report):
         '- Mode: `{}`'.format(report.get('mode')),
         '- API platforms: `{}`'.format(
             ', '.join(report.get('apiPlatforms') or []) or 'none'),
+        '- Platform-option contract: `{}`'.format(
+            'validated' if report.get('platformContractValidated')
+            else 'not validated'),
         '- Legacy publishers: `{}`'.format(
             len(report.get('legacyPublisherIds') or [])),
         '- API publishers: `{}`'.format(

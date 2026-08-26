@@ -41,9 +41,11 @@ jobs:
           ENV_PUBLISHERS: ${{ inputs.env_publishers }}
           ENV_EXCEPTIONS: ${{ inputs.env_exceptions }}
           # Publisher-source modes are resolved centrally here, so the
-          # platform-specific callers need no change. The variable is absent
-          # unless a separately authorized activation creates it, in which
-          # case every pathway keeps legacy `env` behaviour.
+          # platform-specific callers need no change. An absent or empty
+          # variable, or one without this platform's key, keeps legacy `env`
+          # publisher authority; the variable can also configure `compare` or
+          # `api` for a platform. Creating or changing the repository variable
+          # is a separate activation action that this change does not perform.
           PUBLISHER_SOURCE_MODES: ${{ vars.PUBLISHER_SOURCE_MODES }}
 
       # Comparison evidence is observational: it is published separately from

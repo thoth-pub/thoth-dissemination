@@ -15,13 +15,16 @@ from publisher_source import (
     MODE_API,
     MODE_COMPARE,
     MODE_ENV,
+    PLATFORM_OPTION_FIELDS,
     LinkedPlatformMismatchError,
+    PlatformOptionContractError,
     PublisherDiscoveryError,
     PublisherSourceConfigurationError,
     api_platforms_for,
     build_comparison_report,
     comparison_report_error,
     discover_api_publisher_ids,
+    expected_platform_options,
     main,
     parse_source_modes,
     resolve_source_mode,
@@ -29,14 +32,18 @@ from publisher_source import (
     serialise_comparison_report,
     summarise_comparison,
     supports_publisher_discovery,
+    validate_platform_option_contract,
+    validate_platform_options,
     write_comparison_report,
 )
 from thothapi import (
+    DISTRIBUTION_PLATFORM_OPTIONS_QUERY,
     DISTRIBUTION_PLATFORM_PUBLISHERS_QUERY,
     DISTRIBUTION_PLATFORM_PUBLISHER_COUNT_QUERY,
     ThothGraphQLResponseError,
     ThothGraphQLTransportError,
     ThothPublisherDiscoveryError,
+    get_distribution_platform_options,
     get_distribution_platform_publisher_ids,
 )
 
@@ -70,6 +77,74 @@ PINNED_DISTRIBUTION_PLATFORMS = (
     'JISC_NBK',
 )
 
+# The pinned v1.7.0 `distributionPlatformOptions` contract, transcribed
+# independently of `publisher_source` from the pinned upstream descriptors in
+# `thoth-api/src/model/publisher_distribution_platform/mod.rs`, in the
+# canonical declaration order that upstream declares binding.
+PINNED_PLATFORM_OPTIONS = (
+    ('INTERNET_ARCHIVE', 'Internet Archive', None, 'AUTOMATIC_PUSH', True),
+    ('OAPEN', 'OAPEN', 'OAPEN_DOAB', 'AUTOMATIC_PUSH', True),
+    ('DOAB', 'DOAB', 'OAPEN_DOAB', 'AUTOMATIC_PUSH', True),
+    ('SCIENCE_OPEN', 'ScienceOpen', None, 'MANUAL', True),
+    ('CAMBRIDGE_UNIVERSITY_LIBRARY', 'Cambridge University Library', None,
+     'AUTOMATIC_PUSH', True),
+    ('CROSSREF', 'Crossref', None, 'AUTOMATIC_PUSH', True),
+    ('FIGSHARE', 'Figshare', None, 'AUTOMATIC_PUSH', True),
+    ('ZENODO', 'Zenodo', None, 'AUTOMATIC_PUSH', True),
+    ('PROJECT_MUSE', 'Project MUSE', None, 'AUTOMATIC_PUSH', True),
+    ('JSTOR', 'JSTOR', None, 'AUTOMATIC_PUSH', True),
+    ('EBSCO_HOST', 'EBSCOHost', None, 'AUTOMATIC_PUSH', True),
+    ('PROQUEST_EBOOK_CENTRAL', 'ProQuest Ebook Central', None,
+     'AUTOMATIC_PUSH', True),
+    ('GOOGLE_PLAY', 'Google Play Books', None, 'AUTOMATIC_PUSH', True),
+    ('BKCI', 'Book Citation Index', None, 'AUTOMATIC_PUSH', True),
+    ('OCLC_KB', 'OCLC Knowledge Base', None, 'PULL_FEED', True),
+    ('EX_LIBRIS_KB', 'Ex Libris Knowledge Base', None, 'PULL_FEED', True),
+    ('JISC_NBK', 'Jisc NBK', None, 'AUTOMATIC_PUSH', False),
+)
+
+
+def pinned_options():
+    """Render the pinned contract as a live-shaped API response."""
+    return [
+        {
+            'platform': platform,
+            'displayLabel': display_label,
+            'linkedGroup': linked_group,
+            'backCatalogueBehaviour': behaviour,
+            'assignable': assignable,
+        }
+        for platform, display_label, linked_group, behaviour, assignable
+        in PINNED_PLATFORM_OPTIONS
+    ]
+
+
+def options_with(platform=None, **changes):
+    """Return the pinned options with one platform's row altered."""
+    options = pinned_options()
+    if platform is not None:
+        for option in options:
+            if option['platform'] == platform:
+                option.update(changes)
+    return options
+
+
+def options_response(options):
+    return {'data': {'distributionPlatformOptions': options}}
+
+
+def publisher_query_failure_client(error):
+    """A stub with a compatible option contract but failing discovery."""
+    thoth = MagicMock()
+
+    def execute(query, variables):
+        if query == DISTRIBUTION_PLATFORM_OPTIONS_QUERY:
+            return options_response(pinned_options())
+        raise error
+
+    thoth.client.execute.side_effect = execute
+    return thoth
+
 
 def load_yaml(path):
     """Parse workflow YAML semantically using Ruby's standard YAML parser."""
@@ -101,11 +176,17 @@ def count_page(count):
     return {'data': {'publisherCountByDistributionPlatform': count}}
 
 
-def discovery_client(assignments, page_size=100):
-    """A Thoth stub answering count and page queries per platform."""
+def discovery_client(assignments, page_size=100, options=None,
+                     options_error=None):
+    """A Thoth stub answering option, count and page queries."""
     thoth = MagicMock()
 
     def execute(query, variables):
+        if query == DISTRIBUTION_PLATFORM_OPTIONS_QUERY:
+            if options_error is not None:
+                raise options_error
+            return options_response(
+                pinned_options() if options is None else options)
         platform = variables['platform']
         publisher_ids = sorted(assignments.get(platform, []))
         if query == DISTRIBUTION_PLATFORM_PUBLISHER_COUNT_QUERY:
@@ -465,6 +546,7 @@ class TestLinkedPlatformReconciliation(unittest.TestCase):
         platforms = {
             call.args[1]['platform']
             for call in thoth.client.execute.call_args_list
+            if 'platform' in call.args[1]
         }
         self.assertEqual(platforms, {'OAPEN', 'DOAB'})
 
@@ -597,9 +679,8 @@ class TestComparisonReport(unittest.TestCase):
         self.assertEqual(report['legacyOnly'], [PUBLISHER_A])
 
     def test_discovery_failure_produces_a_sanitised_error_report(self):
-        thoth = MagicMock()
-        thoth.client.execute.side_effect = RuntimeError(
-            'https://user:hunter2@api.test/graphql failed; token=abcdef')
+        thoth = publisher_query_failure_client(RuntimeError(
+            'https://user:hunter2@api.test/graphql failed; token=abcdef'))
         report = build_comparison_report(thoth, 'Crossref', [PUBLISHER_A])
         self.assertEqual(report['status'], 'ERROR')
         self.assertEqual(report['apiPublisherIds'], [])
@@ -876,6 +957,519 @@ class TestBulkDisseminateWorkflowTransport(unittest.TestCase):
                     ROOT / '.github' / 'workflows' / filename)
                 serialised = json.dumps(workflow)
                 self.assertNotIn('PUBLISHER_SOURCE_MODES', serialised)
+
+
+class TestPinnedPlatformOptionContract(unittest.TestCase):
+    """The local pin must equal the pinned upstream v1.7.0 descriptors."""
+
+    def test_expected_options_match_the_pinned_upstream_descriptors(self):
+        self.assertEqual(expected_platform_options(), pinned_options())
+
+    def test_expected_options_are_in_canonical_upstream_order(self):
+        self.assertEqual(
+            [option['platform'] for option in expected_platform_options()],
+            list(PINNED_DISTRIBUTION_PLATFORMS),
+        )
+
+    def test_consumed_option_fields_are_exactly_the_contract_surface(self):
+        self.assertEqual(
+            PLATFORM_OPTION_FIELDS,
+            ('platform', 'displayLabel', 'linkedGroup',
+             'backCatalogueBehaviour', 'assignable'),
+        )
+        for option in expected_platform_options():
+            self.assertEqual(
+                sorted(option), sorted(PLATFORM_OPTION_FIELDS))
+
+    def test_linked_group_is_pinned_for_oapen_and_doab_only(self):
+        linked = {
+            option['platform']: option['linkedGroup']
+            for option in expected_platform_options()
+        }
+        self.assertEqual(linked['OAPEN'], 'OAPEN_DOAB')
+        self.assertEqual(linked['DOAB'], 'OAPEN_DOAB')
+        for platform, group in linked.items():
+            if platform not in ('OAPEN', 'DOAB'):
+                with self.subTest(platform=platform):
+                    self.assertIsNone(group)
+
+    def test_pull_feed_manual_and_inactive_semantics_are_pinned(self):
+        pinned = {
+            option['platform']: option
+            for option in expected_platform_options()
+        }
+        self.assertEqual(
+            pinned['SCIENCE_OPEN']['backCatalogueBehaviour'], 'MANUAL')
+        self.assertTrue(pinned['SCIENCE_OPEN']['assignable'])
+        for platform in ('OCLC_KB', 'EX_LIBRIS_KB'):
+            with self.subTest(platform=platform):
+                self.assertEqual(
+                    pinned[platform]['backCatalogueBehaviour'], 'PULL_FEED')
+                self.assertTrue(pinned[platform]['assignable'])
+        self.assertEqual(
+            pinned['JISC_NBK']['backCatalogueBehaviour'], 'AUTOMATIC_PUSH')
+        self.assertFalse(pinned['JISC_NBK']['assignable'])
+
+    def test_query_is_the_literal_anonymous_option_operation(self):
+        self.assertIn('distributionPlatformOptions', DISTRIBUTION_PLATFORM_OPTIONS_QUERY)
+        for field in PLATFORM_OPTION_FIELDS:
+            with self.subTest(field=field):
+                self.assertIn(field, DISTRIBUTION_PLATFORM_OPTIONS_QUERY)
+        # An anonymous read: no variables, no credential, no argument.
+        self.assertNotIn('$', DISTRIBUTION_PLATFORM_OPTIONS_QUERY)
+
+    def test_option_read_sends_no_variables(self):
+        thoth = MagicMock()
+        thoth.client.execute.return_value = options_response(pinned_options())
+        self.assertEqual(
+            get_distribution_platform_options(thoth), pinned_options())
+        query, variables = thoth.client.execute.call_args.args
+        self.assertEqual(query, DISTRIBUTION_PLATFORM_OPTIONS_QUERY)
+        self.assertEqual(variables, {})
+
+    def test_non_list_option_payload_fails_closed(self):
+        thoth = MagicMock()
+        thoth.client.execute.return_value = {
+            'data': {'distributionPlatformOptions': {'platform': 'OAPEN'}}}
+        with self.assertRaises(ThothPublisherDiscoveryError):
+            get_distribution_platform_options(thoth)
+
+
+class TestPlatformOptionValidation(unittest.TestCase):
+    """Deterministic validation of one live option response."""
+
+    def issues(self, options):
+        return validate_platform_options(options)
+
+    def issue_codes(self, options):
+        return sorted(issue['issue'] for issue in self.issues(options))
+
+    def test_exact_contract_is_compatible(self):
+        self.assertEqual(self.issues(pinned_options()), [])
+
+    def test_missing_platform_is_incompatible(self):
+        options = [
+            option for option in pinned_options()
+            if option['platform'] != 'ZENODO'
+        ]
+        self.assertIn(
+            'platform_option_missing_platform', self.issue_codes(options))
+        self.assertIn(
+            'ZENODO',
+            [issue['platform'] for issue in self.issues(options)])
+
+    def test_extra_unknown_platform_is_incompatible(self):
+        options = pinned_options() + [{
+            'platform': 'NEW_PLATFORM',
+            'displayLabel': 'New Platform',
+            'linkedGroup': None,
+            'backCatalogueBehaviour': 'AUTOMATIC_PUSH',
+            'assignable': True,
+        }]
+        self.assertIn(
+            'platform_option_unknown_platform', self.issue_codes(options))
+
+    def test_duplicate_platform_is_incompatible(self):
+        options = pinned_options()
+        options.append(dict(options[0]))
+        self.assertIn(
+            'platform_option_duplicate_platform', self.issue_codes(options))
+
+    def test_malformed_option_row_is_incompatible(self):
+        for malformed in ('not-an-object', None, 42, []):
+            with self.subTest(malformed=malformed):
+                options = pinned_options() + [malformed]
+                self.assertIn(
+                    'platform_option_malformed',
+                    self.issue_codes(options))
+
+    def test_option_without_a_usable_platform_is_incompatible(self):
+        for platform in (None, '', 7, ['OAPEN']):
+            with self.subTest(platform=platform):
+                options = pinned_options()
+                options.append({
+                    'platform': platform,
+                    'displayLabel': 'Anything',
+                    'linkedGroup': None,
+                    'backCatalogueBehaviour': 'AUTOMATIC_PUSH',
+                    'assignable': True,
+                })
+                self.assertIn(
+                    'platform_option_malformed',
+                    self.issue_codes(options))
+
+    def test_option_missing_a_contract_field_is_incompatible(self):
+        for field in PLATFORM_OPTION_FIELDS[1:]:
+            with self.subTest(field=field):
+                options = pinned_options()
+                options[1].pop(field)
+                self.assertIn(
+                    'platform_option_field_missing',
+                    self.issue_codes(options))
+
+    def test_non_list_response_is_incompatible(self):
+        for response in (None, {}, 'options', 3):
+            with self.subTest(response=response):
+                self.assertEqual(
+                    self.issue_codes(response),
+                    ['platform_option_response_malformed'])
+
+    def test_display_label_drift_is_incompatible(self):
+        options = options_with('OAPEN', displayLabel='OAPEN Library')
+        self.assertIn(
+            'platform_option_display_label_mismatch',
+            self.issue_codes(options))
+
+    def test_oapen_linked_group_drift_is_incompatible(self):
+        for value in (None, 'OAPEN_ONLY'):
+            with self.subTest(value=value):
+                options = options_with('OAPEN', linkedGroup=value)
+                self.assertIn(
+                    'platform_option_linked_group_mismatch',
+                    self.issue_codes(options))
+
+    def test_doab_linked_group_drift_is_incompatible(self):
+        for value in (None, 'DOAB_ONLY'):
+            with self.subTest(value=value):
+                options = options_with('DOAB', linkedGroup=value)
+                self.assertIn(
+                    'platform_option_linked_group_mismatch',
+                    self.issue_codes(options))
+
+    def test_unlinked_platform_gaining_a_group_is_incompatible(self):
+        options = options_with('ZENODO', linkedGroup='OAPEN_DOAB')
+        self.assertIn(
+            'platform_option_linked_group_mismatch',
+            self.issue_codes(options))
+
+    def test_back_catalogue_behaviour_drift_is_incompatible(self):
+        for platform, value in (
+                ('SCIENCE_OPEN', 'AUTOMATIC_PUSH'),
+                ('OCLC_KB', 'AUTOMATIC_PUSH'),
+                ('EX_LIBRIS_KB', 'MANUAL'),
+                ('OAPEN', 'MANUAL'),
+                ('JISC_NBK', 'PULL_FEED')):
+            with self.subTest(platform=platform, value=value):
+                options = options_with(
+                    platform, backCatalogueBehaviour=value)
+                self.assertIn(
+                    'platform_option_back_catalogue_behaviour_mismatch',
+                    self.issue_codes(options))
+
+    def test_assignable_drift_is_incompatible(self):
+        for platform, value in (
+                ('JISC_NBK', True), ('OAPEN', False), ('DOAB', False),
+                ('OCLC_KB', False)):
+            with self.subTest(platform=platform, value=value):
+                options = options_with(platform, assignable=value)
+                self.assertIn(
+                    'platform_option_assignable_mismatch',
+                    self.issue_codes(options))
+
+    def test_non_boolean_assignable_is_never_a_truthy_match(self):
+        for value in ('true', 1, 'yes'):
+            with self.subTest(value=value):
+                options = options_with('OAPEN', assignable=value)
+                self.assertIn(
+                    'platform_option_assignable_mismatch',
+                    self.issue_codes(options))
+
+    def test_canonical_order_drift_is_incompatible(self):
+        options = pinned_options()
+        options[1], options[2] = options[2], options[1]
+        self.assertIn(
+            'platform_option_order_mismatch', self.issue_codes(options))
+
+    def test_order_is_not_reported_alongside_an_inexact_inventory(self):
+        options = [
+            option for option in pinned_options()
+            if option['platform'] != 'ZENODO'
+        ]
+        self.assertNotIn(
+            'platform_option_order_mismatch', self.issue_codes(options))
+
+    def test_issues_are_deterministic(self):
+        options = options_with('OAPEN', displayLabel='Drift', assignable=False)
+        options = [
+            option for option in options if option['platform'] != 'BKCI']
+        first = validate_platform_options(options)
+        second = validate_platform_options(options)
+        self.assertEqual(first, second)
+        self.assertEqual(
+            json.dumps(first, sort_keys=True),
+            json.dumps(second, sort_keys=True),
+        )
+
+    def test_query_failure_is_itself_a_contract_issue(self):
+        thoth = MagicMock()
+        thoth.client.execute.side_effect = RuntimeError('endpoint unavailable')
+        issues = validate_platform_option_contract(thoth)
+        self.assertEqual(
+            [issue['issue'] for issue in issues],
+            ['platform_option_query_failed'],
+        )
+
+    def test_query_failure_detail_is_sanitised(self):
+        thoth = MagicMock()
+        thoth.client.execute.side_effect = RuntimeError(
+            'Authorization: Bearer SECRET_VALUE rejected')
+        issues = validate_platform_option_contract(thoth)
+        self.assertNotIn('SECRET_VALUE', json.dumps(issues))
+
+    def test_a_compatible_live_contract_reports_no_issue(self):
+        thoth = discovery_client({})
+        self.assertEqual(validate_platform_option_contract(thoth), [])
+
+
+class TestApiModeContractGating(unittest.TestCase):
+    """API publisher authority is accepted only on a compatible contract."""
+
+    def test_contract_is_validated_before_any_publisher_paging(self):
+        thoth = discovery_client(
+            {'CROSSREF': [PUBLISHER_A]},
+            options=options_with('OAPEN', linkedGroup=None))
+        with self.assertRaises(PlatformOptionContractError):
+            discover_api_publisher_ids(thoth, 'Crossref')
+        queries = [
+            call.args[0] for call in thoth.client.execute.call_args_list]
+        self.assertEqual(queries, [DISTRIBUTION_PLATFORM_OPTIONS_QUERY])
+
+    def test_contract_failure_is_a_publisher_discovery_error(self):
+        thoth = discovery_client(
+            {'CROSSREF': []}, options=pinned_options()[:-1])
+        with self.assertRaises(PublisherDiscoveryError) as raised:
+            discover_api_publisher_ids(thoth, 'Crossref')
+        self.assertTrue(raised.exception.issues)
+
+    def test_unreadable_contract_fails_closed(self):
+        thoth = discovery_client(
+            {'CROSSREF': [PUBLISHER_A]},
+            options_error=RuntimeError('endpoint unavailable'))
+        with self.assertRaises(PlatformOptionContractError):
+            discover_api_publisher_ids(thoth, 'Crossref')
+
+    def test_compatible_contract_allows_reconciled_discovery(self):
+        thoth = discovery_client({'CROSSREF': [PUBLISHER_A, PUBLISHER_B]})
+        self.assertEqual(
+            discover_api_publisher_ids(thoth, 'Crossref'),
+            [PUBLISHER_A, PUBLISHER_B],
+        )
+
+    def test_linked_platform_equality_still_runs_after_validation(self):
+        thoth = discovery_client({
+            'OAPEN': [PUBLISHER_A, PUBLISHER_B], 'DOAB': [PUBLISHER_A]})
+        with self.assertRaises(LinkedPlatformMismatchError):
+            discover_api_publisher_ids(thoth, 'OAPEN')
+
+    def test_contract_error_message_is_bounded_and_sanitised(self):
+        thoth = discovery_client(
+            {'CROSSREF': []},
+            options_error=RuntimeError(
+                'Authorization: Bearer SECRET_VALUE ' + 'x' * 2000))
+        with self.assertRaises(PlatformOptionContractError) as raised:
+            discover_api_publisher_ids(thoth, 'Crossref')
+        message = str(raised.exception)
+        self.assertNotIn('SECRET_VALUE', message)
+        self.assertNotIn('\n', message)
+        self.assertLess(len(message), 600)
+
+
+class TestCompareModeContractGating(unittest.TestCase):
+    """Comparison evidence is only valid on a compatible contract."""
+
+    def report(self, options=None, options_error=None,
+               assignments=None, legacy=None):
+        assignments = (
+            {'OAPEN': [PUBLISHER_A], 'DOAB': [PUBLISHER_A]}
+            if assignments is None else assignments)
+        thoth = discovery_client(
+            assignments, options=options, options_error=options_error)
+        report = build_comparison_report(
+            thoth, 'OAPEN',
+            [PUBLISHER_A] if legacy is None else legacy)
+        return thoth, report
+
+    def test_compatible_contract_is_recorded_and_compared(self):
+        _, report = self.report()
+        self.assertTrue(report['platformContractValidated'])
+        self.assertEqual(report['status'], 'MATCH')
+
+    def test_matching_publishers_cannot_match_on_a_broken_contract(self):
+        _, report = self.report(
+            options=options_with('OAPEN', linkedGroup=None))
+        self.assertEqual(report['status'], 'ERROR')
+        self.assertFalse(report['platformContractValidated'])
+        self.assertEqual(report['apiPublisherIds'], [])
+        self.assertEqual(report['legacyOnly'], [])
+        self.assertEqual(report['apiOnly'], [])
+        self.assertIn(
+            'platform_option_linked_group_mismatch',
+            [issue['issue'] for issue in report['contractIssues']],
+        )
+
+    def test_incompatible_contract_skips_publisher_discovery(self):
+        thoth, report = self.report(options=pinned_options()[:-1])
+        self.assertEqual(report['status'], 'ERROR')
+        queries = [
+            call.args[0] for call in thoth.client.execute.call_args_list]
+        self.assertEqual(queries, [DISTRIBUTION_PLATFORM_OPTIONS_QUERY])
+        self.assertEqual(report['apiPlatformPublisherCounts'], {})
+
+    def test_every_drift_class_becomes_a_deterministic_contract_issue(self):
+        for options, expected in (
+                (options_with('OAPEN', displayLabel='Drift'),
+                 'platform_option_display_label_mismatch'),
+                (options_with('DOAB', linkedGroup=None),
+                 'platform_option_linked_group_mismatch'),
+                (options_with('SCIENCE_OPEN',
+                              backCatalogueBehaviour='AUTOMATIC_PUSH'),
+                 'platform_option_back_catalogue_behaviour_mismatch'),
+                (options_with('JISC_NBK', assignable=True),
+                 'platform_option_assignable_mismatch'),
+                (pinned_options()[:-1],
+                 'platform_option_missing_platform')):
+            with self.subTest(expected=expected):
+                _, report = self.report(options=options)
+                self.assertEqual(report['status'], 'ERROR')
+                self.assertIn(
+                    expected,
+                    [issue['issue'] for issue in report['contractIssues']],
+                )
+
+    def test_unreadable_contract_is_an_error_not_a_clean_comparison(self):
+        _, report = self.report(
+            options_error=RuntimeError('endpoint unavailable'))
+        self.assertEqual(report['status'], 'ERROR')
+        self.assertIn(
+            'platform_option_query_failed',
+            [issue['issue'] for issue in report['contractIssues']],
+        )
+
+    def test_contract_error_evidence_is_serialisable_and_stable(self):
+        _, first = self.report(options=options_with('OAPEN', linkedGroup=None))
+        _, second = self.report(
+            options=options_with('OAPEN', linkedGroup=None))
+        self.assertEqual(
+            serialise_comparison_report(first),
+            serialise_comparison_report(second),
+        )
+
+    def test_summary_states_the_contract_outcome(self):
+        _, valid = self.report()
+        _, broken = self.report(options=options_with('DOAB', linkedGroup=None))
+        self.assertIn(
+            '- Platform-option contract: `validated`',
+            summarise_comparison(valid))
+        self.assertIn(
+            '- Platform-option contract: `not validated`',
+            summarise_comparison(broken))
+
+
+class TestCredentialRedaction(unittest.TestCase):
+    """No credential form may survive into any diagnostic evidence."""
+
+    SECRET = 'SECRET_VALUE'
+
+    AUTHORIZATION_FORMS = (
+        'Authorization: Bearer SECRET_VALUE',
+        'authorization: bearer SECRET_VALUE',
+        'AUTHORIZATION: BEARER SECRET_VALUE',
+        'Authorization=Bearer SECRET_VALUE',
+        'authorization=bearer SECRET_VALUE',
+        'Authorization: Basic SECRET_VALUE',
+        'authorization: basic SECRET_VALUE',
+        'AuThOrIzAtIoN : BeArEr SECRET_VALUE',
+        "{'Authorization': 'Bearer SECRET_VALUE'}",
+        'proxy-authorization: Bearer SECRET_VALUE',
+        'Authorization:\nBearer SECRET_VALUE',
+        'Bearer SECRET_VALUE',
+    )
+
+    OTHER_FORMS = (
+        'token=SECRET_VALUE',
+        'Token: SECRET_VALUE',
+        'secret: SECRET_VALUE',
+        'password=SECRET_VALUE',
+        'passwd: SECRET_VALUE',
+        'api_key=SECRET_VALUE',
+        'api-key: SECRET_VALUE',
+        'X-Api-Key: SECRET_VALUE',
+        'access_key=SECRET_VALUE',
+        'access-key: SECRET_VALUE',
+        'https://user:SECRET_VALUE@api.test/graphql',
+    )
+
+    def test_authorization_credentials_never_survive_sanitisation(self):
+        for form in self.AUTHORIZATION_FORMS:
+            with self.subTest(form=form):
+                detail = sanitise_detail(form)
+                self.assertNotIn(self.SECRET, detail)
+                self.assertIn('[redacted]', detail)
+
+    def test_other_credential_forms_never_survive_sanitisation(self):
+        for form in self.OTHER_FORMS:
+            with self.subTest(form=form):
+                detail = sanitise_detail(form)
+                self.assertNotIn(self.SECRET, detail)
+                self.assertIn('[redacted]', detail)
+
+    def test_sanitised_details_stay_bounded_single_line_and_useful(self):
+        detail = sanitise_detail(
+            'ThothGraphQLTransportError: request failed\nAuthorization: '
+            'Bearer SECRET_VALUE\n' + 'x' * 5000)
+        self.assertNotIn(self.SECRET, detail)
+        self.assertNotIn('\n', detail)
+        self.assertLessEqual(
+            len(detail), 300 + len('...(truncated)'))
+        self.assertIn('ThothGraphQLTransportError', detail)
+
+    def test_non_credential_diagnostics_are_preserved(self):
+        detail = sanitise_detail(
+            'HTTP 503 while reading distributionPlatformOptions')
+        self.assertEqual(
+            detail, 'HTTP 503 while reading distributionPlatformOptions')
+
+    def _leaking_report(self, form):
+        thoth = discovery_client({}, options_error=RuntimeError(form))
+        return build_comparison_report(thoth, 'Crossref', [PUBLISHER_A])
+
+    def test_secret_never_survives_in_serialised_comparison_evidence(self):
+        for form in self.AUTHORIZATION_FORMS + self.OTHER_FORMS:
+            with self.subTest(form=form):
+                report = self._leaking_report(form)
+                self.assertEqual(report['status'], 'ERROR')
+                self.assertTrue(report['contractIssues'])
+                self.assertNotIn(
+                    self.SECRET, serialise_comparison_report(report))
+                self.assertNotIn(
+                    self.SECRET, json.dumps(report['contractIssues']))
+
+    def test_secret_never_survives_in_the_human_summary(self):
+        for form in self.AUTHORIZATION_FORMS + self.OTHER_FORMS:
+            with self.subTest(form=form):
+                summary = summarise_comparison(self._leaking_report(form))
+                self.assertNotIn(self.SECRET, summary)
+
+    def test_secret_never_survives_a_comparison_wrapper_failure(self):
+        for form in self.AUTHORIZATION_FORMS:
+            with self.subTest(form=form):
+                report = comparison_report_error(
+                    'Crossref', RuntimeError(form))
+                self.assertNotIn(
+                    self.SECRET, serialise_comparison_report(report))
+                self.assertNotIn(
+                    self.SECRET, summarise_comparison(report))
+
+    def test_secret_never_survives_an_api_mode_failure_message(self):
+        for form in self.AUTHORIZATION_FORMS:
+            with self.subTest(form=form):
+                thoth = discovery_client(
+                    {'CROSSREF': []}, options_error=RuntimeError(form))
+                with self.assertRaises(PlatformOptionContractError) as raised:
+                    discover_api_publisher_ids(thoth, 'Crossref')
+                self.assertNotIn(self.SECRET, str(raised.exception))
+                self.assertNotIn(
+                    self.SECRET, json.dumps(raised.exception.issues))
 
 
 if __name__ == '__main__':

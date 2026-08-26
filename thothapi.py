@@ -58,6 +58,18 @@ query InternetArchiveSelection(
 """
 
 
+DISTRIBUTION_PLATFORM_OPTIONS_QUERY = """
+query DistributionPlatformOptions {
+  distributionPlatformOptions {
+    platform
+    displayLabel
+    linkedGroup
+    backCatalogueBehaviour
+    assignable
+  }
+}
+"""
+
 DISTRIBUTION_PLATFORM_PUBLISHER_COUNT_QUERY = """
 query PublisherCountByDistributionPlatform($platform: DistributionPlatform!) {
   publisherCountByDistributionPlatform(platform: $platform)
@@ -278,13 +290,14 @@ def get_internet_archive_selection_works(
         offset += page_size
 
 
-def _execute_publisher_discovery_query(thoth, query, variables):
+def _execute_publisher_discovery_query(
+        thoth, query, variables, description='publisher assignments'):
     """Execute one read-only publisher-discovery query and return its data."""
     try:
         response = thoth.client.execute(query, variables)
     except Exception as error:
         raise ThothGraphQLTransportError(
-            'Unable to query publisher assignments: {}'.format(error)
+            'Unable to query {}: {}'.format(description, error)
         ) from error
 
     try:
@@ -296,7 +309,7 @@ def _execute_publisher_discovery_query(thoth, query, variables):
 
     if not isinstance(payload, dict):
         raise ThothGraphQLTransportError(
-            'Thoth publisher response was not an object')
+            'Thoth {} response was not an object'.format(description))
     if payload.get('errors'):
         raise ThothGraphQLResponseError(
             sanitised_graphql_errors(payload['errors']))
@@ -304,8 +317,29 @@ def _execute_publisher_discovery_query(thoth, query, variables):
     data = payload.get('data')
     if not isinstance(data, dict):
         raise ThothGraphQLTransportError(
-            'Thoth publisher response did not contain data')
+            'Thoth {} response did not contain data'.format(description))
     return data
+
+
+def get_distribution_platform_options(thoth):
+    """
+    Return the running `distributionPlatformOptions` contract descriptors.
+
+    This is a public, anonymous, read-only surface of the pinned Thoth v1.7.0
+    contract. The rows are returned exactly as the API ordered them, because
+    that order is itself part of the contract that the caller validates.
+    """
+    data = _execute_publisher_discovery_query(
+        thoth,
+        DISTRIBUTION_PLATFORM_OPTIONS_QUERY,
+        {},
+        description='distribution platform options',
+    )
+    options = data.get('distributionPlatformOptions')
+    if not isinstance(options, list):
+        raise ThothPublisherDiscoveryError(
+            'Thoth did not return a distribution platform option list')
+    return options
 
 
 def get_distribution_platform_publisher_count(thoth, platform):

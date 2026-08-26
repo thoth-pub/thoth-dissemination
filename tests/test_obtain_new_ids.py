@@ -34,6 +34,8 @@ from publisher_source import (
     MODE_API,
     MODE_COMPARE,
     MODE_ENV,
+    PublisherDiscoveryError,
+    expected_platform_options,
     resolve_source_mode,
 )
 from thothapi import (
@@ -993,6 +995,21 @@ class PublisherSourceModeTestCase(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         for variable in ('ENV_EXCEPTIONS', 'PUBLISHER_SOURCE_MODES'):
             os.environ.pop(variable, None)
+        # Every compare/api path validates the running platform-option
+        # contract first, so the default fixture answers it compatibly.
+        self.platform_options = self.patch_platform_options()
+
+    def patch_platform_options(self, options=None, side_effect=None):
+        """Patch the platform-option contract read with a compatible one."""
+        patcher = patch('publisher_source.get_distribution_platform_options')
+        reader = patcher.start()
+        self.addCleanup(patcher.stop)
+        if side_effect is not None:
+            reader.side_effect = side_effect
+        else:
+            reader.return_value = (
+                expected_platform_options() if options is None else options)
+        return reader
 
     def patch_discovery(self, assignments=None, side_effect=None):
         """Patch the single Publisher Services page/count reconciliation."""
@@ -1398,6 +1415,173 @@ class TestLocationsPathwayIsolation(PublisherSourceModeTestCase):
                 self.locations_arguments(), thoth=self.thoth)
         self.assertIsInstance(finder, OapenLocationsIDFinder)
         self.assertEqual(finder.source_mode, MODE_ENV)
+
+
+class TestPlatformOptionContractGating(PublisherSourceModeTestCase):
+    """The running option contract gates compare evidence and API authority."""
+
+    OAPEN_LINK_DRIFT = 'OAPEN linked-group drift'
+
+    def drifted_options(self):
+        """Pinned options with the OAPEN linked group broken."""
+        options = expected_platform_options()
+        for option in options:
+            if option['platform'] == 'OAPEN':
+                option['linkedGroup'] = None
+        return options
+
+    def test_compare_contract_failure_preserves_stdout_and_exit_status(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        env_stdout = self.run_finder(self.ordinary_finder(MODE_ENV))
+        self.platform_options.return_value = self.drifted_options()
+        finder = self.ordinary_finder(MODE_COMPARE)
+        compare_stdout = self.run_finder(finder)
+        self.assertEqual(compare_stdout, env_stdout)
+        self.assertEqual(finder.thoth_ids, [WORK_ID])
+        self.assertEqual(
+            self.thoth.bookIds.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_ID]),
+        )
+
+    def test_compare_contract_failure_is_error_with_contract_issues(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        self.platform_options.return_value = self.drifted_options()
+        finder = self.ordinary_finder(MODE_COMPARE)
+        self.run_finder(finder)
+        report = finder.comparison_report
+        self.assertEqual(report['status'], 'ERROR')
+        self.assertFalse(report['platformContractValidated'])
+        self.assertIn(
+            'platform_option_linked_group_mismatch',
+            [issue['issue'] for issue in report['contractIssues']],
+        )
+
+    def test_matching_publishers_cannot_match_on_a_broken_contract(self):
+        # The publisher assignments agree exactly with the legacy list, so
+        # only the option contract distinguishes MATCH from ERROR.
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        matching = self.ordinary_finder(MODE_COMPARE)
+        self.run_finder(matching)
+        self.assertEqual(matching.comparison_report['status'], 'MATCH')
+
+        self.platform_options.return_value = self.drifted_options()
+        drifted = self.ordinary_finder(MODE_COMPARE)
+        self.run_finder(drifted)
+        self.assertEqual(drifted.comparison_report['status'], 'ERROR')
+        self.assertEqual(drifted.comparison_report['apiPublisherIds'], [])
+
+    def test_compare_contract_failure_still_exits_zero(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        self.platform_options.return_value = self.drifted_options()
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'compare'})}):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 0)
+        # The legacy selection is untouched: the same work-ID stdout contract
+        # and the same legacy publisher filter as an `env` run.
+        self.assertEqual(stdout.getvalue(), '[]\n')
+        self.assertEqual(
+            self.thoth.works.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_ID]),
+        )
+
+    def test_api_contract_failure_fails_closed_before_work_selection(self):
+        discovery = self.patch_discovery({
+            'OAPEN': [PUBLISHER_B], 'DOAB': [PUBLISHER_B]})
+        self.platform_options.return_value = self.drifted_options()
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 1)
+        discovery.assert_not_called()
+        self.thoth.bookIds.assert_not_called()
+        self.thoth.works.assert_not_called()
+
+    def test_api_contract_failure_never_falls_back_to_env_publishers(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_B], 'DOAB': [PUBLISHER_B]})
+        self.platform_options.return_value = self.drifted_options()
+        finder = self.ordinary_finder(MODE_API)
+        with self.assertRaises(PublisherDiscoveryError):
+            finder.run()
+        self.assertIsNone(finder.publishers)
+        self.assertIsNone(finder.api_publisher_ids)
+        self.thoth.bookIds.assert_not_called()
+
+    def test_api_contract_failure_is_not_a_zero_publisher_success(self):
+        self.patch_discovery({'OAPEN': [], 'DOAB': []})
+        self.platform_options.return_value = self.drifted_options()
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout.getvalue(), '')
+
+    def test_internet_archive_api_contract_failure_selects_no_works(self):
+        self.patch_discovery({'INTERNET_ARCHIVE': [PUBLISHER_B]})
+        self.platform_options.return_value = self.drifted_options()
+        finder = InternetArchiveIDFinder(
+            thoth=self.thoth, now_provider=lambda: NOW, source_mode=MODE_API)
+        with patch(
+                'obtain_new_ids.get_internet_archive_selection_works') as query:
+            with self.assertRaises(PublisherDiscoveryError):
+                finder.select()
+        query.assert_not_called()
+
+    def test_env_mode_never_reads_the_platform_option_contract(self):
+        for platform in ('OAPEN', 'InternetArchive'):
+            with self.subTest(platform=platform):
+                self.platform_options.reset_mock()
+                if platform == 'OAPEN':
+                    self.run_finder(self.ordinary_finder(MODE_ENV))
+                else:
+                    with patch(
+                            'obtain_new_ids.'
+                            'get_internet_archive_selection_works',
+                            return_value=[]):
+                        InternetArchiveIDFinder(
+                            thoth=self.thoth,
+                            now_provider=lambda: NOW).select()
+                self.platform_options.assert_not_called()
+
+    def test_contract_failure_diagnostics_are_sanitised(self):
+        self.patch_discovery({'OAPEN': [], 'DOAB': []})
+        self.platform_options.side_effect = RuntimeError(
+            'Authorization: Bearer SECRET_VALUE')
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            with self.assertLogs(level='ERROR') as logs:
+                status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 1)
+        self.assertNotIn('SECRET_VALUE', '\n'.join(logs.output))
+
+    def test_internet_archive_failure_report_is_sanitised(self):
+        self.patch_discovery({'INTERNET_ARCHIVE': []})
+        self.platform_options.side_effect = RuntimeError(
+            'Authorization: Bearer SECRET_VALUE')
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / 'ia.json'
+            with patch.dict(os.environ, {
+                    'PUBLISHER_SOURCE_MODES': json.dumps(
+                        {'InternetArchive': 'api'})}):
+                status = main(
+                    ['--platform', 'InternetArchive',
+                     '--report', str(report_path)],
+                    now_provider=lambda: NOW,
+                    thoth=self.thoth,
+                )
+            self.assertEqual(status, 1)
+            written = report_path.read_text(encoding='utf-8')
+        self.assertNotIn('SECRET_VALUE', written)
+        self.assertEqual(json.loads(written)['status'], 'failed')
 
 
 if __name__ == '__main__':

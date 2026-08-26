@@ -347,6 +347,25 @@ OAPEN and DOAB are queried and reconciled as two upstream platforms but
 projected onto the single existing OAPEN/DOAB execution adapter; a
 disagreement between their publisher sets is an error, never a silent union.
 
+### Platform-option contract validation
+
+Before any Publisher Services evidence is treated as usable, `compare` and
+`api` read the anonymous `distributionPlatformOptions` query and validate the
+complete returned option set against the pinned Thoth v1.7.0 contract:
+structural usability, the exact 17-platform inventory with no missing, extra,
+unknown or duplicate platform, the canonical platform order that the upstream
+inventory declares binding, and each pinned `displayLabel`, `linkedGroup`,
+`backCatalogueBehaviour` and `assignable` value. `displayLabel` is validated as
+contract data only; no execution mapping is ever inferred from it, and this
+check does not replace the local dissemination platform mapping above.
+
+An unreadable or incompatible option surface is never treated as compatible.
+In `compare` it becomes deterministic `contractIssues` with comparison status
+`ERROR`, while the legacy publisher selection, the work-ID stdout bytes and
+the exit status stay exactly as they are in `env`. In `api` it fails closed
+before work selection, with no fallback to `ENV_PUBLISHERS` and no
+zero-publisher success.
+
 ### API discovery
 
 Every discovery request uses `publisherCountByDistributionPlatform`, then
@@ -371,7 +390,14 @@ is never clean comparison evidence.
 The canonical report is written to its own file
 (`--comparison-report <path>`), versioned
 `thoth-dissemination-publisher-comparison/1`, deterministic, sorted, free of
-timestamps and secrets, with bounded sanitized GraphQL diagnostics. Generic
+timestamps and secrets, with bounded sanitized GraphQL diagnostics. Its
+`platformContractValidated` field records whether the running platform-option
+contract was validated for that run. Diagnostics are collapsed to one line and
+redacted before they reach any report, summary or log: URL userinfo,
+`token`, `secret`, `password`, `passwd`, `api_key`/`api-key`,
+`access_key`/`access-key` and `Authorization` values are removed whole,
+including scheme-prefixed forms such as `Authorization: Bearer <credential>`
+and `Authorization: Basic <credential>` in any capitalization. Generic
 bulk dissemination publishes it as a 30-day workflow artifact plus a step
 summary; Internet Archive adds it to the existing 30-day selection diagnostics
 artifact and its own summary step. Both reporting steps are non-gating.
