@@ -112,11 +112,10 @@ WORKER_READ_TIMEOUT_SECONDS = 60
 # larger is refused unparsed rather than loaded into memory.
 WORKER_MAX_RESPONSE_BYTES = 1048576
 
-# Only these GraphQL error fields ever reach a log or a durable diagnostic,
-# and each is independently bounded and type-normalised below. Upstream
-# controls the size and shape of an error payload, so whitelisting a field
-# name is not on its own enough to keep a diagnostic bounded.
-WORKER_SAFE_ERROR_FIELDS = ('message', 'path')
+# Only `message`, `path` and `extensions.type` ever reach a log or a durable
+# diagnostic, and each is independently bounded and type-normalised below.
+# Upstream controls the size and shape of an error payload, so selecting a
+# field by name is not on its own enough to keep a diagnostic bounded.
 WORKER_MAX_GRAPHQL_ERRORS = 5
 WORKER_MAX_ERROR_MESSAGE_CHARS = 512
 WORKER_MAX_ERROR_PATH_ELEMENTS = 10
