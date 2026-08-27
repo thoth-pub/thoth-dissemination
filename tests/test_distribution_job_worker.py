@@ -191,6 +191,18 @@ def _claim(attempt_number=1, attempts=None, targets=('CROSSREF',),
     }
 
 
+def _completion_ack(job_id=None, status='SUCCEEDED'):
+    """The pinned v1.7.0 completeDistributionJob acknowledgement."""
+    return {'completeDistributionJob': {
+        'distributionJobId': job_id or JOB_ID, 'status': status}}
+
+
+def _failure_ack(job_id=None, status='FAILED'):
+    """The pinned v1.7.0 failDistributionJob acknowledgement."""
+    return {'failDistributionJob': {
+        'distributionJobId': job_id or JOB_ID, 'status': status}}
+
+
 class FakeTransport():
     """Records every worker GraphQL call and replays scripted responses."""
 
@@ -285,7 +297,7 @@ class TestClaimContract(unittest.TestCase):
         transport = FakeTransport([
             {'claimDistributionJobs': [_claim(), _claim()]},
             {'bookCount': 0},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
         result = _build_worker(transport, RecordingRunner()).run_once()
 
@@ -300,7 +312,7 @@ class TestUnsupportedJobsAndTargets(unittest.TestCase):
     def _run_rejected(self, claim):
         transport = FakeTransport([
             {'claimDistributionJobs': [claim]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
         runner = RecordingRunner()
         result = _build_worker(transport, runner).run_once()
@@ -367,7 +379,7 @@ class TestAbandonedPredecessorFence(unittest.TestCase):
     def _run(self, claim, extra_responses=()):
         responses = [{'claimDistributionJobs': [claim]}]
         responses.extend(extra_responses)
-        responses.append({'failDistributionJob': {'distributionJobId': JOB_ID}})
+        responses.append(_failure_ack())
         transport = FakeTransport(responses)
         runner = RecordingRunner()
         result = _build_worker(transport, runner).run_once()
@@ -377,7 +389,7 @@ class TestAbandonedPredecessorFence(unittest.TestCase):
         transport = FakeTransport([
             {'claimDistributionJobs': [_claim(attempt_number=1, attempts=[])]},
             {'bookCount': 0},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
         result = _build_worker(transport, RecordingRunner()).run_once()
 
@@ -421,7 +433,7 @@ class TestAbandonedPredecessorFence(unittest.TestCase):
                 attempts=[_attempt(1, 'ABANDONED'), _attempt(3, None),
                           _attempt(2, 'FAILED')])]},
             {'bookCount': 0},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
         result = _build_worker(transport, RecordingRunner()).run_once()
 
@@ -446,7 +458,7 @@ class TestAbandonedPredecessorFence(unittest.TestCase):
                 attempt_number=2,
                 attempts=[_attempt(1, 'FAILED')])]},
             {'bookCount': 0},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
         result = _build_worker(transport, RecordingRunner()).run_once()
 
@@ -457,7 +469,7 @@ class TestAbandonedPredecessorFence(unittest.TestCase):
             {'claimDistributionJobs': [_claim(
                 attempt_number=2, attempts=[_attempt(1, 'CANCELLED')])]},
             {'bookCount': 0},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
         result = _build_worker(transport, RecordingRunner()).run_once()
 
@@ -576,7 +588,7 @@ class TestCatalogueContract(unittest.TestCase):
     def test_book_count_uses_exact_publisher_and_status_filters(self):
         _, transport, _ = self._run([
             {'bookCount': 0},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
 
         query, variables = transport.calls[1]
@@ -590,7 +602,7 @@ class TestCatalogueContract(unittest.TestCase):
     def test_zero_candidates_is_a_successful_no_op(self):
         result, transport, runner = self._run([
             {'bookCount': 0},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
 
         self.assertEqual(result.outcome, worker.OUTCOME_COMPLETED)
@@ -601,7 +613,7 @@ class TestCatalogueContract(unittest.TestCase):
     def test_count_above_pilot_cap_fails_before_any_provider_write(self):
         result, transport, runner = self._run([
             {'bookCount': 11},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code, worker.CATALOGUE_TOO_LARGE)
@@ -613,7 +625,7 @@ class TestCatalogueContract(unittest.TestCase):
         _, transport, _ = self._run([
             {'bookCount': 1},
             {'books': [_row(_work_id(1))]},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ], runner=RecordingRunner([_accepted()]))
 
         query, variables = transport.calls[2]
@@ -631,7 +643,7 @@ class TestCatalogueContract(unittest.TestCase):
             {'bookCount': 10},
             {'books': rows},
             {'books': []},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ], runner=RecordingRunner([_accepted() for _ in range(10)]))
 
         self.assertEqual(result.outcome, worker.OUTCOME_COMPLETED)
@@ -646,7 +658,7 @@ class TestCatalogueContract(unittest.TestCase):
             {'bookCount': 10},
             {'books': rows},
             {'books': [_row('44444444-4444-4444-8444-444444444444')]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code, worker.CATALOGUE_CONTRACT_INVALID)
@@ -658,7 +670,7 @@ class TestCatalogueContract(unittest.TestCase):
         result, _, runner = self._run([
             {'bookCount': 10},
             {'books': rows},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code, worker.CATALOGUE_CONTRACT_INVALID)
@@ -668,7 +680,7 @@ class TestCatalogueContract(unittest.TestCase):
         result, _, runner = self._run([
             {'bookCount': 2},
             {'books': [_row(_work_id(1)), _row(_work_id(1))]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code, worker.CATALOGUE_CONTRACT_INVALID)
@@ -678,7 +690,7 @@ class TestCatalogueContract(unittest.TestCase):
         result, _, runner = self._run([
             {'bookCount': 3},
             {'books': [_row(_work_id(1))]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code, worker.CATALOGUE_CONTRACT_INVALID)
@@ -692,7 +704,7 @@ class TestCatalogueContract(unittest.TestCase):
                 result, _, runner = self._run([
                     {'bookCount': 1},
                     {'books': [_row(work_id)]},
-                    {'failDistributionJob': {'distributionJobId': JOB_ID}},
+                    _failure_ack(),
                 ])
                 self.assertEqual(result.error_code,
                                  worker.CATALOGUE_CONTRACT_INVALID)
@@ -702,7 +714,7 @@ class TestCatalogueContract(unittest.TestCase):
         result, _, runner = self._run([
             {'bookCount': 1},
             {'books': [_row(_work_id(1), status='SUPERSEDED')]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code, worker.CATALOGUE_CONTRACT_INVALID)
@@ -712,7 +724,7 @@ class TestCatalogueContract(unittest.TestCase):
         result, transport, runner = self._run([
             {'bookCount': 1},
             {'books': [_row(_work_id(1), publisher_id=OTHER_PUBLISHER_ID)]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code,
@@ -728,7 +740,7 @@ class TestCatalogueContract(unittest.TestCase):
                 result, _, runner = self._run([
                     {'bookCount': 1},
                     {'books': rows},
-                    {'failDistributionJob': {'distributionJobId': JOB_ID}},
+                    _failure_ack(),
                 ])
                 self.assertEqual(result.error_code,
                                  worker.CATALOGUE_CONTRACT_INVALID)
@@ -739,7 +751,7 @@ class TestCatalogueContract(unittest.TestCase):
             with self.subTest(count=count):
                 result, _, runner = self._run([
                     {'bookCount': count},
-                    {'failDistributionJob': {'distributionJobId': JOB_ID}},
+                    _failure_ack(),
                 ])
                 self.assertEqual(result.error_code,
                                  worker.CATALOGUE_CONTRACT_INVALID)
@@ -748,7 +760,7 @@ class TestCatalogueContract(unittest.TestCase):
     def test_catalogue_transport_failure_is_retryable_before_any_write(self):
         result, transport, runner = self._run([
             thothapi.ThothWorkerTransportError('Thoth worker request failed'),
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.error_code, worker.CATALOGUE_QUERY_FAILED)
@@ -764,7 +776,7 @@ class TestExecutableWorkPredicate(unittest.TestCase):
             {'claimDistributionJobs': [_claim()]},
             {'bookCount': len(rows)},
             {'books': rows},
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
         runner = RecordingRunner(runner_results)
         result = _build_worker(transport, runner).run_once()
@@ -830,9 +842,9 @@ class TestRunnerResultHandling(unittest.TestCase):
             {'bookCount': len(rows)},
             {'books': rows},
         ]
-        responses.append({'failDistributionJob': {'distributionJobId': JOB_ID}}
+        responses.append(_failure_ack()
                          if expect_fail else
-                         {'completeDistributionJob': {'distributionJobId': JOB_ID}})
+                         _completion_ack())
         transport = FakeTransport(responses)
         runner = RecordingRunner(runner_results)
         result = _build_worker(transport, runner).run_once()
@@ -954,7 +966,7 @@ class TestLeaseBudget(unittest.TestCase):
                 _claim(lease_expires_at=lease_expires_at)]},
             {'bookCount': len(rows)},
             {'books': rows},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
         runner = RecordingRunner(runner_results)
         result = worker.DistributionJobWorker(
@@ -989,7 +1001,7 @@ class TestLeaseBudget(unittest.TestCase):
                 _claim(lease_expires_at='2026-08-27T17:10:00Z')]},
             {'bookCount': 2},
             {'books': [_row(_work_id(1)), _row(_work_id(2))]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
         runner = RecordingRunner([_accepted()])
         result = worker.DistributionJobWorker(
@@ -1037,7 +1049,7 @@ class TestCompletionReconciliation(unittest.TestCase):
 
     def test_completion_uses_the_exact_job_id_and_claim_token(self):
         _, transport, _ = self._run([
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}}])
+            _completion_ack()])
 
         query, variables = transport.calls[-1]
         self.assertIn('completeDistributionJob', query)
@@ -1047,7 +1059,7 @@ class TestCompletionReconciliation(unittest.TestCase):
     def test_transport_ambiguity_retries_only_the_identical_mutation(self):
         result, transport, runner = self._run([
             _transport_error(),
-            {'completeDistributionJob': {'distributionJobId': JOB_ID}},
+            _completion_ack(),
         ])
 
         self.assertEqual(result.outcome, worker.OUTCOME_COMPLETED)
@@ -1147,7 +1159,7 @@ class TestFailureReconciliation(unittest.TestCase):
     def test_failure_retry_repeats_the_identical_mutation(self):
         result, transport, runner = self._run([
             _transport_error(),
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
 
         self.assertEqual(result.outcome, worker.OUTCOME_FAILED)
@@ -1394,7 +1406,7 @@ class TestRemainingSpecificationMatrix(unittest.TestCase):
         transport = FakeTransport([
             {'claimDistributionJobs': [_claim(
                 attempt_number=2, attempts=[_attempt(1, 'ABANDONED')])]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
         runner = RecordingRunner()
         result = _build_worker(transport, runner).run_once()
@@ -1415,7 +1427,7 @@ class TestRemainingSpecificationMatrix(unittest.TestCase):
                 attempt_number=2,
                 claim_token='00000000-0000-4000-8000-0000000000cd',
                 attempts=[_attempt(2, None), _attempt(1, 'ABANDONED')])]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
         runner = RecordingRunner()
         result = _build_worker(transport, runner).run_once()
@@ -1433,7 +1445,7 @@ class TestRemainingSpecificationMatrix(unittest.TestCase):
             {'claimDistributionJobs': [_claim()]},
             {'bookCount': 2},
             {'books': [_row(_work_id(1)), _row(_work_id(2))]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
         runner = RecordingRunner([_runner_result(
             'FAILED', worker.CATALOGUE_PUBLISHER_MISMATCH,
@@ -1450,7 +1462,7 @@ class TestRemainingSpecificationMatrix(unittest.TestCase):
             {'claimDistributionJobs': [_claim()]},
             {'bookCount': 1},
             {'books': [_row(_work_id(1))]},
-            {'failDistributionJob': {'distributionJobId': JOB_ID}},
+            _failure_ack(),
         ])
         runner = RecordingRunner([_runner_result(
             'FAILED', worker.CROSSREF_METADATA_INVALID, 'no root DOI')])
@@ -1526,3 +1538,470 @@ class TestRemainingSpecificationMatrix(unittest.TestCase):
                     hasattr(distribution_job_worker, forbidden.split('.')[0])
                     and forbidden.split('.')[0] in
                     ('sqlite3', 'shelve', 'pickle', 'dbm'))
+
+
+class TestPrefixLookupFailurePropagation(unittest.TestCase):
+    """A pre-write prefix lookup failure stays retryable at the durable job."""
+
+    def _run(self, runner_result):
+        transport = FakeTransport([
+            {'claimDistributionJobs': [_claim()]},
+            {'bookCount': 2},
+            {'books': [_row(_work_id(1)), _row(_work_id(2))]},
+            {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                     'status': 'PENDING'}},
+        ])
+        runner = RecordingRunner([runner_result])
+        result = _build_worker(transport, runner).run_once()
+        return result, transport, runner
+
+    def test_prefix_lookup_failure_is_reported_retryable(self):
+        result, transport, runner = self._run(_runner_result(
+            'FAILED', worker.CROSSREF_PREFIX_LOOKUP_FAILED,
+            'prefix lookup did not confirm the prefix', external=False))
+
+        self.assertEqual(result.error_code,
+                         worker.CROSSREF_PREFIX_LOOKUP_FAILED)
+        self.assertIs(result.retryable, True)
+        # The failed work stopped the attempt: no later runner ran.
+        self.assertEqual(len(runner.launched), 1)
+        _, variables = transport.calls[-1]
+        self.assertIs(variables['data']['retryable'], True)
+
+    def test_confirmed_invalid_prefix_stays_non_retryable(self):
+        transport = FakeTransport([
+            {'claimDistributionJobs': [_claim()]},
+            {'bookCount': 1},
+            {'books': [_row(_work_id(1))]},
+            {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                     'status': 'FAILED'}},
+        ])
+        runner = RecordingRunner([_runner_result(
+            'FAILED', worker.CROSSREF_PREFIX_INVALID, 'bad prefix')])
+        result = _build_worker(transport, runner).run_once()
+
+        self.assertEqual(result.error_code, worker.CROSSREF_PREFIX_INVALID)
+        self.assertIs(result.retryable, False)
+
+
+class TestCompletionPayloadValidation(unittest.TestCase):
+    """A completion is committed only on the pinned acknowledgement shape."""
+
+    def _run(self, report_responses, runner_results=(_accepted(),)):
+        transport = FakeTransport([
+            {'claimDistributionJobs': [_claim()]},
+            {'bookCount': 1},
+            {'books': [_row(_work_id(1))]},
+        ] + list(report_responses))
+        runner = RecordingRunner(list(runner_results))
+        result = _build_worker(transport, runner).run_once()
+        return result, transport, runner
+
+    def test_exact_job_id_and_succeeded_status_is_success(self):
+        result, _, runner = self._run([
+            {'completeDistributionJob': {'distributionJobId': JOB_ID,
+                                         'status': 'SUCCEEDED'}}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_COMPLETED)
+        self.assertEqual(len(runner.launched), 1)
+
+    def test_null_completion_payload_is_hold(self):
+        result, transport, runner = self._run([
+            {'completeDistributionJob': None}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+        # A semantically malformed response is not a transport ambiguity, so
+        # it is not retried as one.
+        completions = [c for c in transport.calls
+                       if 'completeDistributionJob' in c[0]]
+        self.assertEqual(len(completions), 1)
+        self.assertEqual(len(runner.launched), 1)
+
+    def test_missing_completion_payload_is_hold(self):
+        result, _, _ = self._run([{}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_non_object_completion_payload_is_hold(self):
+        for payload in ['SUCCEEDED', 42, True, ['SUCCEEDED'], 1.5]:
+            with self.subTest(payload=payload):
+                result, _, _ = self._run([
+                    {'completeDistributionJob': payload}])
+                self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_wrong_job_id_in_completion_payload_is_hold(self):
+        result, _, _ = self._run([
+            {'completeDistributionJob': {
+                'distributionJobId': '99999999-9999-4999-8999-999999999999',
+                'status': 'SUCCEEDED'}}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_missing_job_id_in_completion_payload_is_hold(self):
+        result, _, _ = self._run([
+            {'completeDistributionJob': {'status': 'SUCCEEDED'}}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_incompatible_completion_status_is_hold(self):
+        for status in ['PENDING', 'FAILED', 'RUNNING', 'CANCELLED',
+                       'succeeded', '', None, 42]:
+            with self.subTest(status=status):
+                result, _, _ = self._run([
+                    {'completeDistributionJob': {
+                        'distributionJobId': JOB_ID, 'status': status}}])
+                self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_terminal_succeeded_reconciliation_still_succeeds(self):
+        result, _, runner = self._run([
+            _transport_error(),
+            _graphql_error(
+                'The distribution job is already in the terminal state '
+                'SUCCEEDED.',
+                'DISTRIBUTION_JOB_TERMINAL'),
+        ])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_COMPLETED)
+        self.assertEqual(len(runner.launched), 1)
+
+    def test_transport_ambiguity_then_valid_payload_still_succeeds(self):
+        result, transport, runner = self._run([
+            _transport_error(),
+            {'completeDistributionJob': {'distributionJobId': JOB_ID,
+                                         'status': 'SUCCEEDED'}},
+        ])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_COMPLETED)
+        completions = [c for c in transport.calls
+                       if 'completeDistributionJob' in c[0]]
+        self.assertEqual(len(completions), 2)
+        self.assertEqual(completions[0], completions[1])
+        self.assertEqual(len(runner.launched), 1)
+
+
+class TestFailurePayloadValidation(unittest.TestCase):
+    """A failure report is recorded only on a compatible returned state."""
+
+    def _run(self, report_responses, retryable_code=False):
+        # An unsupported kind gives a non-retryable failure with no provider
+        # work; a catalogue transport error gives a retryable one.
+        if retryable_code:
+            responses = [
+                {'claimDistributionJobs': [_claim()]},
+                thothapi.ThothWorkerTransportError('failed'),
+            ]
+        else:
+            responses = [{'claimDistributionJobs': [_claim(kind='OTHER')]}]
+        transport = FakeTransport(responses + list(report_responses))
+        runner = RecordingRunner()
+        result = _build_worker(transport, runner).run_once()
+        return result, transport, runner
+
+    def test_non_retryable_failure_accepts_only_failed(self):
+        result, _, _ = self._run([
+            {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                     'status': 'FAILED'}}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_FAILED)
+        self.assertEqual(result.error_code, worker.UNSUPPORTED_JOB_KIND)
+        self.assertIs(result.retryable, False)
+
+    def test_non_retryable_failure_with_pending_is_hold(self):
+        result, _, _ = self._run([
+            {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                     'status': 'PENDING'}}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_retryable_failure_accepts_pending(self):
+        result, _, _ = self._run([
+            {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                     'status': 'PENDING'}}],
+            retryable_code=True)
+
+        self.assertEqual(result.outcome, worker.OUTCOME_FAILED)
+        self.assertEqual(result.error_code, worker.CATALOGUE_QUERY_FAILED)
+        self.assertIs(result.retryable, True)
+
+    def test_retryable_failure_accepts_failed_as_budget_exhaustion(self):
+        result, _, _ = self._run([
+            {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                     'status': 'FAILED'}}],
+            retryable_code=True)
+
+        self.assertEqual(result.outcome, worker.OUTCOME_FAILED)
+        self.assertIs(result.retryable, True)
+
+    def test_retryable_failure_rejects_incompatible_states(self):
+        for status in ['SUCCEEDED', 'RUNNING', 'CANCELLED', 'pending', None,
+                       '', 7]:
+            with self.subTest(status=status):
+                result, _, _ = self._run([
+                    {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                             'status': status}}],
+                    retryable_code=True)
+                self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_null_failure_payload_is_hold(self):
+        result, transport, _ = self._run([{'failDistributionJob': None}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+        failures = [c for c in transport.calls
+                    if 'failDistributionJob' in c[0]]
+        self.assertEqual(len(failures), 1)
+
+    def test_missing_failure_payload_is_hold(self):
+        result, _, _ = self._run([{}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_non_object_failure_payload_is_hold(self):
+        for payload in ['FAILED', 0, False, ['FAILED']]:
+            with self.subTest(payload=payload):
+                result, _, _ = self._run([{'failDistributionJob': payload}])
+                self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_wrong_job_id_in_failure_payload_is_hold(self):
+        result, _, _ = self._run([
+            {'failDistributionJob': {
+                'distributionJobId': '99999999-9999-4999-8999-999999999999',
+                'status': 'FAILED'}}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+
+    def test_failure_retry_after_transport_ambiguity_is_still_identical(self):
+        result, transport, runner = self._run([
+            _transport_error(),
+            {'failDistributionJob': {'distributionJobId': JOB_ID,
+                                     'status': 'FAILED'}},
+        ])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_FAILED)
+        failures = [c for c in transport.calls
+                    if 'failDistributionJob' in c[0]]
+        self.assertEqual(len(failures), 2)
+        self.assertEqual(failures[0], failures[1])
+        self.assertEqual(runner.launched, [])
+
+    def test_no_provider_work_occurs_while_reconciling_a_result(self):
+        result, _, runner = self._run([{'failDistributionJob': None}])
+
+        self.assertEqual(result.outcome, worker.OUTCOME_HOLD)
+        self.assertEqual(runner.launched, [])
+
+
+class TestGraphQLErrorBounding(unittest.TestCase):
+    """Sanitised GraphQL errors are bounded and type-normalised."""
+
+    def test_error_list_length_is_capped(self):
+        errors = [{'message': 'error {}'.format(n)} for n in range(200)]
+
+        sanitised = thothapi.sanitised_worker_graphql_errors(errors)
+
+        self.assertLessEqual(len(sanitised),
+                             thothapi.WORKER_MAX_GRAPHQL_ERRORS)
+
+    def test_oversized_message_is_bounded_and_single_line(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors([
+            {'message': 'x' * 10000 + '\nsecond line\tand tab'}])
+
+        message = sanitised[0]['message']
+        self.assertLessEqual(len(message),
+                             thothapi.WORKER_MAX_ERROR_MESSAGE_CHARS)
+        self.assertNotIn('\n', message)
+        self.assertNotIn('\t', message)
+
+    def test_non_string_message_is_normalised_not_serialised(self):
+        for message in [{'nested': 'structure'}, ['a', 'b'], 42, None, True]:
+            with self.subTest(message=message):
+                sanitised = thothapi.sanitised_worker_graphql_errors(
+                    [{'message': message}])
+                value = sanitised[0].get('message')
+                self.assertTrue(value is None or isinstance(value, str))
+                if isinstance(value, str):
+                    self.assertNotIn('nested', value)
+
+    def test_path_is_bounded_in_element_count(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors([
+            {'path': list(range(500))}])
+
+        self.assertLessEqual(len(sanitised[0]['path']),
+                             thothapi.WORKER_MAX_ERROR_PATH_ELEMENTS)
+
+    def test_path_elements_are_bounded_scalars(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors([
+            {'path': ['completeDistributionJob', 3, 'y' * 10000,
+                      {'nested': 'structure'}, ['deep']]}])
+
+        for element in sanitised[0]['path']:
+            with self.subTest(element=element):
+                self.assertIsInstance(element, (str, int))
+                if isinstance(element, str):
+                    self.assertLessEqual(
+                        len(element),
+                        thothapi.WORKER_MAX_ERROR_PATH_ELEMENT_CHARS)
+                    self.assertNotIn('nested', element)
+
+    def test_non_list_path_is_dropped(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors([
+            {'message': 'm', 'path': 'completeDistributionJob'}])
+
+        self.assertNotIn('path', sanitised[0])
+
+    def test_oversized_or_unsafe_extension_type_is_bounded_or_omitted(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors([
+            {'extensions': {'type': 'T' * 10000}}])
+        self.assertLessEqual(len(sanitised[0]['type']),
+                             thothapi.WORKER_MAX_ERROR_TYPE_CHARS)
+
+        for extension_type in [{'nested': 'x'}, ['LIST'], 42, None]:
+            with self.subTest(extension_type=extension_type):
+                sanitised = thothapi.sanitised_worker_graphql_errors([
+                    {'extensions': {'type': extension_type}}])
+                self.assertNotIn('type', sanitised[0])
+
+    def test_arbitrary_extension_data_is_never_retained(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors([{
+            'message': 'The distribution job claim is no longer valid.',
+            'path': ['completeDistributionJob'],
+            'extensions': {
+                'type': 'STALE_DISTRIBUTION_JOB_CLAIM',
+                'internalTrace': 'super-secret-worker-token',
+                'query': 'mutation { completeDistributionJob(...) }',
+                'nested': {'deep': {'deeper': 'secret'}},
+            },
+            'locations': [{'line': 2, 'column': 3}],
+        }])
+
+        serialised = json.dumps(sanitised)
+        self.assertNotIn('super-secret-worker-token', serialised)
+        self.assertNotIn('internalTrace', serialised)
+        self.assertNotIn('locations', serialised)
+        self.assertNotIn('deeper', serialised)
+        self.assertEqual(sorted(sanitised[0]), ['message', 'path', 'type'])
+
+    def test_pinned_terminal_contract_survives_sanitisation_unchanged(self):
+        """Bounding must not disturb the exact reconciliation comparison."""
+        sanitised = thothapi.sanitised_worker_graphql_errors([{
+            'message': worker.TERMINAL_SUCCEEDED_MESSAGE,
+            'path': ['completeDistributionJob'],
+            'extensions': {'type': worker.TERMINAL_ERROR_TYPE},
+        }])
+
+        self.assertEqual(sanitised[0]['message'],
+                         worker.TERMINAL_SUCCEEDED_MESSAGE)
+        self.assertEqual(sanitised[0]['type'], worker.TERMINAL_ERROR_TYPE)
+        self.assertTrue(
+            worker.DistributionJobWorker._is_terminal_succeeded(sanitised))
+
+    def test_malformed_error_entries_stay_bounded(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors(
+            ['x' * 10000, None, 42])
+
+        self.assertEqual(len(sanitised), 3)
+        for entry in sanitised:
+            with self.subTest(entry=entry):
+                self.assertIsInstance(entry, dict)
+                self.assertLessEqual(len(entry['message']),
+                                     thothapi.WORKER_MAX_ERROR_MESSAGE_CHARS)
+
+    def test_non_list_error_payload_is_bounded(self):
+        sanitised = thothapi.sanitised_worker_graphql_errors('not a list')
+
+        self.assertIsInstance(sanitised, list)
+        self.assertEqual(len(sanitised), 1)
+        self.assertIn('message', sanitised[0])
+
+
+class TestExcludedWorkEvidence(unittest.TestCase):
+    """Excluded candidates produce bounded, non-disclosing local evidence."""
+
+    SECRET_DOI = 'https://doi.org/10.9999/should-never-be-logged'
+    SECRET_TITLE = 'A Confidential Forthcoming Title'
+
+    def _run_and_capture(self, rows, runner_results=()):
+        responses = [
+            {'claimDistributionJobs': [_claim()]},
+            {'bookCount': len(rows)},
+            {'books': rows},
+        ]
+        # A full first page still requires the mandatory terminating page.
+        if len(rows) == worker.CATALOGUE_PAGE_SIZE:
+            responses.append({'books': []})
+        responses.append(_completion_ack())
+        transport = FakeTransport(responses)
+        runner = RecordingRunner(list(runner_results))
+        with self.assertLogs(level='INFO') as captured:
+            result = _build_worker(transport, runner).run_once()
+        return result, captured.output, runner
+
+    def test_work_missing_root_doi_is_reported_with_a_reason(self):
+        rows = [_row(_work_id(1), doi=None)]
+        _, logs, runner = self._run_and_capture(rows)
+
+        evidence = [line for line in logs if _work_id(1) in line]
+        self.assertTrue(evidence, 'excluded work was not reported')
+        self.assertIn('missing root DOI', ' '.join(evidence))
+        self.assertEqual(runner.launched, [])
+
+    def test_work_missing_publication_date_is_reported_with_a_reason(self):
+        rows = [_row(_work_id(1), publication_date=None)]
+        _, logs, _ = self._run_and_capture(rows)
+
+        evidence = [line for line in logs if _work_id(1) in line]
+        self.assertIn('missing publication date', ' '.join(evidence))
+
+    def test_work_missing_both_reports_both_reasons(self):
+        rows = [_row(_work_id(1), doi=None, publication_date=None)]
+        _, logs, _ = self._run_and_capture(rows)
+
+        evidence = ' '.join(line for line in logs if _work_id(1) in line)
+        self.assertIn('missing root DOI', evidence)
+        self.assertIn('missing publication date', evidence)
+
+    def test_every_excluded_work_is_reported_individually(self):
+        rows = [
+            _row(_work_id(1), doi=None),
+            _row(_work_id(2), publication_date=None),
+            _row(_work_id(3)),
+        ]
+        _, logs, runner = self._run_and_capture(
+            rows, runner_results=[_accepted()])
+
+        joined = ' '.join(logs)
+        self.assertIn(_work_id(1), joined)
+        self.assertIn(_work_id(2), joined)
+        self.assertEqual([call[0] for call in runner.launched], [_work_id(3)])
+
+    def test_evidence_never_discloses_metadata_values(self):
+        rows = [{
+            'workId': _work_id(1),
+            'workStatus': 'ACTIVE',
+            'doi': self.SECRET_DOI,
+            'publicationDate': None,
+            'title': self.SECRET_TITLE,
+            'imprint': {'publisher': {'publisherId': PUBLISHER_ID}},
+        }]
+        _, logs, _ = self._run_and_capture(rows)
+
+        joined = ' '.join(logs)
+        self.assertNotIn(self.SECRET_DOI, joined)
+        self.assertNotIn('10.9999', joined)
+        self.assertNotIn(self.SECRET_TITLE, joined)
+
+    def test_evidence_is_bounded_by_the_pilot_candidate_cap(self):
+        rows = [_row(_work_id(n), doi=None) for n in range(10)]
+        _, logs, runner = self._run_and_capture(rows)
+
+        exclusion_lines = [line for line in logs if 'missing root DOI' in line]
+        self.assertLessEqual(len(exclusion_lines),
+                             worker.MAX_PILOT_CANDIDATES)
+        self.assertEqual(len(exclusion_lines), 10)
+        self.assertEqual(runner.launched, [])
+
+    def test_fully_executable_catalogue_reports_no_exclusions(self):
+        rows = [_row(_work_id(1))]
+        _, logs, _ = self._run_and_capture(rows, runner_results=[_accepted()])
+
+        self.assertEqual(
+            [line for line in logs if 'excluded' in line.lower()], [])

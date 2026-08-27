@@ -88,6 +88,12 @@ MAX_PILOT_CANDIDATES = 10
 CATALOGUE_PAGE_SIZE = 10
 CATALOGUE_WORK_STATUSES = ['ACTIVE', 'FORTHCOMING']
 
+# Fixed reason texts for works this pilot deterministically excludes. They
+# are constants rather than formatted metadata so that recording evidence can
+# never disclose a DOI value, a title or any other metadata content.
+EXCLUSION_MISSING_ROOT_DOI = 'missing root DOI'
+EXCLUSION_MISSING_PUBLICATION_DATE = 'missing publication date'
+
 # Every executable work runs in its own subprocess under this hard deadline.
 RUNNER_DEADLINE_SECONDS = 240
 
@@ -107,6 +113,26 @@ RESULT_REPORT_MAX_ATTEMPTS = 3
 TERMINAL_ERROR_TYPE = 'DISTRIBUTION_JOB_TERMINAL'
 TERMINAL_SUCCEEDED_MESSAGE = (
     'The distribution job is already in the terminal state SUCCEEDED.')
+
+# Pinned v1.7.0 acknowledgement contract. Both result-report mutations return
+# a non-null `DistributionJob`, and the transition each one commits is fixed:
+#
+#   completeDistributionJob            RUNNING -> SUCCEEDED
+#   failDistributionJob, retryable     RUNNING -> PENDING while attempts
+#                                      remain, RUNNING -> FAILED once the
+#                                      attempt budget is exhausted
+#   failDistributionJob, non-retryable RUNNING -> FAILED
+#
+# A returned state outside these sets means the worker cannot prove the
+# transition it asked for is the one that committed, which is reconciliation
+# rather than a result.
+JOB_STATUS_SUCCEEDED = 'SUCCEEDED'
+JOB_STATUS_PENDING = 'PENDING'
+JOB_STATUS_FAILED = 'FAILED'
+COMPLETION_ACKNOWLEDGED_STATUSES = frozenset({JOB_STATUS_SUCCEEDED})
+RETRYABLE_FAILURE_ACKNOWLEDGED_STATUSES = frozenset(
+    {JOB_STATUS_PENDING, JOB_STATUS_FAILED})
+NON_RETRYABLE_FAILURE_ACKNOWLEDGED_STATUSES = frozenset({JOB_STATUS_FAILED})
 
 # BE-04 truncates `errorDetail` at 2048 characters; the worker never relies on
 # that and bounds its own sanitised detail well below it.
@@ -381,9 +407,16 @@ class DistributionJobWorker():
                      job_id, publisher_id)
 
         candidates = self._select_candidates(publisher_id)
-        executable = self._executable_work_ids(candidates)
+        executable, exclusions = self._executable_work_ids(candidates)
         logging.info('Job %s has %d candidate works, %d executable',
                      job_id, len(candidates), len(executable))
+        # Bounded local evidence: the raw candidate population is capped at
+        # MAX_PILOT_CANDIDATES, so one line per excluded work is bounded by
+        # construction. Only the canonical work UUID and a fixed reason are
+        # recorded - never a DOI value, title or any other metadata content.
+        for work_id, reason in exclusions:
+            logging.info('Job %s excluded work %s from this pilot: %s',
+                         job_id, work_id, reason)
 
         accepted = self._execute_works(claim, publisher_id, executable)
         return self._complete(job_id, claim_token, accepted)
@@ -629,24 +662,33 @@ class DistributionJobWorker():
 
     @staticmethod
     def _executable_work_ids(rows):
-        """Return the sorted work IDs this stage may deposit to Crossref.
+        """Return the sorted executable work IDs and the excluded ones.
 
         A root work DOI and a publication date are both required. Roots whose
         only depositable records are chapter DOIs are deliberately outside
         this pilot: the Crossref adapter derives its prefix from the root DOI,
         so such a root is excluded here rather than repaired or broadened.
+
+        Exclusions are returned as `(work_id, reason)` pairs carrying a fixed
+        reason text only, so the caller can record deterministic evidence
+        without disclosing any metadata value.
         """
         executable = []
+        exclusions = []
         for row in rows:
             doi = row.get('doi')
             publication_date = row.get('publicationDate')
+            reasons = []
             if not isinstance(doi, str) or len(doi.strip()) < 1:
-                continue
+                reasons.append(EXCLUSION_MISSING_ROOT_DOI)
             if not isinstance(publication_date, str) or len(
                     publication_date.strip()) < 1:
+                reasons.append(EXCLUSION_MISSING_PUBLICATION_DATE)
+            if reasons:
+                exclusions.append((row['workId'], ' and '.join(reasons)))
                 continue
             executable.append(row['workId'])
-        return sorted(executable)
+        return sorted(executable), exclusions
 
     def _execute_works(self, claim, publisher_id, executable):
         """Run each executable work sequentially behind the lease guard.
@@ -794,10 +836,21 @@ class DistributionJobWorker():
         ambiguous = False
         for _ in range(RESULT_REPORT_MAX_ATTEMPTS):
             try:
-                self._transport.execute(
+                data = self._transport.execute(
                     COMPLETE_DISTRIBUTION_JOB_MUTATION, variables)
-                return WorkerResult(OUTCOME_COMPLETED,
-                                    accepted_works=accepted_works)
+                if self._acknowledges_transition(
+                        data, 'completeDistributionJob', job_id,
+                        COMPLETION_ACKNOWLEDGED_STATUSES):
+                    return WorkerResult(OUTCOME_COMPLETED,
+                                        accepted_works=accepted_works)
+                # A response that arrived intact but does not acknowledge the
+                # transition is not a transport ambiguity, so repeating the
+                # mutation would prove nothing. Reconcile instead.
+                return self._hold(
+                    job_id,
+                    'Completion reporting returned a malformed or '
+                    'incompatible result payload',
+                    accepted_works)
             except thothapi.ThothWorkerTransportError:
                 # No usable response arrived, so whether the transition
                 # committed is unknown. Repeat exactly this mutation.
@@ -821,6 +874,25 @@ class DistributionJobWorker():
             'Completion reporting did not resolve within its bounded retry '
             'budget',
             accepted_works)
+
+    @staticmethod
+    def _acknowledges_transition(data, field, job_id, acknowledged_statuses):
+        """Prove the mutation returned the job in the expected state.
+
+        BE-04 returns a non-null `DistributionJob` whose status is the state
+        the transition committed. Treating any error-free response as a
+        committed result would let a null, absent, wrong-job or
+        incompatible-state payload be recorded as a durable outcome, which the
+        approved reconciliation protocol requires to HOLD instead.
+        """
+        if not isinstance(data, dict):
+            return False
+        payload = data.get(field)
+        if not isinstance(payload, dict):
+            return False
+        if payload.get('distributionJobId') != job_id:
+            return False
+        return payload.get('status') in acknowledged_statuses
 
     @staticmethod
     def _is_terminal_succeeded(errors):
@@ -847,13 +919,23 @@ class DistributionJobWorker():
             'errorDetail': failure.detail,
             'retryable': failure.retryable,
         }}
+        acknowledged = (RETRYABLE_FAILURE_ACKNOWLEDGED_STATUSES
+                        if failure.retryable
+                        else NON_RETRYABLE_FAILURE_ACKNOWLEDGED_STATUSES)
         for _ in range(RESULT_REPORT_MAX_ATTEMPTS):
             try:
-                self._transport.execute(
+                data = self._transport.execute(
                     FAIL_DISTRIBUTION_JOB_MUTATION, variables)
-                return WorkerResult(OUTCOME_FAILED, error_code=failure.code,
-                                    retryable=failure.retryable,
-                                    detail=failure.detail)
+                if self._acknowledges_transition(
+                        data, 'failDistributionJob', job_id, acknowledged):
+                    return WorkerResult(OUTCOME_FAILED,
+                                        error_code=failure.code,
+                                        retryable=failure.retryable,
+                                        detail=failure.detail)
+                return self._hold(
+                    job_id,
+                    'Failure reporting for {} returned a malformed or '
+                    'incompatible result payload'.format(failure.code))
             except thothapi.ThothWorkerTransportError:
                 continue
             except thothapi.ThothWorkerResponseError:

@@ -438,3 +438,115 @@ class TestLegacyCrossrefCompatibility(unittest.TestCase):
     def test_success_confirmation_text_is_unchanged(self):
         self.assertEqual(crossrefuploader.SUCCESS_MSG,
                          'Your batch submission was successfully received.')
+
+
+class TestCrossrefPrefixHttpClassification(unittest.TestCase):
+    """A prefix lookup only terminalizes on confirmed not-found.
+
+    A 429 or 5xx from the prefix service happens strictly before the deposit
+    POST and proves nothing about the DOI prefix, so it must take the
+    retryable pre-write path instead of terminalizing the durable job.
+    """
+
+    def _upload(self, status_code, reason='Error'):
+        instance = _uploader()
+        with patch.dict('os.environ', _credential_env(), clear=True), \
+                patch.object(instance, 'get_formatted_metadata',
+                             return_value=b'<xml/>'), \
+                patch.object(crossrefuploader.requests, 'get',
+                             return_value=_response(status_code=status_code,
+                                                    reason=reason)), \
+                patch.object(crossrefuploader.requests, 'post') as mock_post:
+            try:
+                instance.upload_to_platform()
+                raised = None
+            except DisseminationError as error:
+                raised = error
+            return raised, mock_post
+
+    def _runner_result(self, status_code):
+        instance = _uploader()
+        with patch.dict('os.environ', _credential_env(), clear=True), \
+                patch.object(instance, 'get_formatted_metadata',
+                             return_value=b'<xml/>'), \
+                patch.object(crossrefuploader.requests, 'get',
+                             return_value=_response(status_code=status_code)), \
+                patch.object(crossrefuploader.requests, 'post') as mock_post:
+            result = runner.run(WORK_ID, PUBLISHER_ID,
+                                uploader_factory=lambda _: instance)
+            return result, mock_post
+
+    def test_http_404_remains_confirmed_invalid_prefix(self):
+        raised, mock_post = self._upload(404, reason='Not Found')
+
+        self.assertIsInstance(
+            raised, crossrefuploader.CrossrefPrefixInvalidError)
+        mock_post.assert_not_called()
+
+    def test_http_404_is_non_retryable_prefix_invalid_at_the_runner(self):
+        result, mock_post = self._runner_result(404)
+
+        mock_post.assert_not_called()
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['code'], runner.CROSSREF_PREFIX_INVALID)
+        self.assertFalse(result['externalWriteStarted'])
+
+    def test_http_429_is_a_lookup_failure_not_an_invalid_prefix(self):
+        raised, mock_post = self._upload(429, reason='Too Many Requests')
+
+        self.assertIsInstance(
+            raised, crossrefuploader.CrossrefPrefixLookupError)
+        self.assertNotIsInstance(
+            raised, crossrefuploader.CrossrefPrefixInvalidError)
+        mock_post.assert_not_called()
+
+    def test_http_429_reaches_the_runner_as_a_pre_write_lookup_failure(self):
+        result, mock_post = self._runner_result(429)
+
+        mock_post.assert_not_called()
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['code'], runner.CROSSREF_PREFIX_LOOKUP_FAILED)
+        self.assertFalse(result['externalWriteStarted'])
+
+    def test_representative_5xx_statuses_are_lookup_failures(self):
+        for status_code in [500, 502, 503, 504]:
+            with self.subTest(status_code=status_code):
+                raised, mock_post = self._upload(status_code)
+                self.assertIsInstance(
+                    raised, crossrefuploader.CrossrefPrefixLookupError)
+                mock_post.assert_not_called()
+
+    def test_http_503_reaches_the_runner_as_a_pre_write_lookup_failure(self):
+        result, mock_post = self._runner_result(503)
+
+        mock_post.assert_not_called()
+        self.assertEqual(result['code'], runner.CROSSREF_PREFIX_LOOKUP_FAILED)
+        self.assertFalse(result['externalWriteStarted'])
+
+    def test_ambiguous_statuses_never_terminalize_as_invalid_prefix(self):
+        # None of these positively establishes that the prefix is not found.
+        for status_code in [400, 401, 403, 408, 301, 302]:
+            with self.subTest(status_code=status_code):
+                raised, mock_post = self._upload(status_code)
+                self.assertNotIsInstance(
+                    raised, crossrefuploader.CrossrefPrefixInvalidError)
+                self.assertIsInstance(
+                    raised, crossrefuploader.CrossrefPrefixLookupError)
+                mock_post.assert_not_called()
+
+    def test_lookup_failure_detail_carries_no_response_body(self):
+        instance = _uploader()
+        body = 'RAW BODY {}'.format(SECRET_PW)
+        with patch.dict('os.environ', _credential_env(), clear=True), \
+                patch.object(instance, 'get_formatted_metadata',
+                             return_value=b'<xml/>'), \
+                patch.object(crossrefuploader.requests, 'get',
+                             return_value=_response(status_code=503,
+                                                    text=body)), \
+                patch.object(crossrefuploader.requests, 'post'):
+            result = runner.run(WORK_ID, PUBLISHER_ID,
+                                uploader_factory=lambda _: instance)
+
+        serialised = json.dumps(result)
+        self.assertNotIn(SECRET_PW, serialised)
+        self.assertNotIn('RAW BODY', serialised)

@@ -23,6 +23,14 @@ CR_CONNECT_TIMEOUT_SECONDS = 10
 CR_PREFIX_READ_TIMEOUT_SECONDS = 30
 CR_DEPOSIT_READ_TIMEOUT_SECONDS = 90
 
+# The only prefix-lookup responses that carry proof. 200 proves the prefix
+# exists and 404 proves Crossref does not know it; every other status - a 429
+# rate limit, a 5xx outage, a redirect, an authorization problem - reports on
+# the lookup service rather than on the prefix, and must never terminalize a
+# durable job as though the DOI prefix had been confirmed invalid.
+CR_PREFIX_FOUND_STATUS = 200
+CR_PREFIX_NOT_FOUND_STATUS = 404
+
 
 class CrossrefError(DisseminationError):
     """A Crossref dissemination failure classified by the phase it reached.
@@ -106,9 +114,16 @@ class CrossrefUploader(Uploader):
                 'Could not check Crossref DOI prefix before deposit: '
                 '{}'.format(type(error).__name__)) from None
 
-        if doi_rsp.status_code != 200:
+        if doi_rsp.status_code == CR_PREFIX_NOT_FOUND_STATUS:
             raise CrossrefPrefixInvalidError(
                 'Not a valid Crossref DOI prefix: {}'.format(doi_prefix))
+        if doi_rsp.status_code != CR_PREFIX_FOUND_STATUS:
+            # Only the status code is reported. It happened before the deposit
+            # POST, so no provider write has started and the pre-write
+            # retryable path is the truthful classification.
+            raise CrossrefPrefixLookupError(
+                'Crossref prefix lookup did not confirm the prefix before '
+                'deposit (status code: {})'.format(doi_rsp.status_code))
 
         # No specifications for filename given in Crossref guide, and it seems
         # not to impact success/failure of upload. Use work ID for simplicity.

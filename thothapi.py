@@ -112,8 +112,16 @@ WORKER_READ_TIMEOUT_SECONDS = 60
 # larger is refused unparsed rather than loaded into memory.
 WORKER_MAX_RESPONSE_BYTES = 1048576
 
-# Only these GraphQL error fields ever reach a log or a durable diagnostic.
+# Only these GraphQL error fields ever reach a log or a durable diagnostic,
+# and each is independently bounded and type-normalised below. Upstream
+# controls the size and shape of an error payload, so whitelisting a field
+# name is not on its own enough to keep a diagnostic bounded.
 WORKER_SAFE_ERROR_FIELDS = ('message', 'path')
+WORKER_MAX_GRAPHQL_ERRORS = 5
+WORKER_MAX_ERROR_MESSAGE_CHARS = 512
+WORKER_MAX_ERROR_PATH_ELEMENTS = 10
+WORKER_MAX_ERROR_PATH_ELEMENT_CHARS = 64
+WORKER_MAX_ERROR_TYPE_CHARS = 64
 
 
 class ThothGraphQLTransportError(RuntimeError):
@@ -212,28 +220,78 @@ def sanitised_graphql_errors(payload_errors):
     return json.dumps(useful_errors, sort_keys=True)
 
 
+def _bounded_error_text(value, limit):
+    """Return a bounded single-line string, or None if there is nothing safe.
+
+    Only genuine strings are kept. A dict, list or other structure is dropped
+    rather than serialised, because rendering an upstream structure is exactly
+    how unexpected diagnostic content reaches a log or a durable job detail.
+    """
+    if not isinstance(value, str):
+        return None
+    collapsed = ' '.join(value.split())
+    return collapsed[:limit] if collapsed else None
+
+
+def _bounded_error_path(value):
+    """Return a bounded path of scalar elements, or None if unusable.
+
+    GraphQL response paths are lists of field names and list indices. Anything
+    else is dropped rather than represented.
+    """
+    if not isinstance(value, list):
+        return None
+    bounded = []
+    for element in value[:WORKER_MAX_ERROR_PATH_ELEMENTS]:
+        if isinstance(element, bool):
+            continue
+        if isinstance(element, int):
+            bounded.append(element)
+        elif isinstance(element, str):
+            text = _bounded_error_text(
+                element, WORKER_MAX_ERROR_PATH_ELEMENT_CHARS)
+            if text is not None:
+                bounded.append(text)
+    return bounded
+
+
 def sanitised_worker_graphql_errors(payload_errors):
-    """Reduce worker GraphQL errors to message, path and extensions.type.
+    """Reduce worker GraphQL errors to bounded message, path and type.
 
     `extensions.type` is retained because the result-report reconciliation
     protocol is pinned to it. Every other extension key is discarded unread:
     an upstream diagnostic must never become a durable job detail.
+
+    The bounds are deterministic so that the exact pinned terminal-SUCCEEDED
+    message and type, which are well inside every limit, survive unchanged.
     """
     if not isinstance(payload_errors, list):
         return [{'message': 'Thoth returned a malformed GraphQL error list'}]
 
     sanitised = []
-    for error in payload_errors:
+    for error in payload_errors[:WORKER_MAX_GRAPHQL_ERRORS]:
         if not isinstance(error, dict):
-            sanitised.append({'message': 'Thoth returned a malformed GraphQL error'})
+            sanitised.append(
+                {'message': 'Thoth returned a malformed GraphQL error'})
             continue
-        useful = {
-            key: error[key] for key in WORKER_SAFE_ERROR_FIELDS if key in error
-        }
+
+        useful = {}
+        message = _bounded_error_text(
+            error.get('message'), WORKER_MAX_ERROR_MESSAGE_CHARS)
+        if message is not None:
+            useful['message'] = message
+
+        path = _bounded_error_path(error.get('path'))
+        if path is not None:
+            useful['path'] = path
+
         extensions = error.get('extensions')
-        if isinstance(extensions, dict) and isinstance(
-                extensions.get('type'), str):
-            useful['type'] = extensions['type']
+        if isinstance(extensions, dict):
+            error_type = _bounded_error_text(
+                extensions.get('type'), WORKER_MAX_ERROR_TYPE_CHARS)
+            if error_type is not None:
+                useful['type'] = error_type
+
         sanitised.append(useful)
     return sanitised
 
