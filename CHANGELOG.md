@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.8.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.8.0) - 2026-08-27
+
+### Added
+  - Added a durable distribution-job worker for Thoth Publisher Services back-catalogue jobs, using the released Thoth worker API for claim, completion and failure reporting.
+  - Added bounded Crossref back-catalogue execution as the first supported durable-job target, with publisher and catalogue validation, deterministic work selection, one-work-at-a-time processing and a conservative maximum of 10 candidate works per pilot job.
+  - Added a dedicated Crossref worker subprocess boundary with structured results, bounded execution time and fail-closed handling for malformed, stale or indeterminate outcomes.
+  - Added an inert-by-default `distribution-job-worker` GitHub Actions workflow with bounded concurrency and explicit worker activation controls.
+
+### Changed
+  - Hardened Crossref uploads for durable-job execution with explicit HTTP timeouts, reusable classified errors, publisher fencing, root-DOI validation and stricter credential/error redaction.
+  - Added conservative recovery handling for abandoned or ambiguous distribution-job attempts so an unprovable prior Crossref outcome cannot be automatically replayed.
+  - Added bounded GraphQL transport and result-report reconciliation for worker operations, including claim-token fencing and validation of terminal job states.
+
+### Deployment
+  - The durable-job worker remains inactive after release unless `DISTRIBUTION_JOB_WORKER_ENABLED` is separately set to exactly `ON`.
+  - Automatic distribution-job creation remains separately controlled by `THOTH_DISTRIBUTION_JOB_CREATION`; releasing v1.8.0 does not activate the worker, create jobs or perform any Crossref submissions.
+
 ## [[1.7.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.7.0) - 2026-08-26
 
 ### Added
