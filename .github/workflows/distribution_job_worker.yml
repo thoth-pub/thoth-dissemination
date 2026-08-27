@@ -1,0 +1,71 @@
+# Purpose: claim and execute at most one BE-04 durable distribution job.
+# Crossref is the only executable target of this stage.
+#
+# This workflow is INERT unless the repository Actions variable
+# DISTRIBUTION_JOB_WORKER_ENABLED is exactly the ASCII string `ON`.
+# The `if:` expression below is defence in depth only: Actions expression
+# string comparison is not the authority for exact-case semantics, so the
+# binding guard is the executable comparison in distribution_job_worker.py.
+#
+# Merging, releasing or deploying this file activates nothing. Changing
+# DISTRIBUTION_JOB_WORKER_ENABLED, and dispatching this workflow, are each
+# separate production-execution authorizations.
+name: distribution-job-worker
+
+on:
+  schedule:
+    # 'at 20 minutes past every hour'
+    - cron: '20 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One worker execution globally at a time. A cancelled run is never evidence
+# that no external write occurred, so a queued run must never displace one.
+concurrency:
+  group: distribution-job-worker
+  cancel-in-progress: false
+
+jobs:
+  claim-and-execute:
+    if: ${{ vars.DISTRIBUTION_JOB_WORKER_ENABLED == 'ON' }}
+    runs-on: ubuntu-latest
+    # Bounds one claim: a 3600-second lease plus install and reporting time.
+    timeout-minutes: 90
+    environment: disseminate
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      # Least privilege: only publisher-scoped Crossref credentials are
+      # exported, and `include` entries are regular expressions, so they are
+      # anchored rather than written as globs. The uploader looks up
+      # `crossref_user_<publisher_id>` / `crossref_pw_<publisher_id>`, and
+      # there is no cross-publisher fallback.
+      - name: Make publisher Crossref credentials available (names lowercased)
+        uses: oNaiPs/secrets-to-env-action@v1.8
+        with:
+          secrets: ${{ toJSON(secrets) }}
+          convert: lower
+          include: ^CROSSREF_USER_, ^CROSSREF_PW_
+
+      - name: Claim and execute at most one distribution job
+        env:
+          DISTRIBUTION_JOB_WORKER_ENABLED: ${{ vars.DISTRIBUTION_JOB_WORKER_ENABLED }}
+          THOTH_WORKER_TOKEN: ${{ secrets.THOTH_WORKER_TOKEN }}
+          THOTH_API_URL: ${{ vars.THOTH_API_URL }}
+        run: python distribution_job_worker.py

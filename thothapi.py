@@ -2,6 +2,7 @@
 """Helpers for configuring and patching Thoth client access."""
 
 import json
+import requests
 from os import environ
 from uuid import UUID
 
@@ -97,6 +98,23 @@ query PublishersByDistributionPlatform(
 # a maximum of 100 and an explicit null or zero limit is never sent.
 DISTRIBUTION_PLATFORM_PAGE_SIZE = 100
 
+# The DIS-02A worker's bearer token is provisioned separately from every other
+# credential in this repository and carries only the DISSEMINATION_WORKER role.
+WORKER_TOKEN_VARIABLE = 'THOTH_WORKER_TOKEN'
+
+# Explicit bounds for every worker GraphQL call. The worker holds a
+# non-renewable lease, so an unbounded read is never acceptable.
+WORKER_CONNECT_TIMEOUT_SECONDS = 10
+WORKER_READ_TIMEOUT_SECONDS = 60
+
+# A worker response is a small bounded document: one claim, one count, at most
+# ten catalogue rows, or one mutation acknowledgement. Anything materially
+# larger is refused unparsed rather than loaded into memory.
+WORKER_MAX_RESPONSE_BYTES = 1048576
+
+# Only these GraphQL error fields ever reach a log or a durable diagnostic.
+WORKER_SAFE_ERROR_FIELDS = ('message', 'path')
+
 
 class ThothGraphQLTransportError(RuntimeError):
     """The Thoth GraphQL endpoint could not return a usable response."""
@@ -108,6 +126,31 @@ class ThothGraphQLResponseError(RuntimeError):
 
 class ThothPublisherDiscoveryError(RuntimeError):
     """Publisher assignments could not be reconciled from the Thoth API."""
+
+
+class ThothWorkerTransportError(RuntimeError):
+    """A worker GraphQL call produced no usable response."""
+
+
+class ThothWorkerResponseError(RuntimeError):
+    """A worker GraphQL call returned sanitised GraphQL errors.
+
+    `errors` carries only bounded `message`, `path` and `extensions.type`
+    values, which is what the result-report reconciliation protocol matches
+    on. No other part of the response is retained.
+    """
+
+    def __init__(self, errors):
+        self.errors = errors
+        super().__init__(json.dumps(errors, sort_keys=True))
+
+
+class ThothWorkerAuthError(RuntimeError):
+    """The worker has no usable bearer token, so it cannot authenticate.
+
+    Raised before any job is claimed. It is an invocation failure and must
+    never be converted into a fabricated durable-job failure report.
+    """
 
 
 class _ExplicitGraphQLNull:
@@ -167,6 +210,32 @@ def sanitised_graphql_errors(payload_errors):
         else:
             useful_errors.append(str(error))
     return json.dumps(useful_errors, sort_keys=True)
+
+
+def sanitised_worker_graphql_errors(payload_errors):
+    """Reduce worker GraphQL errors to message, path and extensions.type.
+
+    `extensions.type` is retained because the result-report reconciliation
+    protocol is pinned to it. Every other extension key is discarded unread:
+    an upstream diagnostic must never become a durable job detail.
+    """
+    if not isinstance(payload_errors, list):
+        return [{'message': 'Thoth returned a malformed GraphQL error list'}]
+
+    sanitised = []
+    for error in payload_errors:
+        if not isinstance(error, dict):
+            sanitised.append({'message': 'Thoth returned a malformed GraphQL error'})
+            continue
+        useful = {
+            key: error[key] for key in WORKER_SAFE_ERROR_FIELDS if key in error
+        }
+        extensions = error.get('extensions')
+        if isinstance(extensions, dict) and isinstance(
+                extensions.get('type'), str):
+            useful['type'] = extensions['type']
+        sanitised.append(useful)
+    return sanitised
 
 
 def get_publication_locations(thoth, publication_id):
@@ -439,3 +508,86 @@ def get_thoth_client(client_url=None):
     patch_thoth_client_mutations()
     resolved_url = get_thoth_client_url(client_url)
     return ThothClient(resolved_url) if resolved_url else ThothClient()
+
+
+class ThothWorkerTransport():
+    """Bounded GraphQL transport for the DIS-02A durable-job worker.
+
+    `thothlibrary`'s HTTP transport applies no request timeout, which is
+    unusable while holding a non-renewable BE-04 lease. This transport is
+    deliberately narrow: it serves only the worker's claim, catalogue and
+    result-report operations, always with explicit timeouts.
+
+    The bearer token is read once from `THOTH_WORKER_TOKEN` and is never
+    logged, stringified into an error, or reflected into any diagnostic.
+    """
+
+    def __init__(self, client_url=None, session=None):
+        token = environ.get(WORKER_TOKEN_VARIABLE)
+        if token is None or len(token.strip()) < 1:
+            raise ThothWorkerAuthError(
+                'Missing value for {}'.format(WORKER_TOKEN_VARIABLE))
+        self._token = token.strip()
+        self._session = session if session is not None else requests
+        base_url = get_thoth_client_url(client_url)
+        if base_url is None:
+            raise ThothWorkerAuthError(
+                'Missing Thoth API URL: set THOTH_API_URL')
+        self._endpoint = '{}/graphql'.format(base_url)
+
+    def execute(self, query, variables):
+        """Run one bounded worker GraphQL operation and return its `data`.
+
+        Raises `ThothWorkerTransportError` when no usable response arrived and
+        `ThothWorkerResponseError` when Thoth answered with GraphQL errors.
+        Neither carries the bearer token, the request body or the raw
+        response: upstream exception text is reduced to its exception class.
+        """
+        try:
+            response = self._session.post(
+                url=self._endpoint,
+                json={'query': query, 'variables': variables},
+                headers={
+                    'Authorization': 'Bearer {}'.format(self._token),
+                    'Content-Type': 'application/json',
+                },
+                timeout=(WORKER_CONNECT_TIMEOUT_SECONDS,
+                         WORKER_READ_TIMEOUT_SECONDS),
+            )
+        except Exception as error:
+            # The request carries the bearer token, so `str(error)` may quote
+            # it back. Only the exception class is ever reported.
+            raise ThothWorkerTransportError(
+                'Thoth worker request failed: {}'.format(
+                    type(error).__name__)) from None
+
+        status_code = getattr(response, 'status_code', None)
+        if status_code != 200:
+            raise ThothWorkerTransportError(
+                'Thoth worker request returned status {}'.format(status_code))
+
+        body = getattr(response, 'text', '')
+        if isinstance(body, str) and len(body) > WORKER_MAX_RESPONSE_BYTES:
+            raise ThothWorkerTransportError(
+                'Thoth worker response exceeded the bounded size limit')
+
+        try:
+            payload = response.json()
+        except Exception as error:
+            raise ThothWorkerTransportError(
+                'Thoth worker response was not JSON: {}'.format(
+                    type(error).__name__)) from None
+
+        if not isinstance(payload, dict):
+            raise ThothWorkerTransportError(
+                'Thoth worker response was not an object')
+
+        if payload.get('errors'):
+            raise ThothWorkerResponseError(
+                sanitised_worker_graphql_errors(payload['errors']))
+
+        data = payload.get('data')
+        if not isinstance(data, dict):
+            raise ThothWorkerTransportError(
+                'Thoth worker response contained no data object')
+        return data
