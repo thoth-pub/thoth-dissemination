@@ -1,159 +1,226 @@
-import unittest
-from unittest.mock import patch, MagicMock
+import io
 import json
-import sys
+import runpy
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / 'obtain_oapen_locations.py'
+
+PUBLICATION_ID = '9a8b7c6d-1111-4222-8333-444455556666'
+PUBLICATION_ID_2 = '0f1e2d3c-5555-4666-8777-888899990000'
+DOI = '10.1002/(SICI)1097-4636(199706)35:4<425::AID-JBM3>3.0.CO;2-K'
+DOI_2 = '10.11647/obp.0001'
+OAPEN_HANDLE = '20.500.12657/12345'
+DOAB_HANDLE = '20.500.12854/67890'
+OAPEN_FILE = 'example.pdf'
+
+
+def oapen_url(doi):
+    return ('https://library.oapen.org/rest/search?query='
+            'oapen.identifier.doi:%22{}%22&expand=metadata,bitstreams'
+            .format(doi))
+
+
+def doab_url(doi):
+    return ('https://directory.doabooks.org/rest/search?query='
+            'oapen.identifier.doi:%22{}%22&expand=metadata'.format(doi))
+
+
+def oapen_location(publication_id, handle=OAPEN_HANDLE, file_name=OAPEN_FILE):
+    return ('{} OAPEN https://library.oapen.org/handle/{} '
+            'https://library.oapen.org/bitstream/handle/{}/{}'
+            '?sequence=1&isAllowed=y None None'
+            .format(publication_id, handle, handle, file_name))
+
+
+def doab_location(publication_id, handle=DOAB_HANDLE):
+    return '{} DOAB https://directory.doabooks.org/handle/{} None None None'.format(
+        publication_id, handle)
+
+
+class FakeResponse:
+    def __init__(self, status_code, body=None):
+        self.status_code = status_code
+        self.content = b'' if body is None else json.dumps(body).encode()
+
+
+def oapen_result(handle=OAPEN_HANDLE, file_name=OAPEN_FILE):
+    return FakeResponse(200, [{
+        'handle': handle,
+        'bitstreams': [
+            {'bundleName': 'THUMBNAIL', 'name': 'thumbnail.jpg'},
+            {'bundleName': 'ORIGINAL', 'name': file_name},
+        ],
+    }])
+
+
+def doab_result(handle=DOAB_HANDLE):
+    return FakeResponse(200, [{'handle': handle}])
+
+
+def compact(records):
+    """Serialise records exactly as obtain_new_ids.py emits them."""
+    return json.dumps(records, separators=(',', ':'))
 
 
 class TestObtainOapenLocations(unittest.TestCase):
-    """Tests for the obtain_oapen_locations.py script."""
+    """Run the real script as __main__ with only the HTTP layer faked."""
 
-    def _run_script(self, stdin_data, mock_requests_get):
-        """Helper to simulate running the script with given stdin and mocked requests."""
-        import io
-        import ast
+    def run_script(self, stdin_text, responses=None):
+        responses = responses or {}
+        requested = []
 
-        test_stdin = io.StringIO(stdin_data)
-        with patch('sys.stdin', test_stdin):
-            exec_globals = {
-                'ast': ast,
-                'logging': __import__('logging'),
-                'json': json,
-                'sleep': lambda x: None,
-                'requests': type(sys)('requests'),
-                'sys': sys,
-            }
-            exec_globals['requests'].get = mock_requests_get
-            exec_globals['requests'].ConnectionError = type(sys)('ConnectionError')
+        def fake_get(url, headers=None, **kwargs):
+            requested.append(url)
+            self.assertEqual(headers, {'Accept': 'application/json'})
+            if url not in responses:
+                raise AssertionError('Unexpected API request: {}'.format(url))
+            return responses[url]
 
-            locations = []
-            platform_attempted = {"OAPEN": False, "DOAB": False}
-            platform_success = {"OAPEN": False, "DOAB": False}
+        stdout = io.StringIO()
+        with patch('sys.stdin', io.StringIO(stdin_text)), \
+                patch('sys.stdout', stdout), \
+                patch('requests.get', side_effect=fake_get), \
+                patch('time.sleep'), \
+                self.assertLogs(level='INFO') as logs:
+            with self.assertRaises(SystemExit) as exit_:
+                runpy.run_path(str(SCRIPT), run_name='__main__')
+        return exit_.exception.code, stdout.getvalue(), requested, logs.output
 
-            works_to_search = ast.literal_eval(test_stdin.read())
+    def test_producer_json_keeps_identifiers_and_queries_both_platforms(self):
+        status, stdout, requested, _ = self.run_script(
+            compact([[PUBLICATION_ID, DOI, ['OAPEN', 'DOAB']]]) + '\n',
+            {oapen_url(DOI): oapen_result(), doab_url(DOI): doab_result()},
+        )
 
-            for entry in works_to_search:
-                if len(entry) == 2:
-                    publication_id, doi = entry
-                    missing_platforms = ["OAPEN", "DOAB"]
-                else:
-                    publication_id, doi, missing_platforms = entry
+        self.assertEqual(status, 0)
+        self.assertEqual(requested, [oapen_url(DOI), doab_url(DOI)])
+        self.assertEqual(json.loads(stdout), [
+            oapen_location(PUBLICATION_ID),
+            doab_location(PUBLICATION_ID),
+        ])
 
-                if "OAPEN" in missing_platforms:
-                    platform_attempted["OAPEN"] = True
-                    oapen_rsp = mock_requests_get(
-                        url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22&expand=metadata,bitstreams'.format(doi),
-                        headers={'Accept': 'application/json'},
-                    )
-                    if hasattr(oapen_rsp, 'status_code') and oapen_rsp.status_code == 200:
-                        platform_success["OAPEN"] = True
-                        oapen_rsp_json = json.loads(oapen_rsp.content)
-                        if len(oapen_rsp_json) == 1:
-                            oapen_result = oapen_rsp_json[0]
-                            handle = oapen_result['handle']
-                            oapen_landing_page = 'https://library.oapen.org/handle/{}'.format(handle)
-                            oapen_full_text_url = 'https://library.oapen.org/bitstream/handle/{}/{}?sequence=1&isAllowed=y'.format(handle, 'file.pdf')
-                            locations.append('{} OAPEN {} {} {} {}'.format(publication_id, oapen_landing_page, oapen_full_text_url, None, None))
+    def test_oapen_only_record_does_not_query_doab(self):
+        status, stdout, requested, _ = self.run_script(
+            compact([[PUBLICATION_ID, DOI, ['OAPEN']]]),
+            {oapen_url(DOI): oapen_result()},
+        )
 
-                if "DOAB" in missing_platforms:
-                    platform_attempted["DOAB"] = True
-                    doab_rsp = mock_requests_get(
-                        url='https://directory.doabooks.org/rest/search?query=oapen.identifier.doi:%22{}%22&expand=metadata'.format(doi),
-                        headers={'Accept': 'application/json'},
-                    )
-                    if hasattr(doab_rsp, 'status_code') and doab_rsp.status_code == 200:
-                        platform_success["DOAB"] = True
-                        doab_rsp_json = json.loads(doab_rsp.content)
-                        if len(doab_rsp_json) == 1:
-                            handle = doab_rsp_json[0]['handle']
-                            doab_landing_page = 'https://directory.doabooks.org/handle/{}'.format(handle)
-                            locations.append('{} DOAB {} {} {} {}'.format(publication_id, doab_landing_page, None, None, None))
+        self.assertEqual(status, 0)
+        self.assertEqual(requested, [oapen_url(DOI)])
+        self.assertEqual(json.loads(stdout), [oapen_location(PUBLICATION_ID)])
 
-            return locations, platform_attempted, platform_success
+    def test_doab_only_record_does_not_query_oapen(self):
+        status, stdout, requested, _ = self.run_script(
+            compact([[PUBLICATION_ID, DOI, ['DOAB']]]),
+            {doab_url(DOI): doab_result()},
+        )
 
-    def _make_success_response(self, content_bytes):
-        rsp = MagicMock()
-        rsp.status_code = 200
-        rsp.content = content_bytes
-        return rsp
+        self.assertEqual(status, 0)
+        self.assertEqual(requested, [doab_url(DOI)])
+        self.assertEqual(json.loads(stdout), [doab_location(PUBLICATION_ID)])
 
-    def _make_error_response(self, status_code=500):
-        rsp = MagicMock()
-        rsp.status_code = status_code
-        return rsp
+    def test_two_element_record_is_treated_as_missing_both(self):
+        status, stdout, requested, _ = self.run_script(
+            compact([[PUBLICATION_ID, DOI]]),
+            {oapen_url(DOI): oapen_result(), doab_url(DOI): doab_result()},
+        )
 
-    def test_emit_both_when_missing_both(self):
-        """Test case 7: missing_platforms ["OAPEN","DOAB"] emits both."""
-        doi = "10.1234/test"
-        oapen_content = json.dumps([{'handle': '20.500.12657/oapen123', 'bitstreams': [{'bundleName': 'ORIGINAL', 'name': 'file.pdf'}]}]).encode()
-        doab_content = json.dumps([{'handle': '20.500.12657/doab456'}]).encode()
+        self.assertEqual(status, 0)
+        self.assertEqual(requested, [oapen_url(DOI), doab_url(DOI)])
+        self.assertEqual(json.loads(stdout), [
+            oapen_location(PUBLICATION_ID),
+            doab_location(PUBLICATION_ID),
+        ])
 
-        def mock_get(url, headers=None, **kwargs):
-            if 'oapen.org' in url:
-                return self._make_success_response(oapen_content)
-            return self._make_success_response(doab_content)
+    def test_two_and_three_element_records_mix_in_input_order(self):
+        status, stdout, requested, _ = self.run_script(
+            compact([
+                [PUBLICATION_ID, DOI, ['DOAB']],
+                [PUBLICATION_ID_2, DOI_2],
+            ]),
+            {
+                doab_url(DOI): doab_result(),
+                oapen_url(DOI_2): oapen_result('20.500.12657/2', 'second.pdf'),
+                doab_url(DOI_2): doab_result('20.500.12854/2'),
+            },
+        )
 
-        stdin_data = repr([("pub-1", doi, ["OAPEN", "DOAB"])])
-        locations, attempted, success = self._run_script(stdin_data, mock_get)
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            requested, [doab_url(DOI), oapen_url(DOI_2), doab_url(DOI_2)])
+        self.assertEqual(json.loads(stdout), [
+            doab_location(PUBLICATION_ID),
+            oapen_location(PUBLICATION_ID_2, '20.500.12657/2', 'second.pdf'),
+            doab_location(PUBLICATION_ID_2, '20.500.12854/2'),
+        ])
 
-        self.assertEqual(len(locations), 2)
-        oapen_lines = [l for l in locations if 'OAPEN' in l]
-        doab_lines = [l for l in locations if 'DOAB' in l]
-        self.assertEqual(len(oapen_lines), 1)
-        self.assertEqual(len(doab_lines), 1)
+    def test_empty_array_emits_empty_array_without_requests(self):
+        status, stdout, requested, _ = self.run_script('[]\n')
 
-    def test_emit_oapen_only(self):
-        """Test case 5: missing_platforms ["OAPEN"] emits only OAPEN."""
-        doi = "10.1234/test"
-        oapen_content = json.dumps([{'handle': '20.500.12657/oapen123', 'bitstreams': [{'bundleName': 'ORIGINAL', 'name': 'file.pdf'}]}]).encode()
+        self.assertEqual(status, 0)
+        self.assertEqual(requested, [])
+        self.assertEqual(json.loads(stdout), [])
 
-        def mock_get(url, headers=None, **kwargs):
-            return self._make_success_response(oapen_content)
+    def test_unmatched_and_ambiguous_results_emit_no_location(self):
+        status, stdout, requested, logs = self.run_script(
+            compact([[PUBLICATION_ID, DOI, ['OAPEN', 'DOAB']]]),
+            {
+                oapen_url(DOI): FakeResponse(200, []),
+                doab_url(DOI): FakeResponse(
+                    200, [{'handle': 'a'}, {'handle': 'b'}]),
+            },
+        )
 
-        stdin_data = repr([("pub-1", doi, ["OAPEN"])])
-        locations, attempted, success = self._run_script(stdin_data, mock_get)
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(stdout), [])
+        self.assertTrue(any(
+            'More than one DOAB API result' in line for line in logs))
 
-        oapen_lines = [l for l in locations if 'OAPEN' in l]
-        doab_lines = [l for l in locations if 'DOAB' in l]
-        self.assertEqual(len(oapen_lines), 1)
-        self.assertEqual(len(doab_lines), 0)
-        self.assertTrue(attempted["OAPEN"])
-        self.assertFalse(attempted["DOAB"])
+    def test_failed_api_platform_still_exits_non_zero(self):
+        status, stdout, requested, logs = self.run_script(
+            compact([[PUBLICATION_ID, DOI, ['OAPEN', 'DOAB']]]),
+            {oapen_url(DOI): FakeResponse(500), doab_url(DOI): doab_result()},
+        )
 
-    def test_emit_doab_only(self):
-        """Test case 6: missing_platforms ["DOAB"] emits only DOAB."""
-        doi = "10.1234/test"
-        doab_content = json.dumps([{'handle': '20.500.12657/doab456'}]).encode()
+        self.assertEqual(status, 1)
+        # Existing behaviour: an OAPEN failure skips the rest of that record.
+        self.assertEqual(requested, [oapen_url(DOI)])
+        self.assertEqual(json.loads(stdout), [])
+        self.assertTrue(any(
+            'All attempts to contact OAPEN API failed' in line
+            for line in logs))
 
-        def mock_get(url, headers=None, **kwargs):
-            return self._make_success_response(doab_content)
+    def test_invalid_input_fails_before_any_api_request(self):
+        invalid_inputs = {
+            # What bash made of the JSON when the workflow echoed it inline.
+            'shell-stripped JSON':
+                '[[{},{},[OAPEN,DOAB]]]'.format(PUBLICATION_ID, DOI_2),
+            'Python literal': repr([(PUBLICATION_ID, DOI_2, ['OAPEN'])]),
+            'empty input': '',
+            'object': '{}',
+            'string': '"{}"'.format(PUBLICATION_ID),
+            'record is not an array': compact(['ab']),
+            'record too short': compact([[PUBLICATION_ID]]),
+            'record too long': compact([[PUBLICATION_ID, DOI_2, ['OAPEN'], 'x']]),
+            'platforms not an array': compact([[PUBLICATION_ID, DOI_2, 'OAPEN']]),
+            'non-string platform': compact([[PUBLICATION_ID, DOI_2, [1]]]),
+            'non-string publication ID': compact([[1, DOI_2]]),
+            'null DOI': compact([[PUBLICATION_ID, None]]),
+        }
+        for description, stdin_text in invalid_inputs.items():
+            with self.subTest(description):
+                status, stdout, requested, logs = self.run_script(stdin_text)
 
-        stdin_data = repr([("pub-1", doi, ["DOAB"])])
-        locations, attempted, success = self._run_script(stdin_data, mock_get)
-
-        oapen_lines = [l for l in locations if 'OAPEN' in l]
-        doab_lines = [l for l in locations if 'DOAB' in l]
-        self.assertEqual(len(oapen_lines), 0)
-        self.assertEqual(len(doab_lines), 1)
-        self.assertFalse(attempted["OAPEN"])
-        self.assertTrue(attempted["DOAB"])
-
-    def test_backwards_compat_two_tuple(self):
-        """Test case 8: old 2-item tuple treated as missing both."""
-        doi = "10.1234/test"
-        oapen_content = json.dumps([{'handle': '20.500.12657/oapen123', 'bitstreams': [{'bundleName': 'ORIGINAL', 'name': 'file.pdf'}]}]).encode()
-        doab_content = json.dumps([{'handle': '20.500.12657/doab456'}]).encode()
-
-        def mock_get(url, headers=None, **kwargs):
-            if 'oapen.org' in url:
-                return self._make_success_response(oapen_content)
-            return self._make_success_response(doab_content)
-
-        stdin_data = repr([("pub-1", doi)])
-        locations, attempted, success = self._run_script(stdin_data, mock_get)
-
-        self.assertEqual(len(locations), 2)
-        self.assertTrue(attempted["OAPEN"])
-        self.assertTrue(attempted["DOAB"])
+                self.assertEqual(status, 1)
+                self.assertEqual(stdout, '')
+                self.assertEqual(requested, [])
+                self.assertTrue(any(
+                    line.startswith('ERROR:') and 'Invalid input' in line
+                    for line in logs), logs)
 
 
 if __name__ == '__main__':

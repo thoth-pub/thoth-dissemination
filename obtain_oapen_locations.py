@@ -3,12 +3,11 @@
 Acquire a list of locations to be added to Thoth (in same format as output by disseminator.py).
 Purpose: automate updating of Thoth records for platforms where location is not immediately
          returned as part of initial OAPEN/DOAB dissemination process.
-Inputs: string list of tuples, each containing (publication_id, doi) or
-        (publication_id, doi, missing_platforms) where missing_platforms
+Inputs: JSON array (on stdin) of records, each [publication_id, doi] or
+        [publication_id, doi, missing_platforms] where missing_platforms
         indicates which platforms ("OAPEN", "DOAB") need location lookup.
-        Old 2-item tuples are treated as missing both platforms.
+        Old 2-item records are treated as missing both platforms.
 """
-import ast
 import logging
 import json
 from time import sleep
@@ -17,7 +16,31 @@ import sys
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(asctime)s: %(message)s')
 
-works_to_search = ast.literal_eval(sys.stdin.read())
+
+def read_works(stream):
+    """Parse and validate the JSON array of work records output by obtain_new_ids.py"""
+    try:
+        works = json.load(stream)
+    except json.JSONDecodeError as error:
+        raise ValueError('not valid JSON ({})'.format(error)) from error
+    if not isinstance(works, list):
+        raise ValueError('expected a JSON array of work records')
+    for entry in works:
+        if not (isinstance(entry, list) and len(entry) in (2, 3)
+                and all(isinstance(value, str) for value in entry[:2])
+                and (len(entry) == 2 or (isinstance(entry[2], list) and
+                     all(isinstance(platform, str) for platform in entry[2])))):
+            raise ValueError('expected [publication_id, doi] or [publication_id, doi, '
+                             'missing_platforms], found {}'.format(json.dumps(entry)))
+    return works
+
+
+try:
+    works_to_search = read_works(sys.stdin)
+except ValueError as error:
+    # Stop before any API request, so that no locations are output for writing
+    logging.error('Invalid input: {}'.format(error))
+    sys.exit(1)
 
 locations = []
 
