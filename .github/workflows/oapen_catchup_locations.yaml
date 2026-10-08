@@ -44,11 +44,15 @@ jobs:
 
       - name: Get locations for selected works using Python script
         id: get-locations
+        # Pass step data through the environment: expressions interpolated into
+        # the script itself are reparsed by the shell (e.g. JSON quotes stripped)
+        env:
+          NEW_IDS: ${{ steps.get-ids.outputs.NEW_IDS }}
+          MAX_LOCATIONS: ${{ inputs.max_locations }}
         run: |
-          raw_output=$(echo "${{ steps.get-ids.outputs.NEW_IDS }}" | python obtain_oapen_locations.py)
+          raw_output=$(printf '%s\n' "$NEW_IDS" | python obtain_oapen_locations.py)
           echo "$raw_output" > new_locations.json
 
-          MAX_LOCATIONS="${{ inputs.max_locations }}"
           if [ -z "$MAX_LOCATIONS" ]; then
             MAX_LOCATIONS=250
           fi
@@ -127,7 +131,9 @@ jobs:
         run: pip install -r requirements_write_locations.txt
 
       - name: Write location to temp file
-        run: echo "${{ matrix.location }}" >> location.txt
+        run: printf '%s\n' "$LOCATION" >> location.txt
+        env:
+          LOCATION: ${{ matrix.location }}
 
       - name: Write location to Thoth using Python script
         run: python write_locations.py location.txt
