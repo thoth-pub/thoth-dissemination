@@ -63,7 +63,9 @@ jobs:
         run: pip install -r requirements_write_locations.txt
 
       - name: Write location to temp file
-        run: echo "${{ matrix.location }}" >> location.txt
+        run: printf '%s\n' "$LOCATION" >> location.txt
+        env:
+          LOCATION: ${{ matrix.location }}
 
       - name: Write location to Thoth using Python script
         run: python write_locations.py location.txt
