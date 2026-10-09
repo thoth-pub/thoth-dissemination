@@ -16,6 +16,9 @@ import sys
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(asctime)s: %(message)s')
 
+# Dedicated User-Agent so OAPEN/DOAB can identify (and allowlist) Thoth's REST API traffic
+USER_AGENT = 'Thoth-Dissemination/1.0 (+https://thoth.pub)'
+
 
 def read_works(stream):
     """Parse and validate the JSON array of work records output by obtain_new_ids.py"""
@@ -61,7 +64,10 @@ for entry in works_to_search:
                 url='https://library.oapen.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
                     '&expand=metadata,bitstreams'
                     .format(doi),
-                headers={'Accept': 'application/json'},
+                headers={
+                    'Accept': 'application/json',
+                    'User-Agent': USER_AGENT,
+                },
             )
         except requests.ConnectionError:
             logging.error('OAPEN API request failed for {} (connection closed)'.format(doi))
@@ -94,7 +100,10 @@ for entry in works_to_search:
             url='https://directory.doabooks.org/rest/search?query=oapen.identifier.doi:%22{}%22' \
                 '&expand=metadata'
                 .format(doi),
-            headers={'Accept': 'application/json'},
+            headers={
+                'Accept': 'application/json',
+                'User-Agent': USER_AGENT,
+            },
         )
         if doab_rsp.status_code != 200:
             logging.error('DOAB API request failed for {} (status code {})'.format(doi, doab_rsp.status_code))
