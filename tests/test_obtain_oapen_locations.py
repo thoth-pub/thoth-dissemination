@@ -16,6 +16,8 @@ DOI_2 = '10.11647/obp.0001'
 OAPEN_HANDLE = '20.500.12657/12345'
 DOAB_HANDLE = '20.500.12854/67890'
 OAPEN_FILE = 'example.pdf'
+USER_AGENT = 'Thoth-Dissemination/1.0 (+https://thoth.pub)'
+EXPECTED_HEADERS = {'Accept': 'application/json', 'User-Agent': USER_AGENT}
 
 
 def oapen_url(doi):
@@ -72,10 +74,12 @@ class TestObtainOapenLocations(unittest.TestCase):
     def run_script(self, stdin_text, responses=None):
         responses = responses or {}
         requested = []
+        self.sent_headers = []
 
         def fake_get(url, headers=None, **kwargs):
             requested.append(url)
-            self.assertEqual(headers, {'Accept': 'application/json'})
+            self.sent_headers.append((url, headers))
+            self.assertEqual(headers, EXPECTED_HEADERS)
             if url not in responses:
                 raise AssertionError('Unexpected API request: {}'.format(url))
             return responses[url]
@@ -101,6 +105,17 @@ class TestObtainOapenLocations(unittest.TestCase):
         self.assertEqual(json.loads(stdout), [
             oapen_location(PUBLICATION_ID),
             doab_location(PUBLICATION_ID),
+        ])
+
+    def test_oapen_and_doab_requests_send_dedicated_user_agent(self):
+        self.run_script(
+            compact([[PUBLICATION_ID, DOI, ['OAPEN', 'DOAB']]]),
+            {oapen_url(DOI): oapen_result(), doab_url(DOI): doab_result()},
+        )
+
+        self.assertEqual(self.sent_headers, [
+            (oapen_url(DOI), EXPECTED_HEADERS),
+            (doab_url(DOI), EXPECTED_HEADERS),
         ])
 
     def test_oapen_only_record_does_not_query_doab(self):
