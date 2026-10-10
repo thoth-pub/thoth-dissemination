@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.8.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.8.1) - 2026-10-10
+
+### Fixed
+  - Restored the `oapen-catchup-locations` handoff of selected works to `obtain_oapen_locations.py` (#108). The workflow interpolated `obtain_new_ids.py`'s JSON output into an `echo` command, so the shell stripped the JSON quotes and the script could not parse its input; every scheduled run since 2026-07-28 failed before any OAPEN/DOAB lookup and wrote no locations.
+  - `obtain_oapen_locations.py` now reads its work list with `json.load` and validates every record before making any API request. Malformed or empty input fails the step without output, while a valid empty array still yields an empty matrix (#108).
+
+### Security
+  - The OAPEN location catch-up workflow now passes the work selection, `max_locations` and each matrix location to its shell steps, and the Project MUSE location catch-up workflow passes each matrix location, through environment variables and `printf` instead of interpolating them into the script, closing command injection from API- and CSV-derived strings (#108).
+
+### Changed
+  - OAPEN and DOAB REST lookups in `obtain_oapen_locations.py` now send the dedicated User-Agent `Thoth-Dissemination/1.0 (+https://thoth.pub)` alongside `Accept: application/json`, instead of the `requests` default `python-requests/<version>`. Endpoints, query parameters, request pacing, failure handling and output are unchanged (#111).
+  - Replaced OAPEN location tests that duplicated the script's logic with tests that run the real script, added tests that execute the actual catch-up workflow steps against local OAPEN/DOAB and Thoth fakes, and added exact request-header assertions for every OAPEN and DOAB request (#108, #111).
+
+### Deployment
+  - OAPEN's allowlisting of the dedicated User-Agent is an unconfirmed external dependency, as is whether it also covers DOAB. The header does not by itself guarantee API access: OAPEN blocked its REST API over excessive automated traffic and returned HTTP 403 to the previous default User-Agent on 2026-10-08. If every OAPEN or every DOAB lookup in a run is rejected, the run fails at the lookup step and writes no Thoth locations for either platform.
+  - The #108 changes have been on `main` since 2026-10-08 (#109) without a versioned release, and are versioned by this release. Scheduled `oapen-catchup-locations` runs use `main`, so the User-Agent change takes effect from the first scheduled run after this release is merged into `main`.
+
 ## [[1.8.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.8.0) - 2026-08-27
 
 ### Added
