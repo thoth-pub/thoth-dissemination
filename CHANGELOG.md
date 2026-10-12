@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+  - Upgraded `google-cloud-storage` from 2.18.2 to 3.17.0 (#110). This is the only change to `requirements.txt`. Fresh installs on Python 3.10 and 3.11 on 2026-10-12 differed from 2.18.2 installs only in this package. Every dissemination platform, the distribution-job worker, Internet Archive reconciliation, CI and the Docker image install this file, and `disseminator.py` imports the SDK for every platform.
+  - Google Play PDF, EPUB and ONIX uploads now explicitly request CRC32c checksums and no SDK upload retry (`checksum="crc32c"`, `retry=None`) (#110). Object names, uploaded bytes, content type, upload order, authentication and the fixed failure messages are unchanged.
+  - Objects of up to 8 MiB are sent in one multipart request that declares their CRC32c, and Cloud Storage rejects a mismatch (HTTP 400, `BadRequest`). Larger objects use a resumable upload whose final request carries the CRC32c in `x-goog-hash`; the SDK also compares the CRC32c in the response and raises `DataCorruption` on a mismatch. Without the `google-crc32c` C extension the SDK default would fall back to MD5; the explicit setting does not.
+  - SDK 3.x retries uploads by default, which 2.18.2 did not do for these unconditional uploads. With `retry=None` each object gets exactly one attempt, and any upload error still stops the run at that object with exit code 1.
+
+### Security
+  - Failed Google Play uploads still log only the fixed messages introduced by #117 (#118). SDK 3.x exception text, which can contain request URLs and resumable upload session IDs, is never logged.
+
+### Deployment
+  - Provider requests the upgraded SDK can make beyond the uploads themselves: about one background bucket-metadata GET (`get_bucket(timeout=10.0)`, which the SDK may retry) per Google Play job; a background `Bucket.exists()` GET if an SDK call raises NotFound after that metadata is cached; and, after a resumable upload raises `DataCorruption`, a DELETE of the object name without a generation precondition under the SDK's default retry. That DELETE can leave the name with no current object even if an earlier delivery used it, and a failed DELETE (such as a 404) replaces the checksum error. Authentication refresh-and-resend on HTTP 401 is unaffected by `retry=None`.
+  - A work's uploads are not atomic: a failed upload leaves any earlier PDF or EPUB in the bucket. A resumable upload whose final response has no CRC32c fails the run (HTTP 200 `GoogleAPICallError`) without a DELETE, although the object may already be stored.
+  - The new tests run the real SDK over a fake HTTP transport. They cannot show Cloud Storage's own checksum enforcement or the bucket's versioning and retention, and do not cover uploads over 100 MiB, which the SDK sends in more than one chunk.
+  - Scheduled workflows run from `main`; before a release, only jobs run from `develop` (such as Internet Archive reconciliation) use the new SDK. Reverting this change restores the 2.18.2 pin and calls, but not an identical environment, because transitive dependencies are not pinned.
+
 ## [[1.8.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.8.1) - 2026-10-10
 
 ### Fixed
