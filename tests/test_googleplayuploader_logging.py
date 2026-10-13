@@ -279,10 +279,13 @@ class GooglePlayUploadLoggingTest(unittest.TestCase):
         self.assertEqual(result.attempted, keys)
         for key, payload in expected:
             blob = result.blobs[key]
-            # Only upload_from_string, with exactly the existing arguments
+            # Only upload_from_string, with exactly the approved arguments:
+            # enforced CRC32c and no SDK upload retry (DIS-MAINT-GCS-01)
             self.assertEqual(
                 blob.mock_calls,
-                [call.upload_from_string(data=payload, content_type=CONTENT_TYPE)])
+                [call.upload_from_string(
+                    data=payload, content_type=CONTENT_TYPE,
+                    checksum='crc32c', retry=None)])
             self.assertIs(blob.upload_from_string.call_args.kwargs['data'], payload)
 
     def assertSafeFailure(self, result, expected_message, raised):
