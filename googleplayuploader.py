@@ -81,16 +81,14 @@ class GooglePlayUploader(Uploader):
             try:
                 content_blob.upload_from_string(data=file[1], content_type="application/octet-stream")
             except Exception as error:
-                logging.error(
-                    'Could not connect to Thoth Google Cloud bucket for Google Play crawl: {}'.format(error))
+                logging.error("Google Play content upload failed")
                 sys.exit(1)
 
         metadata_blob = bucket.blob('{}/{}-full/{}'.format(metadata_folder, collection_code, metadata_filename))
         try:
             metadata_blob.upload_from_string(data=metadata_bytes, content_type="application/octet-stream")
         except Exception as error:
-            logging.error(
-                'Could not connect to Thoth Google Cloud bucket for Google Play crawl: {}'.format(error))
+            logging.error("Google Play ONIX metadata upload failed")
             sys.exit(1)
 
         logging.info('Successfully uploaded to Thoth Google Cloud bucket for Google Play crawl')
