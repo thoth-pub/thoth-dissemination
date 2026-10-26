@@ -10,6 +10,7 @@ no test sends a network request or needs credentials.
 import json
 import os
 import re
+import time
 import unittest
 from functools import partial
 from pathlib import Path
@@ -30,6 +31,8 @@ from oapensworduploader import (
     OAPENLookupError,
     OAPENSWORDUploader,
     PreflightDecision,
+    PreflightGatedSwordApi,
+    find_dois,
     normalise_doi,
     normalise_isbn,
     normalise_text,
@@ -231,9 +234,10 @@ def control_items():
                    title='The deliverance of open access books',
                    alternative='Examining usage and dissemination',
                    publisher='Amsterdam University Press'),
-        oapen_item('20.500.12657/118796', doi='10.11647/OBP.0532',
-                   work_id='72875878-bc93-4de9-a8f1-d2908531d0e7',
-                   title='Who Will Speak the Truth?', alternative=None,
+        # A Thoth SWORD deposit of a new title, accessioned 2026-05-18
+        oapen_item('20.500.12657/113008', doi='10.11647/OBP.0517',
+                   work_id='4344e3cc-b92a-4375-816c-56ce99e29c43',
+                   title='Open Book Publishers control record', alternative=None,
                    publisher='Open Book Publishers'),
     ]
 
@@ -257,7 +261,9 @@ class FakeRemote:
         self.items = list(items) + (control_items() if controls else [])
         self.events = []
         self.searches = []
-        # Keyed by field (every search on it) or by exact query
+        # Keyed by field (every search on it) or by exact query: an exception to
+        # raise, a response to return for every page, or a list of items that the
+        # server returns for the query in place of its own matching
         self.failures = {}
         # Like the live API's default, the server may cap a page below `limit`
         self.server_page_cap = 100
@@ -278,16 +284,19 @@ class FakeRemote:
         failure = self.failures.get(query, self.failures.get(field))
         if isinstance(failure, BaseException):
             raise failure
-        if failure is not None:
+        if failure is not None and not isinstance(failure, list):
             return failure
         if len(self.searches) <= self.silent_requests:
             return FakeResponse(200, [])
-        # Like OAPEN, match the quoted phrase's words anywhere within a field value
-        wanted = ' {} '.format(normalise_text(quoted[1:-1]))
-        matches = [item for item in self.items
-                   if any(entry['key'] == field and wanted in ' {} '.format(
-                       normalise_text(entry['value']) or '')
-                       for entry in item['metadata'])]
+        if isinstance(failure, list):
+            matches = failure
+        else:
+            # Like OAPEN, match the quoted phrase's words anywhere within a field value
+            wanted = ' {} '.format(normalise_text(quoted[1:-1]))
+            matches = [item for item in self.items
+                       if any(entry['key'] == field and wanted in ' {} '.format(
+                           normalise_text(entry['value']) or '')
+                           for entry in item['metadata'])]
         offset = params['offset']
         limit = min(params['limit'], self.server_page_cap)
         return FakeResponse(200, matches[offset:offset + limit])
@@ -398,12 +407,24 @@ class IdentifierNormalisationTests(unittest.TestCase):
         for value in ('https://doi.org/10.99999/EXAMPLE.0001', 'http://dx.doi.org/10.99999/example.0001',
                       'https://www.doi.org/10.99999/example.0001', 'doi.org/10.99999/example.0001',
                       'doi:10.99999/Example.0001', 'DOI 10.99999/example.0001',
-                      ' 10.99999/EXAMPLE.0001. ', '10.99999/example.0001;'):
+                      ' 10.99999/EXAMPLE.0001. ', '10.99999/example.0001;',
+                      '10.99999/EXAMPLE.0001)', '(10.99999/EXAMPLE.0001)', '10.99999/EXAMPLE.0001"',
+                      "'10.99999/example.0001'", '<10.99999/EXAMPLE.0001>', '[10.99999/example.0001]'):
             self.assertEqual(normalise_doi(value), DOI, value)
+
+    def test_every_doi_in_a_value_is_read(self):
+        self.assertEqual(find_dois('10.26530/OAPEN_1;10.99999/EXAMPLE.0001'),
+                         ['10.26530/oapen_1', DOI])
+        self.assertEqual(find_dois('doi:10.1111/a, https://doi.org/10.2222/b'),
+                         ['10.1111/a', '10.2222/b'])
+        # Balanced brackets and semicolons inside a DOI are kept
+        self.assertEqual(find_dois('10.1002/(SICI)1097-4571(199806)49:8<693::AID-ASI4>3.0.CO;2-0'),
+                         ['10.1002/(sici)1097-4571(199806)49:8<693::aid-asi4>3.0.co;2-0'])
+        self.assertEqual(find_dois('10.1000/foo(bar)'), ['10.1000/foo(bar)'])
 
     def test_invalid_dois_are_rejected(self):
         for value in (None, '', 'example.0001', 'https://doi.org/', 'https://doi.org/not-a-doi',
-                      '10.1/x', '10.99999/', '10 99999 example 0001'):
+                      '10.1/x', '10.99999/', '10 99999 example 0001', 'x10.99999/example.0001'):
             self.assertIsNone(normalise_doi(value), value)
 
     def test_isbns_are_compared_as_validated_isbn13(self):
@@ -555,14 +576,63 @@ class PreflightDecisionTests(OfflineTestCase):
 
     def test_same_doi_in_another_form_prevents_create(self):
         for doi in ('https://doi.org/10.99999/Example.0001', 'https://www.doi.org/10.99999/example.0001',
-                    'DOI 10.99999/example.0001', '10.99999/EXAMPLE.0001.'):
-            with self.subTest(doi):
-                remote = FakeRemote([oapen_item('20.500.12657/500', doi=doi, title='Other')])
+                    'DOI 10.99999/example.0001', '10.99999/EXAMPLE.0001.', '10.99999/EXAMPLE.0001)',
+                    '10.99999/EXAMPLE.0001"', '<10.99999/EXAMPLE.0001>',
+                    '10.26530/OAPEN_1;10.99999/example.0001'):
+            for title in (TITLE, 'Other'):
+                with self.subTest(doi=doi, title=title):
+                    remote = FakeRemote([oapen_item('20.500.12657/500', doi=doi, title=title)])
 
-                reason = self.assertHeld(make_uploader(remote), remote,
-                                         PreflightDecision.RECONCILE_EXISTING)
+                    reason = self.assertHeld(make_uploader(remote), remote,
+                                             PreflightDecision.RECONCILE_EXISTING)
 
-                self.assertIn('20.500.12657/500 was not deposited by Thoth', reason)
+                    self.assertIn('20.500.12657/500 was not deposited by Thoth', reason)
+
+    def test_doi_search_hit_with_another_doi_needs_review_unless_it_extends_ours(self):
+        # The live search has only been seen returning longer DOIs, such as chapters'
+        query = 'oapen.identifier.doi:"10.99999/example.0001"'
+        cases = {
+            'different DOI': ('10.99999/other.0001', PreflightDecision.AMBIGUOUS),
+            'ours as a later part': ('10.5555/10.99999/example.0001x', PreflightDecision.AMBIGUOUS),
+            'ours without separator': ('10.99999/example.00012', PreflightDecision.AMBIGUOUS),
+        }
+        for name, (doi, decision) in cases.items():
+            with self.subTest(name):
+                remote = FakeRemote()
+                remote.failures[query] = [oapen_item('20.500.12657/524', doi=doi, title='Other')]
+
+                reason = self.assertHeld(make_uploader(remote), remote, decision)
+
+                self.assertIn('20.500.12657/524 was returned by an identifier search', reason)
+
+    def test_doi_search_hit_needs_every_doi_value_readable(self):
+        # One value extends ours, as a chapter DOI does, but another cannot be read
+        item = oapen_item('20.500.12657/525', doi='10.99999/EXAMPLE.0001.01', title='Other')
+        item['metadata'].append(metadata_entry('oapen.identifier.doi', 'see printed edition'))
+        remote = FakeRemote([item])
+
+        self.assertHeld(make_uploader(remote), remote, PreflightDecision.AMBIGUOUS)
+
+    def test_isbn_search_hit_without_our_isbn_needs_review(self):
+        # An exact-value ISBN search has no harmless reason to return other ISBNs
+        query = 'oapen.identifier.isbn:"9781999900021"'
+        for name, isbns in {'other ISBN': ('9781999900069',), 'no ISBN': ()}.items():
+            with self.subTest(name):
+                remote = FakeRemote()
+                remote.failures[query] = [oapen_item('20.500.12657/526', isbns=isbns, title='Other')]
+
+                self.assertHeld(make_uploader(remote), remote, PreflightDecision.AMBIGUOUS)
+
+    def test_identifier_search_overflow_is_unknown_remote_state(self):
+        chapters = [oapen_item('20.500.12657/8{}'.format(n), doi='10.99999/EXAMPLE.0001.{}'.format(n),
+                               title='Chapter {}'.format(n))
+                    for n in range(OAPEN_MAX_RESULTS + 1)]
+        remote = FakeRemote(chapters)
+
+        reason = self.assertHeld(make_uploader(remote), remote,
+                                 PreflightDecision.UNKNOWN_REMOTE_STATE)
+
+        self.assertIn('search on oapen.identifier.doi returned more than 500 results', reason)
 
     def test_same_isbn_without_a_doi_prevents_create(self):
         remote = FakeRemote([oapen_item('20.500.12657/501', isbns=('9781999900021',),
@@ -689,7 +759,7 @@ class PreflightDecisionTests(OfflineTestCase):
                 reason = self.assertHeld(make_uploader(remote), remote,
                                          PreflightDecision.AMBIGUOUS)
 
-                self.assertIn('could not be read', reason)
+                self.assertIn('was returned by an identifier search', reason)
 
     def test_same_title_and_publisher_without_a_distinguishing_doi_needs_review(self):
         cases = {
@@ -699,12 +769,16 @@ class PreflightDecisionTests(OfflineTestCase):
             'only other ISBNs': oapen_item('20.500.12657/520', isbns=('9781999900052',)),
             'OAPEN-minted DOI only': oapen_item('20.500.12657/521', doi='10.26530/OAPEN_9998',
                                                 isbns=('9781999900052',)),
+            'longer publisher name': oapen_item('20.500.12657/527', publisher='Example Press Ltd'),
+            'imprint name': oapen_item('20.500.12657/528', publisher='Example Imprint'),
         }
         for name, item in cases.items():
             with self.subTest(name):
                 remote = FakeRemote([item])
+                metadata = thoth_metadata()
+                metadata['data']['work']['imprint']['imprintName'] = 'Example Imprint'
 
-                reason = self.assertHeld(make_uploader(remote), remote,
+                reason = self.assertHeld(make_uploader(remote, metadata), remote,
                                          PreflightDecision.AMBIGUOUS)
 
                 self.assertIn('requires review', reason)
@@ -771,26 +845,45 @@ class PreflightDecisionTests(OfflineTestCase):
     def test_empty_search_is_not_trusted_when_a_control_record_is_not_found(self):
         # As when a field is no longer indexed, or the index is being rebuilt
         remote = FakeRemote()
-        remote.items = [item for item in remote.items if item['handle'] != '20.500.12657/118796']
+        remote.items = [item for item in remote.items if item['handle'] != '20.500.12657/113008']
 
         reason = self.assertHeld(make_uploader(remote), remote,
                                  PreflightDecision.UNKNOWN_REMOTE_STATE)
 
-        self.assertIn('control for oapen.identifier did not return record 20.500.12657/118796',
+        self.assertIn('control for oapen.identifier did not return record 20.500.12657/113008',
                       reason)
 
     def test_empty_search_is_not_trusted_when_a_control_identifier_cannot_be_read(self):
-        # Search still finds the record, but its DOI is in a form the parser rejects
-        remote = FakeRemote()
-        control = next(item for item in remote.items if item['handle'] == '20.500.12657/25287')
-        for entry in control['metadata']:
-            if entry['key'] == 'oapen.identifier.doi':
-                entry['value'] = '10 26530 OAPEN 1004809'
+        # Search still finds each control record, but its identifier is in a form
+        # the parser cannot read
+        def unreadable(handle, key, value):
+            item = next(item for item in control_items() if item['handle'] == handle)
+            for entry in item['metadata']:
+                if entry['key'] == key:
+                    entry['value'] = value
+            return [item]
 
-        reason = self.assertHeld(make_uploader(remote), remote,
-                                 PreflightDecision.UNKNOWN_REMOTE_STATE)
+        cases = {
+            'oapen.identifier.doi': ('oapen.identifier.doi:"10.26530/OAPEN_1004809"', unreadable(
+                '20.500.12657/25287', 'oapen.identifier.doi', '10 26530 OAPEN 1004809')),
+            'oapen.identifier.isbn': ('oapen.identifier.isbn:"9789085551201"', unreadable(
+                '20.500.12657/25287', 'oapen.identifier.isbn', '978-90-8555-120')),
+            'oapen.identifier': (
+                'oapen.identifier:"thoth-work-id:4344e3cc-b92a-4375-816c-56ce99e29c43"',
+                unreadable('20.500.12657/113008', 'oapen.identifier',
+                           'thoth work id 4344e3cc b92a 4375 816c 56ce99e29c43')),
+            'dc.title': ('dc.title:"The deliverance of open access books"', unreadable(
+                '20.500.12657/25287', 'dc.title', 'The deliverance')),
+        }
+        for field, (query, response) in cases.items():
+            with self.subTest(field):
+                remote = FakeRemote()
+                remote.failures[query] = response
 
-        self.assertIn('control for oapen.identifier.doi', reason)
+                reason = self.assertHeld(make_uploader(remote), remote,
+                                         PreflightDecision.UNKNOWN_REMOTE_STATE)
+
+                self.assertIn('control for {} did not return record'.format(field), reason)
 
     def test_empty_search_is_not_trusted_when_a_control_search_fails(self):
         remote = FakeRemote()
@@ -822,7 +915,10 @@ class PreflightDecisionTests(OfflineTestCase):
         no_pdf['data']['work']['publications'] = [
             publication for publication in no_pdf['data']['work']['publications']
             if publication['publicationType'] != 'PDF']
+        no_locations = thoth_metadata()
+        no_locations['data']['work']['publications'][0]['locations'] = None
         cases = {
+            'no location list': (no_locations, 'no location list'),
             'no DOI and no ISBN': (thoth_metadata(doi=None, isbns=()), 'neither a DOI nor an ISBN'),
             'malformed DOI': (thoth_metadata(doi='https://doi.org/not-a-doi'), 'not a valid DOI'),
             'invalid ISBN': (thoth_metadata(isbns=('978-1-9999-0002-2',)), 'not a valid ISBN'),
@@ -958,8 +1054,10 @@ class RepeatAndRetryTests(OfflineTestCase):
                 self.assertNotIn('upload_metadata', remote.events)
                 self.assertNotIn('delete_item', remote.events)
                 self.assertIn('was not confirmed', logs.output[0])
-                self.assertIn('do not retry until OAPEN has been checked for '
-                              '"thoth-work-id:{}"'.format(WORK_ID), logs.output[0])
+                # A timed-out create can leave an unfinished deposit that search cannot show
+                self.assertIn('unfinished deposit, which OAPEN search cannot show', logs.output[0])
+                self.assertIn('do not retry until OAPEN has confirmed whether it holds an item '
+                              'for "thoth-work-id:{}"'.format(WORK_ID), logs.output[0])
 
     def test_failed_cleanup_after_a_partial_deposit_requires_reconciliation(self):
         for name, delete_error in {
@@ -1009,6 +1107,19 @@ class OtherUploaderTests(OfflineTestCase):
     def test_preflight_is_defined_only_on_the_oapen_uploader(self):
         self.assertFalse(hasattr(SwordV2Uploader, 'assess_existing_deposit'))
         self.assertFalse(hasattr(CULUploader, 'assess_existing_deposit'))
+
+
+class ProductionWiringTests(OfflineTestCase):
+    def test_uploader_searches_oapen_with_requests_and_real_pacing(self):
+        with patch.object(Uploader, 'get_thoth_metadata', return_value=thoth_metadata()), \
+                patch.dict(os.environ, CREDENTIALS), \
+                patch('swordv2uploader.SwordV2Api', new=partial(FakeSwordApi, FakeRemote())):
+            uploader = OAPENSWORDUploader(WORK_ID, 'https://export.example', None, '0.0.0-test')
+
+        self.assertIsInstance(uploader.oapen_index, OAPENLibraryIndex)
+        self.assertIs(uploader.oapen_index.http_get, requests.get)
+        self.assertIs(uploader.oapen_index.pause, time.sleep)
+        self.assertIsInstance(uploader.api, PreflightGatedSwordApi)
 
 
 if __name__ == '__main__':

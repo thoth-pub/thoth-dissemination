@@ -34,7 +34,10 @@ THOTH_WORK_ID_MARKER = 'thoth-work-id:'
 THOTH_WORK_ID_PATTERN = re.compile(
     r'thoth-work-id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
     re.IGNORECASE)
-DOI_PATTERN = re.compile(r'10\.\d{4,9}/\S+')
+DOI_START = re.compile(r'(?<![0-9a-z.])10\.\d{4,9}/')
+DOI_BRACKETS = {')': '(', ']': '[', '}': '{', '>': '<'}
+# Characters that end a DOI-search hit's DOI where it extends ours, as a chapter DOI does
+DOI_EXTENSION_SEPARATORS = './-_'
 
 DOI_FIELD = 'oapen.identifier.doi'
 ISBN_FIELD = 'oapen.identifier.isbn'
@@ -48,7 +51,7 @@ TITLE_FIELD = 'dc.title'
 INDEX_CONTROLS = (
     (DOI_FIELD, '10.26530/OAPEN_1004809', '20.500.12657/25287'),
     (ISBN_FIELD, '9789085551201', '20.500.12657/25287'),
-    (MARKER_FIELD, 'thoth-work-id:72875878-bc93-4de9-a8f1-d2908531d0e7', '20.500.12657/118796'),
+    (MARKER_FIELD, 'thoth-work-id:4344e3cc-b92a-4375-816c-56ce99e29c43', '20.500.12657/113008'),
     (TITLE_FIELD, 'The deliverance of open access books', '20.500.12657/25287'),
 )
 
@@ -77,7 +80,8 @@ class DepositIdentity:
     # A phrase search for the short title also finds it within a longer title
     search_title: str
     titles: frozenset
-    publisher: str | None
+    # Publisher and imprint names
+    publishers: frozenset
 
 
 @dataclass(frozen=True)
@@ -88,8 +92,8 @@ class OAPENItem:
     work_ids: frozenset
     titles: frozenset
     publishers: frozenset
-    # DOI and ISBN fields that have values, all of which could be read
-    readable_fields: frozenset
+    # Whether the DOI field has values, every one of which holds a DOI
+    doi_field_readable: bool
 
     def distinguishing_dois(self):
         return {doi for doi in self.dois if not doi.startswith(OAPEN_DOI_PREFIX)}
@@ -103,14 +107,36 @@ class OAPENCoverageError(OAPENLookupError):
     """An OAPEN search matched more items than can be checked."""
 
 
-def normalise_doi(value):
-    """Return the first DOI in a value, lower-cased and without trailing punctuation."""
+def find_dois(value):
+    """Return every DOI in a value, in order, lower-cased and without surrounding punctuation."""
     if not isinstance(value, str):
-        return None
-    match = DOI_PATTERN.search(value.lower())
-    if match is None:
-        return None
-    return match.group(0).rstrip('.,;:/') or None
+        return []
+    text = value.lower()
+    starts = [match.start() for match in DOI_START.finditer(text)]
+    dois = []
+    for (start, end) in zip(starts, starts[1:] + [len(text)]):
+        words = text[start:end].split()
+        doi = words[0] if words else ''
+        # Drop trailing punctuation, quotes and unbalanced closing brackets,
+        # as around '<10.1234/x>' or between DOIs in '10.1234/x;10.5678/y'
+        while doi and (doi[-1] in '.,;:/"\'' or (
+                doi[-1] in DOI_BRACKETS
+                and doi.count(doi[-1]) > doi.count(DOI_BRACKETS[doi[-1]]))):
+            doi = doi[:-1]
+        if re.fullmatch(r'10\.\d{4,9}/\S+', doi) and doi not in dois:
+            dois.append(doi)
+    return dois
+
+
+def normalise_doi(value):
+    """Return the first DOI in a value, or None."""
+    dois = find_dois(value)
+    return dois[0] if dois else None
+
+
+def extends_doi(doi, base):
+    return (len(doi) > len(base) and doi.startswith(base)
+            and doi[len(base)] in DOI_EXTENSION_SEPARATORS)
 
 
 def normalise_isbn(value):
@@ -149,6 +175,11 @@ def normalise_text(value):
     return text or None
 
 
+def names_overlap(first, second):
+    """Whether one normalised name contains the other, as 'example press ltd' does 'example press'."""
+    return ' {} '.format(first) in ' {} '.format(second) or ' {} '.format(second) in ' {} '.format(first)
+
+
 def is_oapen_url(url):
     if not isinstance(url, str):
         return False
@@ -168,7 +199,7 @@ def parse_oapen_item(item):
         raise OAPENLookupError('OAPEN search returned an item without a handle or metadata')
     dois, isbns, work_ids, titles, alternatives, publishers = (
         set(), set(), set(), set(), set(), set())
-    readable = {DOI_FIELD: None, ISBN_FIELD: None}
+    doi_field_readable = None
     for entry in metadata:
         if not isinstance(entry, dict) or not isinstance(entry.get('key'), str):
             raise OAPENLookupError(
@@ -179,16 +210,12 @@ def parse_oapen_item(item):
             continue
         work_ids.update(match.lower() for match in THOTH_WORK_ID_PATTERN.findall(value))
         if key.endswith('.doi') or (key.startswith('dc.identifier') and 'doi' in value.lower()):
-            doi = normalise_doi(value)
-            if doi is not None:
-                dois.add(doi)
-            if key in readable:
-                readable[key] = readable[key] is not False and doi is not None
+            found = find_dois(value)
+            dois.update(found)
+            if key == DOI_FIELD:
+                doi_field_readable = doi_field_readable is not False and bool(found)
         elif key.endswith('.isbn'):
-            found = find_isbns(value)
-            isbns.update(found)
-            if key in readable:
-                readable[key] = readable[key] is not False and bool(found)
+            isbns.update(find_isbns(value))
         elif key == TITLE_FIELD:
             titles.add(value)
         elif key == 'dc.title.alternative':
@@ -204,7 +231,7 @@ def parse_oapen_item(item):
         frozenset(work_ids),
         frozenset(normalise_text(title) for title in titles | full_titles) - {None},
         frozenset(publishers) - {None},
-        frozenset(key for (key, is_readable) in readable.items() if is_readable),
+        bool(doi_field_readable),
     )
 
 
@@ -315,9 +342,10 @@ class PreflightGatedSwordApi:
             detail = error if isinstance(error, DisseminationError) else type(error).__name__
             raise DisseminationError(
                 'OAPEN SWORD create for work {} was not confirmed ({}). An item may '
-                'nevertheless exist at OAPEN: do not retry until OAPEN has been checked '
-                'for "{}{}"'.format(self._work_id, detail, THOTH_WORK_ID_MARKER,
-                                    self._work_id)) from error
+                'nevertheless exist at OAPEN as an unfinished deposit, which OAPEN search '
+                'cannot show: do not retry until OAPEN has confirmed whether it holds an '
+                'item for "{}{}"'.format(self._work_id, detail, THOTH_WORK_ID_MARKER,
+                                         self._work_id)) from error
         logging.info('Created OAPEN SWORD item for work {}: {}'.format(
             self._work_id, getattr(receipt, 'edit', None)))
         return receipt
@@ -432,7 +460,7 @@ class OAPENSWORDUploader(DSpaceUploader):
                     or identity.isbns & item.isbns
                     or identity.work_id in item.work_ids):
                 matched.append(item)
-            elif self.is_unexplained_hit(item, found_by[item.handle]):
+            elif self.is_unexplained_hit(identity, item, found_by[item.handle]):
                 unreadable.append(item)
             elif self.is_possible_title_match(identity, item):
                 possible.append(item)
@@ -446,8 +474,9 @@ class OAPENSWORDUploader(DSpaceUploader):
         if unreadable:
             return PreflightResult(
                 PreflightDecision.AMBIGUOUS,
-                'OAPEN item {} was returned by an identifier search, but its identifier '
-                'could not be read; requires review'.format(unreadable[0].handle))
+                'OAPEN item {} was returned by an identifier search, but none of its '
+                'identifiers could be read as this work\'s or as a longer DOI; requires '
+                'review'.format(unreadable[0].handle))
         if possible:
             return PreflightResult(
                 PreflightDecision.AMBIGUOUS,
@@ -534,19 +563,26 @@ class OAPENSWORDUploader(DSpaceUploader):
         titles.discard(None)
         if not titles:
             return PreflightResult(PreflightDecision.INELIGIBLE, 'work has no title')
-        publisher = ((work.get('imprint') or {}).get('publisher') or {}).get('publisherName')
+        imprint = work.get('imprint') or {}
+        publishers = {normalise_text(imprint.get('imprintName')),
+                      normalise_text((imprint.get('publisher') or {}).get('publisherName'))}
+        publishers.discard(None)
         return DepositIdentity(work_id, doi, frozenset(isbns), search_title,
-                               frozenset(titles), normalise_text(publisher))
+                               frozenset(titles), frozenset(publishers))
 
     @staticmethod
-    def is_unexplained_hit(item, fields):
+    def is_unexplained_hit(identity, item, fields):
         """
-        An unmatched item is unrelated only if an identifier search returned it for
-        a readable value that differs from ours, such as a longer chapter DOI
+        An unmatched identifier-search hit is unrelated only if the DOI search
+        returned it for readable DOIs one of which extends ours, as a chapter DOI
+        does. Exact-value marker and ISBN searches have no such explanation.
         """
-        return MARKER_FIELD in fields or any(
-            field in fields and field not in item.readable_fields
-            for field in (DOI_FIELD, ISBN_FIELD))
+        if MARKER_FIELD in fields or ISBN_FIELD in fields:
+            return True
+        if DOI_FIELD in fields:
+            return not (item.doi_field_readable
+                        and any(extends_doi(doi, identity.doi) for doi in item.dois))
+        return False
 
     @staticmethod
     def is_possible_title_match(identity, item):
@@ -557,7 +593,9 @@ class OAPENSWORDUploader(DSpaceUploader):
         """
         if not identity.titles & item.titles:
             return False
-        if item.publishers and identity.publisher not in item.publishers:
+        if item.publishers and not any(names_overlap(ours, theirs)
+                                       for ours in identity.publishers
+                                       for theirs in item.publishers):
             return False
         return identity.doi is None or not item.distinguishing_dois()
 
