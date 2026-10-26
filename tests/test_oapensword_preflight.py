@@ -429,7 +429,9 @@ class IdentifierNormalisationTests(unittest.TestCase):
             self.assertTrue(extends_doi(doi, DOI), doi)
         for doi in (DOI, '10.99999/example.00012', '10.99999/example.0001-',
                     '10.99999/example.0001_', '10.99999/example.0001.-',
-                    '10.99999/example.0001?', '10.99999/other.0001.01'):
+                    '10.99999/example.0001?', '10.99999/example.0001?x',
+                    '10.99999/example.0001#c1', '10.99999/example.0001?-a',
+                    '10.99999/other.0001.01', '10.99999/example.0002.01'):
             self.assertFalse(extends_doi(doi, DOI), doi)
 
     def test_invalid_dois_are_rejected(self):
@@ -605,6 +607,12 @@ class PreflightDecisionTests(OfflineTestCase):
             'different DOI': ('10.99999/other.0001', PreflightDecision.AMBIGUOUS),
             'ours as a later part': ('10.5555/10.99999/example.0001x', PreflightDecision.AMBIGUOUS),
             'ours without separator': ('10.99999/example.00012', PreflightDecision.AMBIGUOUS),
+            # Decorations that are not a separator, or a separator not directly after ours
+            'resolver query string': ('https://doi.org/10.99999/EXAMPLE.0001?locatt=mode:legacy',
+                                      PreflightDecision.AMBIGUOUS),
+            'fragment': ('10.99999/EXAMPLE.0001#c1', PreflightDecision.AMBIGUOUS),
+            'separator after other characters': ('10.99999/EXAMPLE.0001?-a',
+                                                 PreflightDecision.AMBIGUOUS),
         }
         for name, (doi, decision) in cases.items():
             with self.subTest(name):
