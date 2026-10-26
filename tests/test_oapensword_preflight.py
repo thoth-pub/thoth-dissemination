@@ -32,6 +32,7 @@ from oapensworduploader import (
     OAPENSWORDUploader,
     PreflightDecision,
     PreflightGatedSwordApi,
+    extends_doi,
     find_dois,
     normalise_doi,
     normalise_isbn,
@@ -422,6 +423,15 @@ class IdentifierNormalisationTests(unittest.TestCase):
                          ['10.1002/(sici)1097-4571(199806)49:8<693::aid-asi4>3.0.co;2-0'])
         self.assertEqual(find_dois('10.1000/foo(bar)'), ['10.1000/foo(bar)'])
 
+    def test_only_a_continuation_after_a_separator_extends_a_doi(self):
+        for doi in ('10.99999/example.0001.01', '10.99999/example.0001/c1',
+                    '10.99999/example.0001-2', '10.99999/example.0001_ch1'):
+            self.assertTrue(extends_doi(doi, DOI), doi)
+        for doi in (DOI, '10.99999/example.00012', '10.99999/example.0001-',
+                    '10.99999/example.0001_', '10.99999/example.0001.-',
+                    '10.99999/example.0001?', '10.99999/other.0001.01'):
+            self.assertFalse(extends_doi(doi, DOI), doi)
+
     def test_invalid_dois_are_rejected(self):
         for value in (None, '', 'example.0001', 'https://doi.org/', 'https://doi.org/not-a-doi',
                       '10.1/x', '10.99999/', '10 99999 example 0001', 'x10.99999/example.0001'):
@@ -605,6 +615,27 @@ class PreflightDecisionTests(OfflineTestCase):
 
                 self.assertIn('20.500.12657/524 was returned by an identifier search', reason)
 
+    def test_our_doi_with_a_stray_trailing_separator_needs_review(self):
+        # Nothing follows the separator, so this is not a chapter DOI
+        for doi in ('10.99999/EXAMPLE.0001-', '10.99999/EXAMPLE.0001_', '10.99999/EXAMPLE.0001.-',
+                    '10.99999/EXAMPLE.0001-"', '10.99999/EXAMPLE.0001_)'):
+            for title in (TITLE, 'Other'):
+                with self.subTest(doi=doi, title=title):
+                    remote = FakeRemote([oapen_item('20.500.12657/529', doi=doi, title=title)])
+
+                    reason = self.assertHeld(make_uploader(remote), remote,
+                                             PreflightDecision.AMBIGUOUS)
+
+                    self.assertIn('20.500.12657/529 was returned by an identifier search', reason)
+
+    def test_doi_search_hit_needs_every_doi_beginning_with_ours_to_extend_it(self):
+        # A chapter DOI does not explain another value that only begins with ours
+        item = oapen_item('20.500.12657/530', doi='10.99999/EXAMPLE.0001.01', title='Other')
+        item['metadata'].append(metadata_entry('oapen.identifier.doi', '10.99999/EXAMPLE.0001?'))
+        remote = FakeRemote([item])
+
+        self.assertHeld(make_uploader(remote), remote, PreflightDecision.AMBIGUOUS)
+
     def test_doi_search_hit_needs_every_doi_value_readable(self):
         # One value extends ours, as a chapter DOI does, but another cannot be read
         item = oapen_item('20.500.12657/525', doi='10.99999/EXAMPLE.0001.01', title='Other')
@@ -771,6 +802,7 @@ class PreflightDecisionTests(OfflineTestCase):
                                                 isbns=('9781999900052',)),
             'longer publisher name': oapen_item('20.500.12657/527', publisher='Example Press Ltd'),
             'imprint name': oapen_item('20.500.12657/528', publisher='Example Imprint'),
+            'no publisher recorded': oapen_item('20.500.12657/532', publisher=None),
         }
         for name, item in cases.items():
             with self.subTest(name):
@@ -782,6 +814,19 @@ class PreflightDecisionTests(OfflineTestCase):
                                          PreflightDecision.AMBIGUOUS)
 
                 self.assertIn('requires review', reason)
+
+    def test_same_title_record_with_a_doi_beginning_with_ours_needs_review(self):
+        # Found only by the title search; such a DOI does not tell the books apart
+        query = 'dc.title:"A Study of Examples"'
+        for doi in ('10.99999/EXAMPLE.0001-', '10.99999/EXAMPLE.0001.01'):
+            with self.subTest(doi):
+                remote = FakeRemote()
+                remote.failures[query] = [oapen_item('20.500.12657/531', doi=doi)]
+
+                reason = self.assertHeld(make_uploader(remote), remote,
+                                         PreflightDecision.AMBIGUOUS)
+
+                self.assertIn('20.500.12657/531 has the same title and publisher', reason)
 
     def test_unrelated_search_hits_do_not_block_create(self):
         cases = {

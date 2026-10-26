@@ -36,8 +36,8 @@ THOTH_WORK_ID_PATTERN = re.compile(
     re.IGNORECASE)
 DOI_START = re.compile(r'(?<![0-9a-z.])10\.\d{4,9}/')
 DOI_BRACKETS = {')': '(', ']': '[', '}': '{', '>': '<'}
-# Characters that end a DOI-search hit's DOI where it extends ours, as a chapter DOI does
-DOI_EXTENSION_SEPARATORS = './-_'
+# How a longer DOI continues ours, as a chapter DOI such as '10.1234/book.01' does
+DOI_EXTENSION = re.compile(r'[./_-][0-9a-z]')
 
 DOI_FIELD = 'oapen.identifier.doi'
 ISBN_FIELD = 'oapen.identifier.isbn'
@@ -135,8 +135,8 @@ def normalise_doi(value):
 
 
 def extends_doi(doi, base):
-    return (len(doi) > len(base) and doi.startswith(base)
-            and doi[len(base)] in DOI_EXTENSION_SEPARATORS)
+    """Whether a DOI continues base after a separator, which a stray '-' or '_' alone does not."""
+    return doi.startswith(base) and DOI_EXTENSION.match(doi, len(base)) is not None
 
 
 def normalise_isbn(value):
@@ -574,22 +574,24 @@ class OAPENSWORDUploader(DSpaceUploader):
     def is_unexplained_hit(identity, item, fields):
         """
         An unmatched identifier-search hit is unrelated only if the DOI search
-        returned it for readable DOIs one of which extends ours, as a chapter DOI
-        does. Exact-value marker and ISBN searches have no such explanation.
+        returned it for readable DOIs that begin with ours, and every such DOI
+        extends ours, as a chapter DOI does. Exact-value marker and ISBN searches
+        have no such explanation.
         """
         if MARKER_FIELD in fields or ISBN_FIELD in fields:
             return True
         if DOI_FIELD in fields:
-            return not (item.doi_field_readable
-                        and any(extends_doi(doi, identity.doi) for doi in item.dois))
+            longer = [doi for doi in item.dois if doi.startswith(identity.doi)]
+            return not (item.doi_field_readable and longer
+                        and all(extends_doi(doi, identity.doi) for doi in longer))
         return False
 
     @staticmethod
     def is_possible_title_match(identity, item):
         """
-        Flag a same-title, same-publisher item for review unless it has its own DOI.
-        Disjoint ISBNs do not rule it out: OAPEN and Thoth may each hold only some
-        of a book's format ISBNs.
+        Flag a same-title, same-publisher item for review unless it has its own DOI,
+        one that does not begin with ours. Disjoint ISBNs do not rule it out: OAPEN
+        and Thoth may each hold only some of a book's format ISBNs.
         """
         if not identity.titles & item.titles:
             return False
@@ -597,7 +599,8 @@ class OAPENSWORDUploader(DSpaceUploader):
                                        for ours in identity.publishers
                                        for theirs in item.publishers):
             return False
-        return identity.doi is None or not item.distinguishing_dois()
+        return identity.doi is None or not {
+            doi for doi in item.distinguishing_dois() if not doi.startswith(identity.doi)}
 
     @staticmethod
     def compare_matched_item(identity, item):
