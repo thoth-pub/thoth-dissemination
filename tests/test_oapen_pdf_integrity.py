@@ -328,6 +328,11 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
         fetched = []
         fetch = uploader.pdf_source.fetch
         uploader.pdf_source.fetch = lambda url: fetched.append(fetch(url)) or fetched[-1]
+        publications = []
+        get_details = uploader.get_publication_details
+        uploader.get_publication_details = (
+            lambda publication_type: publications.append(get_details(publication_type))
+            or publications[-1])
         uploaded = []
         upload_pdf = FakeSwordApi.upload_pdf
 
@@ -337,12 +342,18 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
 
         with patch.object(FakeSwordApi, 'upload_pdf', record_upload), \
                 self.assertLogs(level='INFO') as logs:
-            uploader.upload_to_platform()
+            locations = uploader.upload_to_platform()
 
         self.assertEqual(len(host.requests), 1)
         self.assertEqual(len(uploaded), 1)
         self.assertIs(uploaded[0], fetched[0])
         self.assertEqual(uploaded[0], VALID_PDF)
+        self.assertEqual([(publication.type, publication.id, publication.file_ext,
+                           publication.source_url) for publication in publications],
+                         [('PDF', PDF_PUBLICATION_ID, '.pdf', PDF_URL)])
+        self.assertIs(publications[0].bytes, fetched[0])
+        self.assertEqual([location.publication_id for location in locations],
+                         [PDF_PUBLICATION_ID])
         events = [event for event in remote.events if not event.startswith('search')]
         self.assertEqual(events, ['export_metadata', 'pdf_download', 'create_item',
                                   'upload_metadata', 'upload_pdf', 'complete_deposit'])
