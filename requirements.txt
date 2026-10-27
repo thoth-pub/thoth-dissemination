@@ -1,6 +1,7 @@
 google-cloud-storage==3.17.0
 internetarchive==5.7.1
 paramiko==4.0.0
+pikepdf==10.17.0
 pycountry==24.6.1
 python-dotenv==0.19.2
 requests==2.33.0
