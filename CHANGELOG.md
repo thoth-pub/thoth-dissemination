@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.9.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.9.0) - 2026-10-29
+
 ### Added
   - OAPEN uploads now check for an existing item before any PDF download or SWORD request (#123). Every scheduled and manual OAPEN run passes through this preflight in `OAPENSWORDUploader`, after the existing mandatory-metadata checks.
   - A work is created only if Thoth records no OAPEN location on any publication, and read-only OAPEN REST searches by DOI, `thoth-work-id` marker, every ISBN and title find no item that may be the same book. Each search is paged until an empty page and every result is compared exactly. An empty result is trusted only if control searches, before and after, find and read known records.
@@ -26,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Failed Google Play uploads still log only the fixed messages introduced by #117 (#118). SDK 3.x exception text, which can contain request URLs and resumable upload session IDs, is never logged.
 
 ### Deployment
+  - Merging this release into `main` activates the OAPEN preflight (#123), the OAPEN PDF check (#124) and Google Cloud Storage SDK 3.17.0 (#110) for every scheduled and manual run. Publishing it pushes the first Docker image built `FROM python:3.11`; a local build, import check and offline test run of `develop @ 00c45681` passed on 2026-10-28 (#124).
+  - #110's read-only inspection of the Google Play bucket (object versioning, soft delete, retention and effective DELETE permission) had not been carried out when this release was prepared, so what the SDK DELETE described below would do to a stored object is unverified (#110, #143).
   - Provider requests the upgraded SDK can make beyond the uploads themselves: about one background bucket-metadata GET (`get_bucket(timeout=10.0)`, which the SDK may retry) per Google Play job; a background `Bucket.exists()` GET if an SDK call raises NotFound after that metadata is cached; and, after a resumable upload raises `DataCorruption`, a DELETE of the object name without a generation precondition under the SDK's default retry. That DELETE can leave the name with no current object even if an earlier delivery used it, and a failed DELETE (such as a 404) replaces the checksum error. Authentication refresh-and-resend on HTTP 401 is unaffected by `retry=None`.
   - A work's uploads are not atomic: a failed upload leaves any earlier PDF or EPUB in the bucket. A resumable upload whose final response has no CRC32c fails the run (HTTP 200 `GoogleAPICallError`) without a DELETE, although the object may already be stored.
   - The new tests run the real SDK over a fake HTTP transport. They cannot show Cloud Storage's own checksum enforcement or the bucket's versioning and retention, and do not cover uploads over 100 MiB, which the SDK sends in more than one chunk.
@@ -39,6 +43,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The OAPEN PDF check (#124) is local only, so it cannot show that OAPEN stored the same bytes (#125). It does not check linearization, which a damaged hint table does not affect. Encrypted PDFs are held even when they open without a password (owner-password restrictions only). The 90 s timeout applies between reads, not to the whole download, so a source that keeps sending slowly is bounded only by the size limit and the job's own timeout.
   - The Docker image moves from Python 3.10 to 3.11 with the next release that publishes it (#124). The image was not built or run as part of this change.
   - The OAPEN location that Thoth records after a deposit is unchanged. It still names the PDF `<work id>.pdf` at bitstream sequence 2, which does not match the bitstream OAPEN actually creates (#125).
+
+## [[1.8.2]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.8.2) - 2026-10-14
+
+### Security
+  - Prevented potentially sensitive Google Cloud Storage SDK exception details from appearing in public Google Play dissemination logs and GitHub Actions job summaries (#117).
+  - Replaced raw provider exception messages with fixed, safe error messages for both content and ONIX metadata upload failures. Existing upload inputs, object names, ordering and failure behaviour are unchanged.
+  - Added regression tests covering sensitive provider error details, hostile exception objects, fail-fast behaviour and successful uploads (#117).
+
+### Deployment
+  - This release includes the Google Play logging security fix from #117, merged into `main` through #120. The change was validated by 861 passing tests on Python 3.11.
+  - The Google Cloud Storage SDK remains at version 2.18.2. The checksum and SDK upgrade proposed in #110 is not included in this release.
 
 ## [[1.8.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.8.1) - 2026-10-10
 
