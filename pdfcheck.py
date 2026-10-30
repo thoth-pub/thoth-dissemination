@@ -80,7 +80,10 @@ class PDFSource:
         # Errors name the host only: source URLs may carry signed tokens
         host = urlparse(url).hostname or 'the source host'
         try:
-            response = self.http_get(url, headers={'User-Agent': PDF_SOURCE_USER_AGENT},
+            # An uncompressed transfer keeps the size limit a limit on memory
+            # and lets the received length be compared with Content-Length
+            response = self.http_get(url, headers={'User-Agent': PDF_SOURCE_USER_AGENT,
+                                                   'Accept-Encoding': 'identity'},
                                      timeout=PDF_TIMEOUT, stream=True)
         except requests.RequestException as error:
             raise PDFCheckError('the request to {} failed ({})'.format(

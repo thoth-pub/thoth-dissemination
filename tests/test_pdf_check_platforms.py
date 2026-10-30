@@ -57,8 +57,11 @@ CLIENTS = {
     'BKCI': (bkciuploader, 'FTP'),
     'GooglePlay': (googleplayuploader, 'storage'),
 }
-# These deliver an EPUB without a PDF when Thoth lists no PDF
+# These deliver an EPUB without a PDF when the PDF publication has no file
 PDF_OPTIONAL = ('ProjectMUSE', 'EBSCOHost', 'ProQuest', 'GooglePlay')
+# MUSE and ProQuest name every file after the PDF ISBN, so only these send an EPUB
+# for a work with no PDF publication at all
+PDF_PUBLICATION_OPTIONAL = ('EBSCOHost', 'GooglePlay')
 
 
 def metadata(pdf_listed=True):
@@ -151,6 +154,16 @@ class PlatformRun:
                 names += zipfile.ZipFile(io.BytesIO(data)).namelist()
         return names
 
+    def file(self, name):
+        """The bytes sent under a file name, looking inside a ZIP too."""
+        if name in self.sent:
+            return self.sent[name]
+        for data in [data for sent, data in self.sent.items() if sent.endswith('.zip')]:
+            archive = zipfile.ZipFile(io.BytesIO(data))
+            if name in archive.namelist():
+                return archive.read(name)
+        raise KeyError(name)
+
 
 class EveryPlatformChecksItsPDFTests(OfflineTestCase):
     def test_no_platform_bypasses_the_shared_pdf_check(self):
@@ -206,17 +219,22 @@ class EveryPlatformChecksItsPDFTests(OfflineTestCase):
         self.assertNotIn(SECRET, message)
 
     def test_a_missing_pdf_is_not_a_rejected_pdf(self):
-        # No PDF publication, or one without a full-text URL
-        for listed in (False, True):
-            with self.subTest(listed=listed):
-                uploader, host = make_platform_uploader('JSTOR', pdf_listed=listed)
-                if listed:
+        # No PDF publication, no location, or a canonical location with only a landing page
+        for case in ('no publication', 'no location', None, '', '  '):
+            with self.subTest(case=case):
+                uploader, host = make_platform_uploader(
+                    'JSTOR', pdf_listed=case != 'no publication')
+                if case == 'no location':
                     pdf_publication(uploader)['locations'] = []
+                elif case != 'no publication':
+                    pdf_publication(uploader)['locations'][0]['fullTextUrl'] = case
 
                 with self.assertRaises(DisseminationError) as raised:
                     uploader.get_publication_details('PDF')
 
                 self.assertNotIsInstance(raised.exception, PDFCheckError)
+                self.assertEqual(str(raised.exception), 'No PDF {} found for Work'.format(
+                    'publication' if case == 'no publication' else 'Full Text URL'))
                 self.assertEqual(host.requests, [])
 
     def test_other_formats_keep_the_shared_download(self):
@@ -240,8 +258,7 @@ class PlatformDeliveryTests(OfflineTestCase):
 
                 self.assertEqual(len(host.requests), 1)
                 self.assertIn('9781999900014.pdf', run.files)
-                if platform != 'ScienceOpen':
-                    self.assertEqual(run.sent['9781999900014.pdf'], VALID_PDF)
+                self.assertEqual(run.file('9781999900014.pdf'), VALID_PDF)
 
     def test_a_rejected_pdf_stops_every_platform_before_it_sends_anything(self):
         cases = {
@@ -272,18 +289,41 @@ class PlatformDeliveryTests(OfflineTestCase):
                         # The connection is never opened
                         run.client.assert_not_called()
 
-    def test_platforms_with_an_optional_pdf_still_send_the_epub_when_no_pdf_is_listed(self):
+    def test_platforms_with_an_optional_pdf_send_the_epub_when_the_pdf_has_no_file(self):
         for platform in PDF_OPTIONAL:
+            for full_text_url in (None, ''):
+                with self.subTest(platform=platform, full_text_url=full_text_url):
+                    uploader, host = make_platform_uploader(platform)
+                    pdf_publication(uploader)['locations'][0]['fullTextUrl'] = full_text_url
+                    # The platform's own ISBN lookup
+                    del uploader.get_isbn
+                    run = PlatformRun(platform, uploader)
+
+                    with self.assertLogs(level='INFO'):
+                        run.run()
+
+                    self.assertEqual(host.requests, [])
+                    # MUSE and ProQuest name files after the PDF ISBN, the others after the
+                    # ISBN of the first file they send
+                    isbn = ('9781999900038' if platform in PDF_PUBLICATION_OPTIONAL
+                            else '9781999900021')
+                    self.assertEqual(run.sent['{}.epub'.format(isbn)], EPUB_BYTES)
+                    self.assertFalse([name for name in run.files if name.endswith('.pdf')])
+
+    def test_ebsco_and_google_play_send_the_epub_when_no_pdf_is_listed(self):
+        for platform in PDF_PUBLICATION_OPTIONAL:
             with self.subTest(platform):
                 uploader, host = make_platform_uploader(platform, pdf_listed=False)
+                del uploader.get_isbn
                 run = PlatformRun(platform, uploader)
 
                 with self.assertLogs(level='INFO'):
                     run.run()
 
                 self.assertEqual(host.requests, [])
-                self.assertEqual(run.sent['9781999900014.epub'], EPUB_BYTES)
-                self.assertNotIn('9781999900014.pdf', run.files)
+                # Named after the EPUB ISBN when there is no PDF publication
+                self.assertEqual(run.sent['9781999900038.epub'], EPUB_BYTES)
+                self.assertFalse([name for name in run.files if name.endswith('.pdf')])
 
     def test_figshare_and_zenodo_create_nothing_for_a_rejected_pdf(self):
         for platform, search, create in (('Figshare', 'search_articles', 'create_project'),

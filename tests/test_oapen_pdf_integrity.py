@@ -205,7 +205,7 @@ class PDFSourceTests(OfflineTestCase):
 
         self.assertEqual(data, VALID_PDF)
         self.assertEqual(host.requests, [(PDF_URL, {
-            'headers': {'User-Agent': PDF_SOURCE_USER_AGENT},
+            'headers': {'User-Agent': PDF_SOURCE_USER_AGENT, 'Accept-Encoding': 'identity'},
             'timeout': (10, 90),
             'stream': True,
         })])
@@ -408,6 +408,9 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
 
     def test_other_formats_use_the_shared_download(self):
         remote, uploader, host = self.make()
+        epub = [publication for publication in uploader.metadata['data']['work']['publications']
+                if publication['publicationType'] == 'EPUB'][0]
+        epub['locations'][0]['fullTextUrl'] = 'https://publisher.example/books/0001.epub'
         with patch.object(Uploader, 'get_data_from_url', return_value=b'epub bytes') as shared:
             publication = uploader.get_publication_details('EPUB')
 

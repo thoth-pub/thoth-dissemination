@@ -72,6 +72,8 @@ GitHub Actions schedules run in UTC.
 
 ## 4) Platform-by-platform payload and conditions
 
+Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147). Where a PDF is described as optional, that means Thoth lists no PDF file for the work: no PDF publication, or a canonical PDF location without a full-text URL. A PDF that Thoth does list but that fails the download or the check fails the work on every platform.
+
 ### Internet Archive (`InternetArchive`)
 - Scheduled selection:
   - Daily at 04:40 UTC with a default 30-hour relation-aware update window
@@ -163,14 +165,14 @@ GitHub Actions schedules run in UTC.
     - At least one Subject of type `KEYWORD`
   - Existing article containing same Thoth work ID blocks upload.
 - Publication formats considered:
-  - Iterates all types in `PUB_FORMATS` (PDF, XML-as-zip, EPUB, AZW3, MOBI, DOCX, FICTION_BOOK), uploading whichever are available.
+  - Iterates all types in `PUB_FORMATS` (PDF, XML-as-zip, EPUB, AZW3, MOBI, DOCX, FICTION_BOOK), uploading whichever are available. A listed PDF that fails the PDF check fails the work before the project is created.
 - Automatic writeback:
   - Returns per-publication locations (`OTHER`) and workflow writes them to Thoth.
 
 ### Zenodo (`Zenodo`)
 - Upload content:
   - One deposition per work.
-  - Uploads every available publication file.
+  - Uploads every available publication file. A listed PDF that fails the PDF check fails the work before the deposition is created.
   - Uploads supplemental `*_metadata.json` (`json::thoth`).
 - Preconditions:
   - `zenodo_token`
@@ -187,7 +189,7 @@ GitHub Actions schedules run in UTC.
 - Upload content:
   - `onix_3.0::project_muse`
   - JPG cover (strict `.jpg`)
-  - PDF and/or EPUB (at least one required)
+  - PDF and/or EPUB (at least one required; a listed PDF must pass the PDF check)
 - Preconditions:
   - Per-publisher credentials:
     - `muse_ftp_user_<publisher_id>`
@@ -212,7 +214,7 @@ GitHub Actions schedules run in UTC.
 ### EBSCOHost (`EBSCOHost`)
 - Upload content:
   - `onix_2.1::ebsco_host`
-  - PDF and/or EPUB (at least one)
+  - PDF and/or EPUB (at least one; a listed PDF must pass the PDF check)
 - Preconditions:
   - `ebsco_ftp_user`, `ebsco_ftp_pw`
   - Filename root prefers PDF ISBN, falls back to EPUB ISBN
@@ -223,7 +225,7 @@ GitHub Actions schedules run in UTC.
 - Upload content:
   - `onix_2.1::proquest_ebrary`
   - Cover file (any extension)
-  - PDF and/or EPUB (intended)
+  - PDF and/or EPUB (intended; a listed PDF must pass the PDF check)
 - Preconditions:
   - `proquest_ftp_user`, `proquest_ftp_pw`
   - Uploads to `/upload`
@@ -240,7 +242,7 @@ GitHub Actions schedules run in UTC.
   - `google_play_bucket`
   - `google_play_coll_<publisher_id>`
   - GitHub OIDC + GCP service account/workload identity provider secrets
-  - At least one of PDF or EPUB required
+  - At least one of PDF or EPUB required; a listed PDF must pass the PDF check
 - Automatic writeback:
   - No location writeback; no notification email step.
 

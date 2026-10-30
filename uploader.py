@@ -324,6 +324,10 @@ class Uploader():
         except (IndexError, KeyError, TypeError):
             raise DisseminationError(
                 'No {} Full Text URL found for Work'.format(publication_type))
+        # A canonical location with only a landing page has no file to send
+        if not isinstance(publication_url, str) or not publication_url.strip():
+            raise DisseminationError(
+                'No {} Full Text URL found for Work'.format(publication_type))
 
         file_extension = PUB_FORMATS[publication_type]['file_extension']
 
