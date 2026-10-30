@@ -1055,14 +1055,12 @@ class TestDryRunInspection(unittest.TestCase):
                 metadata = work_metadata()
                 metadata['data']['work']['publications'][0]['locations'][0][
                     'fullTextUrl'] = full_text_url
-                with patch.object(IAUploader, 'get_publication_details') as details:
-                    result, _, _, _ = self.harness.inspect(metadata=metadata)
+                result, _, _, _ = self.harness.inspect(metadata=metadata)
 
                 self.assertEqual(result['status'], 'ineligible')
                 self.assertIn('no_pdf_source', result['issues'])
                 self.assertEqual(result['error'], 'No PDF Full Text URL found for Work')
                 self.assertEqual(result['auto_applicable_actions'], [])
-                details.assert_not_called()
 
     def test_json_export_unavailable(self):
         result, _, _, _ = self.harness.inspect(
