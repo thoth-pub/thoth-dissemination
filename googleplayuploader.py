@@ -79,14 +79,18 @@ class GooglePlayUploader(Uploader):
         for file in content_files:
             content_blob = bucket.blob('{}/{}/{}'.format(content_folder, collection_code, file[0]))
             try:
-                content_blob.upload_from_string(data=file[1], content_type="application/octet-stream")
+                content_blob.upload_from_string(
+                    data=file[1], content_type="application/octet-stream",
+                    checksum="crc32c", retry=None)
             except Exception as error:
                 logging.error("Google Play content upload failed")
                 sys.exit(1)
 
         metadata_blob = bucket.blob('{}/{}-full/{}'.format(metadata_folder, collection_code, metadata_filename))
         try:
-            metadata_blob.upload_from_string(data=metadata_bytes, content_type="application/octet-stream")
+            metadata_blob.upload_from_string(
+                data=metadata_bytes, content_type="application/octet-stream",
+                checksum="crc32c", retry=None)
         except Exception as error:
             logging.error("Google Play ONIX metadata upload failed")
             sys.exit(1)
