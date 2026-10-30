@@ -72,7 +72,7 @@ GitHub Actions schedules run in UTC.
 
 ## 4) Platform-by-platform payload and conditions
 
-Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147). Where a PDF is described as optional, that means Thoth lists no PDF file for the work: no PDF publication, or a canonical PDF location without a full-text URL. A PDF that Thoth does list but that fails the download or the check fails the work on every platform.
+Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147). Where a PDF is described as optional, that means Thoth lists no PDF file for the work: no PDF publication, or a canonical PDF location without a full-text URL. Project MUSE and ProQuest still need a PDF publication, because they name every file after its ISBN. A PDF that Thoth does list but that fails the download or the check fails the work on every platform.
 
 ### Internet Archive (`InternetArchive`)
 - Scheduled selection:

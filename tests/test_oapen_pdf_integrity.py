@@ -408,9 +408,6 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
 
     def test_other_formats_use_the_shared_download(self):
         remote, uploader, host = self.make()
-        epub = [publication for publication in uploader.metadata['data']['work']['publications']
-                if publication['publicationType'] == 'EPUB'][0]
-        epub['locations'][0]['fullTextUrl'] = 'https://publisher.example/books/0001.epub'
         with patch.object(Uploader, 'get_data_from_url', return_value=b'epub bytes') as shared:
             publication = uploader.get_publication_details('EPUB')
 
