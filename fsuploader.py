@@ -12,6 +12,7 @@ import re
 from io import BytesIO
 from time import sleep
 from errors import DisseminationError
+from pdfcheck import PDFCheckError
 from uploader import Uploader, PUB_FORMATS, Location
 
 
@@ -73,6 +74,9 @@ class FigshareUploader(Uploader):
             try:
                 publication = self.get_publication_details(format)
                 publications.append(publication)
+            except PDFCheckError:
+                # A PDF listed in Thoth that fails the check stops the work instead of being skipped
+                raise
             except DisseminationError as error:
                 pass
         if len(publications) < 1:

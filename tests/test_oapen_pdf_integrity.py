@@ -17,18 +17,18 @@ import pikepdf
 import requests
 from requests.structures import CaseInsensitiveDict
 
-import oapensworduploader
+import pdfcheck
 from culuploader import CULUploader
 from dspaceuploader import DSpaceUploader
 from errors import DisseminationError
-from oapensworduploader import (
-    OAPEN_PDF_CHUNK_BYTES,
-    OAPEN_PDF_MAX_BYTES,
-    OAPEN_PDF_TIMEOUT,
+from oapensworduploader import OAPENSWORDUploader
+from pdfcheck import (
+    PDF_CHUNK_BYTES,
+    PDF_MAX_BYTES,
     PDF_SOURCE_USER_AGENT,
-    OAPENPDFError,
-    OAPENPDFSource,
-    OAPENSWORDUploader,
+    PDF_TIMEOUT,
+    PDFCheckError,
+    PDFSource,
     check_pdf,
     describe_pdf_problem,
 )
@@ -165,7 +165,7 @@ class PDFCheckTests(unittest.TestCase):
         }
         for name, (data, expected) in cases.items():
             with self.subTest(name):
-                with self.assertRaises(OAPENPDFError) as raised:
+                with self.assertRaises(PDFCheckError) as raised:
                     check_pdf(data)
 
                 self.assertIn(expected, str(raised.exception))
@@ -177,12 +177,12 @@ class PDFCheckTests(unittest.TestCase):
         with pikepdf.open(io.BytesIO(damaged)) as repaired:
             self.assertEqual(len(repaired.pages), 3)
 
-        with self.assertRaises(OAPENPDFError):
+        with self.assertRaises(PDFCheckError):
             check_pdf(damaged)
 
     def test_unexpected_parser_failures_are_reported_by_type_only(self):
         with patch('pikepdf.open', side_effect=RuntimeError('internal detail')):
-            with self.assertRaises(OAPENPDFError) as raised:
+            with self.assertRaises(PDFCheckError) as raised:
                 check_pdf(VALID_PDF)
 
         self.assertEqual(str(raised.exception), 'the file could not be checked (RuntimeError)')
@@ -196,7 +196,7 @@ class PDFCheckTests(unittest.TestCase):
 class PDFSourceTests(OfflineTestCase):
     def fetch(self, response=None, error=None, url=PDF_URL):
         host = FakePDFHost(response, error)
-        return host, OAPENPDFSource(http_get=host.get).fetch(url)
+        return host, PDFSource(http_get=host.get).fetch(url)
 
     def test_the_whole_body_is_returned_from_one_bounded_request(self):
         response = FakeResponse()
@@ -211,7 +211,7 @@ class PDFSourceTests(OfflineTestCase):
         })])
         self.assertEqual(response.chunk_sizes, [1024 * 1024])
         self.assertTrue(response.closed)
-        self.assertEqual((OAPEN_PDF_MAX_BYTES, OAPEN_PDF_TIMEOUT, OAPEN_PDF_CHUNK_BYTES),
+        self.assertEqual((PDF_MAX_BYTES, PDF_TIMEOUT, PDF_CHUNK_BYTES),
                          (512 * 1024 * 1024, (10, 90), 1024 * 1024))
 
     def test_acceptable_headers(self):
@@ -227,7 +227,7 @@ class PDFSourceTests(OfflineTestCase):
                 self.assertEqual(self.fetch(response)[1], VALID_PDF)
 
     def test_unusable_responses_are_rejected_without_naming_the_url(self):
-        too_large = str(OAPEN_PDF_MAX_BYTES + 1)
+        too_large = str(PDF_MAX_BYTES + 1)
         cases = {
             'forbidden': (FakeResponse(HTML_PAGE, 403, 'text/html'), 'answered HTTP status 403'),
             'not found': (FakeResponse(HTML_PAGE, 404, 'text/html'), 'answered HTTP status 404'),
@@ -248,7 +248,7 @@ class PDFSourceTests(OfflineTestCase):
         for name, (response, expected) in cases.items():
             response.url = SIGNED_URL
             with self.subTest(name):
-                with self.assertRaises(OAPENPDFError) as raised:
+                with self.assertRaises(PDFCheckError) as raised:
                     self.fetch(response, url=SIGNED_URL)
 
                 message = str(raised.exception)
@@ -259,9 +259,9 @@ class PDFSourceTests(OfflineTestCase):
                 self.assertTrue(response.closed)
 
     def test_a_declared_oversize_body_is_not_read(self):
-        response = FakeResponse(content_length=str(OAPEN_PDF_MAX_BYTES + 1))
+        response = FakeResponse(content_length=str(PDF_MAX_BYTES + 1))
 
-        with self.assertRaises(OAPENPDFError):
+        with self.assertRaises(PDFCheckError):
             self.fetch(response)
 
         self.assertEqual(response.chunks_sent, 0)
@@ -269,8 +269,8 @@ class PDFSourceTests(OfflineTestCase):
     def test_an_oversize_body_without_a_declared_length_stops_while_streaming(self):
         response = FakeResponse(b'%PDF-' + b'x' * 995, content_length=None)
 
-        with patch.object(oapensworduploader, 'OAPEN_PDF_MAX_BYTES', 100):
-            with self.assertRaises(OAPENPDFError) as raised:
+        with patch.object(pdfcheck, 'PDF_MAX_BYTES', 100):
+            with self.assertRaises(PDFCheckError) as raised:
                 self.fetch(response)
 
         self.assertIn('sent more than the 100-byte limit', str(raised.exception))
@@ -283,7 +283,7 @@ class PDFSourceTests(OfflineTestCase):
                       requests.exceptions.TooManyRedirects(SIGNED_URL),
                       requests.exceptions.SSLError(SIGNED_URL)):
             with self.subTest(type(error).__name__):
-                with self.assertRaises(OAPENPDFError) as raised:
+                with self.assertRaises(PDFCheckError) as raised:
                     self.fetch(error=error, url=SIGNED_URL)
 
                 self.assertEqual(str(raised.exception), 'the request to cdn.example failed '
@@ -295,7 +295,7 @@ class PDFSourceTests(OfflineTestCase):
             with self.subTest(type(error).__name__):
                 response = FakeResponse(error=error, url=SIGNED_URL)
 
-                with self.assertRaises(OAPENPDFError) as raised:
+                with self.assertRaises(PDFCheckError) as raised:
                     self.fetch(response, url=SIGNED_URL)
 
                 self.assertEqual(str(raised.exception), 'the download from cdn.example failed '
@@ -306,7 +306,7 @@ class PDFSourceTests(OfflineTestCase):
         response = FakeResponse(HTML_PAGE, content_type='text/html',
                                 url='https://login.example/sso?next={}'.format(SECRET))
 
-        with self.assertRaises(OAPENPDFError) as raised:
+        with self.assertRaises(PDFCheckError) as raised:
             self.fetch(response, url=SIGNED_URL)
 
         self.assertIn('login.example served', str(raised.exception))
@@ -320,7 +320,7 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
         # Use the uploader's own PDF path instead of the preflight tests' stand-in
         del uploader.get_publication_details
         host = FakePDFHost(response, error, remote.events)
-        uploader.pdf_source = OAPENPDFSource(http_get=host.get)
+        uploader.pdf_source = PDFSource(http_get=host.get)
         return remote, uploader, host
 
     def test_a_sound_pdf_is_uploaded_as_the_exact_bytes_checked(self):
@@ -357,7 +357,7 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
         events = [event for event in remote.events if not event.startswith('search')]
         self.assertEqual(events, ['export_metadata', 'pdf_download', 'create_item',
                                   'upload_metadata', 'upload_pdf', 'complete_deposit'])
-        self.assertIn('OAPEN PDF for work {}: publication {}, {} bytes, 3 pages, SHA-256 {}'.format(
+        self.assertIn('PDF for work {}: publication {}, {} bytes, 3 pages, SHA-256 {}'.format(
             WORK_ID, PDF_PUBLICATION_ID, len(VALID_PDF), hashlib.sha256(VALID_PDF).hexdigest()),
             '\n'.join(logs.output))
 
@@ -415,18 +415,20 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
         shared.assert_called_once()
         self.assertEqual(host.requests, [])
 
-    def test_only_the_oapen_uploader_checks_pdfs(self):
-        for uploader_class in (Uploader, DSpaceUploader, SwordV2Uploader, CULUploader):
+    def test_oapen_uses_the_shared_pdf_check_with_its_own_message(self):
+        # Every platform checks PDFs since #147; OAPEN differs only in how it reports a rejection
+        for uploader_class in (DSpaceUploader, SwordV2Uploader, CULUploader, OAPENSWORDUploader):
             with self.subTest(uploader_class.__name__):
                 self.assertIs(uploader_class.get_publication_details,
                               Uploader.get_publication_details)
-        self.assertIsNot(OAPENSWORDUploader.get_publication_details,
-                         Uploader.get_publication_details)
+                self.assertIs(uploader_class.get_checked_pdf, Uploader.get_checked_pdf)
+        self.assertIsNot(OAPENSWORDUploader.describe_rejected_pdf,
+                         Uploader.describe_rejected_pdf)
 
     def test_uploader_downloads_pdfs_with_requests(self):
         uploader = make_uploader(FakeRemote())
 
-        self.assertIsInstance(uploader.pdf_source, OAPENPDFSource)
+        self.assertIsInstance(uploader.pdf_source, PDFSource)
         self.assertIs(uploader.pdf_source.http_get, requests.get)
 
 
