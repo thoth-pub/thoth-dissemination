@@ -4,8 +4,6 @@ Retrieve and disseminate files and metadata to
 OAPEN DSpace using SWORD protocol
 """
 
-import hashlib
-import io
 import logging
 import re
 import time
@@ -14,12 +12,11 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
 
-import pikepdf
 import requests
 
 from dspaceuploader import DSpaceUploader, MetadataProfile
 from errors import DisseminationError
-from uploader import Location, Publication
+from uploader import Location
 
 
 OAPEN_SEARCH_URL = 'https://library.oapen.org/rest/search'
@@ -32,13 +29,6 @@ OAPEN_PAGE_SIZE = 100
 OAPEN_MAX_RESULTS = 500
 OAPEN_HANDLE_PREFIX = '20.500.12657/'
 
-# A PDF source that is larger, or stalls for longer, is held rather than truncated
-OAPEN_PDF_MAX_BYTES = 512 * 1024 * 1024
-OAPEN_PDF_TIMEOUT = (10, 90)
-OAPEN_PDF_CHUNK_BYTES = 1024 * 1024
-# The browser-like agent the shared downloader sends, which some publisher hosts require
-PDF_SOURCE_USER_AGENT = ('Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 '
-                         '(KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36')
 # DOIs that OAPEN mints for its own records do not identify a publisher's work
 OAPEN_DOI_PREFIX = '10.26530/'
 THOTH_WORK_ID_MARKER = 'thoth-work-id:'
@@ -326,110 +316,6 @@ class OAPENLibraryIndex:
         return batch
 
 
-class OAPENPDFError(DisseminationError):
-    """The PDF source could not be downloaded completely, or is not a sound PDF."""
-
-
-def describe_pdf_problem(problem):
-    """Shorten a parser message, naming the file rather than its in-memory buffer."""
-    text = re.sub(r'stream <_io\.BytesIO object at 0x[0-9a-f]+>', 'PDF', str(problem))
-    text = ' '.join(text.split())
-    return text if len(text) <= 200 else text[:197] + '...'
-
-
-def check_pdf(data):
-    """
-    Return the page count of a complete, unencrypted PDF whose structure,
-    streams and page contents all parse without problems, or raise OAPENPDFError.
-    """
-    if not data:
-        raise OAPENPDFError('the file is empty')
-    # PDF readers accept a header anywhere in the first 1024 bytes
-    if b'%PDF-' not in data[:1024]:
-        raise OAPENPDFError('the file has no PDF header')
-    try:
-        # Without recovery, a damaged cross-reference table fails instead of being rebuilt
-        with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
-            if pdf.is_encrypted:
-                raise OAPENPDFError('the file is encrypted')
-            pages = len(pdf.pages)
-            if pages == 0:
-                raise OAPENPDFError('the file has no pages')
-            # Decodes every stream, parses every page's content and reports parser warnings
-            problems = pdf.check_pdf_syntax()
-    except OAPENPDFError:
-        raise
-    except pikepdf.PasswordError:
-        raise OAPENPDFError('the file is encrypted with a password') from None
-    except pikepdf.PdfError as error:
-        raise OAPENPDFError('the file could not be read as a PDF: {}'.format(
-            describe_pdf_problem(error))) from None
-    except Exception as error:
-        raise OAPENPDFError('the file could not be checked ({})'.format(
-            type(error).__name__)) from None
-    if problems:
-        raise OAPENPDFError('the file has {} structural problem(s), first: {}'.format(
-            len(problems), describe_pdf_problem(problems[0])))
-    return pages
-
-
-class OAPENPDFSource:
-    """Download a PDF source in one bounded request, keeping its exact bytes."""
-
-    def __init__(self, http_get=requests.get):
-        self.http_get = http_get
-
-    def fetch(self, url):
-        """Return the complete body of a PDF source, or raise OAPENPDFError."""
-        # Errors name the host only: source URLs may carry signed tokens
-        host = urlparse(url).hostname or 'the source host'
-        try:
-            response = self.http_get(url, headers={'User-Agent': PDF_SOURCE_USER_AGENT},
-                                     timeout=OAPEN_PDF_TIMEOUT, stream=True)
-        except requests.RequestException as error:
-            raise OAPENPDFError('the request to {} failed ({})'.format(
-                host, type(error).__name__)) from None
-        try:
-            # Redirects are followed, so report where the body came from
-            host = urlparse(response.url).hostname or host
-            return self.read_body(response, host)
-        except requests.RequestException as error:
-            raise OAPENPDFError('the download from {} failed ({})'.format(
-                host, type(error).__name__)) from None
-        finally:
-            response.close()
-
-    @staticmethod
-    def read_body(response, host):
-        if response.status_code != 200:
-            raise OAPENPDFError('{} answered HTTP status {}'.format(host, response.status_code))
-        content_type = (response.headers.get('Content-Type') or '').split(';')[0].strip().lower()
-        if content_type != 'application/pdf':
-            raise OAPENPDFError('{} served {} instead of application/pdf'.format(
-                host, repr(content_type[:60]) if content_type else 'no content type'))
-        declared = response.headers.get('Content-Length')
-        if declared is not None:
-            if not re.fullmatch(r'[0-9]+', declared.strip()):
-                raise OAPENPDFError('{} sent an invalid Content-Length'.format(host))
-            declared = int(declared)
-            if declared > OAPEN_PDF_MAX_BYTES:
-                raise OAPENPDFError('{} declared {} bytes, more than the {}-byte limit'.format(
-                    host, declared, OAPEN_PDF_MAX_BYTES))
-        chunks = []
-        received = 0
-        for chunk in response.iter_content(chunk_size=OAPEN_PDF_CHUNK_BYTES):
-            chunks.append(chunk)
-            received += len(chunk)
-            if received > OAPEN_PDF_MAX_BYTES:
-                raise OAPENPDFError('{} sent more than the {}-byte limit'.format(
-                    host, OAPEN_PDF_MAX_BYTES))
-        # A compressed transfer arrives decoded, so only an unencoded body has a comparable length
-        encoding = (response.headers.get('Content-Encoding') or 'identity').strip().lower()
-        if declared is not None and encoding == 'identity' and received != declared:
-            raise OAPENPDFError('{} declared {} bytes but sent {}'.format(host, declared, received))
-        return b''.join(chunks)
-
-
 class PreflightGatedSwordApi:
     """Expose the SWORD calls an upload makes, allowing one create per cleared preflight."""
 
@@ -506,7 +392,6 @@ class OAPENSWORDUploader(DSpaceUploader):
             metadata_profile)
         self.api = PreflightGatedSwordApi(self.api, work_id)
         self.oapen_index = OAPENLibraryIndex()
-        self.pdf_source = OAPENPDFSource()
 
     def upload_to_platform(self):
         """Check for an existing OAPEN item, then perform standard upload and OAPEN-specific processing"""
@@ -532,23 +417,10 @@ class OAPENSWORDUploader(DSpaceUploader):
         return [Location(publication_id, location_platform, landing_page,
                          full_text_url, None, None)]
 
-    def get_publication_details(self, publication_type):
-        """
-        Download the PDF once and check it before any SWORD create, returning
-        exactly the checked bytes for upload. Other formats use the shared path.
-        """
-        if publication_type != 'PDF':
-            return super().get_publication_details(publication_type)
-        source = self.get_publication_source('PDF')
-        try:
-            pdf_bytes = self.pdf_source.fetch(source.url)
-            pages = check_pdf(pdf_bytes)
-        except OAPENPDFError as error:
-            raise OAPENPDFError('Not creating OAPEN item for work {}: PDF publication {} was '
-                                'not accepted: {}'.format(self.work_id, source.id, error)) from None
-        logging.info('OAPEN PDF for work {}: publication {}, {} bytes, {} pages, SHA-256 {}'.format(
-            self.work_id, source.id, len(pdf_bytes), pages, hashlib.sha256(pdf_bytes).hexdigest()))
-        return Publication('PDF', source.id, pdf_bytes, source.file_ext, source.url)
+    def describe_rejected_pdf(self, source, error):
+        """A rejected PDF stops the upload before any SWORD create."""
+        return 'Not creating OAPEN item for work {}: PDF publication {} was not accepted: {}'.format(
+            self.work_id, source.id, error)
 
     def assess_existing_deposit(self):
         """

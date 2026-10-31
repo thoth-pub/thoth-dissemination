@@ -10,6 +10,7 @@ import sys
 from datetime import date
 from google.cloud import storage
 from errors import DisseminationError
+from pdfcheck import PDFCheckError
 from uploader import Uploader
 
 
@@ -51,6 +52,9 @@ class GooglePlayUploader(Uploader):
             pdf = self.get_publication_details('PDF')
             filename = self.get_isbn('PDF')
             content_files.append(('{}{}'.format(filename, pdf.file_ext), pdf.bytes))
+        except PDFCheckError:
+            # A PDF listed in Thoth that fails the check stops the work instead of being dropped
+            raise
         except DisseminationError as error:
             pdf_error = f"{error}\nMake sure the PDF Publication in Thoth has a valid ISBN."
         try:

@@ -8,6 +8,7 @@ import sys
 from datetime import date
 from io import BytesIO
 from errors import DisseminationError
+from pdfcheck import PDFCheckError
 from sftpclient import SFTPClient, SFTPAuthError
 from uploader import Uploader
 
@@ -44,6 +45,9 @@ class EBSCOUploader(Uploader):
             pdf = self.get_publication_details('PDF')
             filename = self.get_isbn('PDF')
             files.append(('{}{}'.format(filename, pdf.file_ext), BytesIO(pdf.bytes)))
+        except PDFCheckError:
+            # A PDF listed in Thoth that fails the check stops the work instead of being dropped
+            raise
         except DisseminationError as error:
             pdf_error = error
         try:

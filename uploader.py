@@ -3,11 +3,13 @@
 Retrieve files and metadata from Thoth for dissemination to any platform
 """
 
+import hashlib
 import logging
 import sys
 import json
 import requests
 from errors import DisseminationError
+from pdfcheck import PDFCheckError, PDFSource, check_pdf
 from os import environ
 from thothapi import get_thoth_client
 from thothlibrary import ThothError
@@ -99,6 +101,9 @@ class PublicationSource():
 
 class Uploader():
     """Generic logic to retrieve and disseminate files and metadata"""
+
+    # Every PDF a platform receives is downloaded through this source and checked
+    pdf_source = PDFSource()
 
     def __init__(self, work_id, export_url, client_url, version):
         """Save argument values and retrieve and store JSON-formatted work metadata"""
@@ -262,14 +267,15 @@ class Uploader():
     def get_publication_details(self, publication_type):
         """
         Retrieve publication details for specified type from work metadata:
-        Thoth ID, canonical content file (via location URL) and extension
+        Thoth ID, canonical content file (via location URL) and extension.
+        A PDF is downloaded once and checked, and exactly the checked bytes are returned.
         """
         source = self.get_publication_source(publication_type)
-        try:
+        if publication_type == 'PDF':
+            publication_bytes = self.get_checked_pdf(source)
+        else:
             publication_bytes = self.get_data_from_url(
                 source.url, PUB_FORMATS[publication_type]['content_type'])
-        except DisseminationError:
-            raise
 
         return Publication(
             publication_type,
@@ -278,6 +284,25 @@ class Uploader():
             source.file_ext,
             source.url,
         )
+
+    def get_checked_pdf(self, source):
+        """
+        Download a PDF source in one bounded request and return its bytes once
+        they pass check_pdf, or raise PDFCheckError before any platform receives them
+        """
+        try:
+            pdf_bytes = self.pdf_source.fetch(source.url)
+            pages = check_pdf(pdf_bytes)
+        except PDFCheckError as error:
+            raise PDFCheckError(self.describe_rejected_pdf(source, error)) from None
+        logging.info('PDF for work {}: publication {}, {} bytes, {} pages, SHA-256 {}'.format(
+            self.work_id, source.id, len(pdf_bytes), pages, hashlib.sha256(pdf_bytes).hexdigest()))
+        return pdf_bytes
+
+    def describe_rejected_pdf(self, source, error):
+        """Name the work and publication whose PDF was rejected; the error names only the host"""
+        return 'Not uploading work {}: PDF publication {} was not accepted: {}'.format(
+            self.work_id, source.id, error)
 
     def get_publication_source(self, publication_type):
         """Return the canonical source descriptor without downloading it."""
@@ -297,6 +322,11 @@ class Uploader():
                                for n in publication['locations']
                                if n['canonical']][0]
         except (IndexError, KeyError, TypeError):
+            raise DisseminationError(
+                'No {} Full Text URL found for Work'.format(publication_type))
+        # A canonical PDF location with only a landing page has no file to check or send
+        if publication_type == 'PDF' and (
+                not isinstance(publication_url, str) or not publication_url.strip()):
             raise DisseminationError(
                 'No {} Full Text URL found for Work'.format(publication_type))
 

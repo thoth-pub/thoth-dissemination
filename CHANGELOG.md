@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+  - Every platform that delivers a PDF now downloads and checks it as OAPEN has since v1.9.0 (#147): Internet Archive, CUL, ScienceOpen, Figshare, Zenodo, Project MUSE, JSTOR, EBSCOHost, ProQuest, Google Play and BKCI. The bounded download and `pikepdf` check moved from `oapensworduploader.py` to `pdfcheck.py`, and `Uploader.get_publication_details('PDF')` uses them, so no platform receives a PDF that was not checked. Exactly the checked bytes are uploaded, and the run logs their size, page count and SHA-256. OAPEN keeps its own rejection message; its log line for an accepted PDF now begins `PDF for work`, as on every other platform.
+  - A PDF download is now one GET with a 10 s connect and 90 s read timeout and a 512 MiB limit, instead of a HEAD and a GET with neither. The `application/pdf` content type is read from the download itself. The GET asks for an uncompressed transfer (`Accept-Encoding: identity`), so when the host honours it the limit also bounds memory and the received length is compared with `Content-Length`; this applies to OAPEN too, which since v1.9.0 asked for a compressed transfer. Errors name only the source host, not the URL, which may carry a signed token, or the response text. EPUB and other formats keep the previous download.
+  - On Google Play, Project MUSE, EBSCOHost, ProQuest, Figshare and Zenodo, a PDF that Thoth lists but that fails the download or the check now fails the work before anything is sent. Previously a PDF whose shared download raised a `DisseminationError`, such as a HEAD request that did not answer HTTP 200 with `application/pdf`, was dropped and the work was sent without it. A work whose PDF publication has no canonical full-text URL is sent with its other files (see Fixed). So is a work with no PDF publication on EBSCOHost, Google Play, Figshare and Zenodo; Project MUSE and ProQuest still name every file after the PDF ISBN and so still need a PDF publication, as before.
+  - Internet Archive reconciliation checks the source PDF too, and reports a rejected one as a `pdf` desired-state failure.
+
+### Fixed
+  - A PDF publication whose canonical location has an empty or null full-text URL, which Thoth allows, for example when only a landing page is known, is now reported as `No PDF Full Text URL found for Work` instead of failing inside `requests` with `MissingSchema`. Platforms that treat the PDF as optional send the work without it, and Internet Archive reconciliation reports `no_pdf_source` (`ineligible`) instead of `pdf_source_unavailable`. Other formats are unchanged.
+
+### Deployment
+  - The check is strict: a parser warning, a cross-reference table that would need repair, or any encryption (including owner-password restrictions only) rejects the file. How many current publisher PDFs it rejects is not known. A work whose PDF is rejected fails on every platform until the PDF is replaced, and daily Google Play runs are the first to show it after a release.
+  - A host whose download answers with a content type other than `application/pdf`, or a PDF over 512 MiB, now fails where the HEAD request or the unbounded download previously let it through.
+  - A work whose PDF publication has only a landing page is now sent without a PDF on Google Play, Project MUSE, EBSCOHost, ProQuest, Figshare and Zenodo, where the run previously stopped with `MissingSchema`. On Figshare and Zenodo that creates a permanent record without the PDF, as for a work with no PDF publication.
+
 ## [[1.9.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.9.0) - 2026-10-29
 
 ### Added
