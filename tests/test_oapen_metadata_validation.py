@@ -15,7 +15,6 @@ from lxml import etree
 
 import oapensworduploader
 import tests.test_oapensword_preflight as preflight_tests
-from culuploader import CULUploader
 from oapensworduploader import (
     OAPENSWORDUploader,
     is_open_licence,
@@ -30,35 +29,6 @@ TODAY = date(2026, 11, 10)
 DCTERMS = '{http://purl.org/dc/terms/}'
 ORCID = 'https://orcid.org/0000-0002-1825-0097'
 UPDATED = re.compile(r'(<atom:updated\b[^>]*>)[^<]*(</atom:updated>)')
-
-# The CUL (JISC_ROUTER) entry for cul_metadata(), captured at develop @ 861238a6
-# with atom:updated replaced by 'UPDATED'
-CUL_GOLDEN_861238A6 = (
-    '<?xml version="1.0"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">\n    <generator uri="http://bitbucket.org/beno/python-sword2" version="0.1"/>\n'
-    '<dcterms:publisher xmlns:atom="http://www.w3.org/2005/Atom">Example Press</dcterms:publisher>'
-    '<dcterms:title xmlns:atom="http://www.w3.org/2005/Atom">A Study of Examples: Evidence and Method</dcterms:title>'
-    '<dcterms:abstract xmlns:atom="http://www.w3.org/2005/Atom">A long abstract.</dcterms:abstract>'
-    '<dcterms:identifier xmlns:atom="http://www.w3.org/2005/Atom">doi: https://doi.org/10.99999/EXAMPLE.0001</dcterms:identifier>'
-    '<dcterms:issued xmlns:atom="http://www.w3.org/2005/Atom">2026-10-23</dcterms:issued>'
-    '<dcterms:rights xmlns:atom="http://www.w3.org/2005/Atom">License for VoR version of this work: https://creativecommons.org/licenses/by/4.0/</dcterms:rights>'
-    '<dcterms:description xmlns:atom="http://www.w3.org/2005/Atom">Publication status: ACTIVE</dcterms:description>'
-    '<atom:updated xmlns:atom="http://www.w3.org/2005/Atom">UPDATED</atom:updated>'
-    '<dcterms:language xmlns:atom="http://www.w3.org/2005/Atom">ENG</dcterms:language>'
-    '<dcterms:identifier xmlns:atom="http://www.w3.org/2005/Atom">isbn: 9781999900014</dcterms:identifier>'
-    '<dcterms:identifier xmlns:atom="http://www.w3.org/2005/Atom">isbn: 9781999900021</dcterms:identifier>'
-    '<dcterms:identifier xmlns:atom="http://www.w3.org/2005/Atom">isbn: 9781999900038</dcterms:identifier>'
-    '<dcterms:subject xmlns:atom="http://www.w3.org/2005/Atom">JP</dcterms:subject>'
-    '<dcterms:subject xmlns:atom="http://www.w3.org/2005/Atom">examples</dcterms:subject>'
-    '<dcterms:creator xmlns:atom="http://www.w3.org/2005/Atom">Example, Ada; orcid: https://orcid.org/0000-0002-1825-0097; University of Examples</dcterms:creator>'
-    '<dcterms:contributor xmlns:atom="http://www.w3.org/2005/Atom">EDITOR: Example Editorial Collective</dcterms:contributor>'
-    '<dcterms:rights xmlns:atom="http://www.w3.org/2005/Atom">Embargo: none</dcterms:rights>'
-    '<dcterms:description xmlns:atom="http://www.w3.org/2005/Atom">Work version: VoR</dcterms:description>'
-    '<dcterms:description xmlns:atom="http://www.w3.org/2005/Atom">From Example Press via Thoth</dcterms:description>'
-    '<dcterms:description xmlns:atom="http://www.w3.org/2005/Atom">Funder: Example Foundation; ror: https://ror.org/00x0x0x00; Grant(s): G-1</dcterms:description>'
-    '<dcterms:identifier xmlns:atom="http://www.w3.org/2005/Atom">thoth-work-id:0f3a5c7e-1b2d-4e6f-8a9b-0c1d2e3f4a5b</dcterms:identifier>'
-    '</entry>'
-)
-
 
 def normalise_updated(entry):
     text, count = UPDATED.subn(r'\1UPDATED\2', str(entry))
@@ -115,23 +85,6 @@ def complete_metadata():
                       issue('Second Series', '1050-124X', 12)]
     work['fundings'] = [funding('G-1', 'Programme One', 'Project One', 'Example Foundation'),
                         funding('G-2', 'Programme Two', 'Project Two', 'Second Funder')]
-    return metadata
-
-
-def cul_metadata():
-    metadata = thoth_metadata()
-    work = metadata['data']['work']
-    author = work['contributions'][0]
-    author['contributor']['orcid'] = ORCID
-    author['affiliations'] = [{'institution': {'institutionName': 'University of Examples'}}]
-    work['contributions'].append({
-        'contributionType': 'EDITOR', 'mainContribution': True, 'firstName': None,
-        'lastName': 'Collective', 'fullName': 'Example Editorial Collective',
-        'affiliations': [], 'contributor': {'orcid': None}})
-    work['fundings'] = [{
-        'grantNumber': 'G-1', 'program': 'Programme', 'projectName': 'Project',
-        'institution': {'institutionName': 'Example Foundation',
-                        'ror': 'https://ror.org/00x0x0x00', 'institutionDoi': None}}]
     return metadata
 
 
@@ -709,16 +662,6 @@ class GoldenEntryTests(NoNetworkTestCase):
         with patch.object(SwordV2Uploader, 'profile_oapen',
                           side_effect=AssertionError('legacy profile used')):
             build_entry(complete_metadata())
-
-
-class CULEntryTests(NoNetworkTestCase):
-    def test_cul_uses_the_shared_parser(self):
-        self.assertIs(CULUploader.parse_metadata, SwordV2Uploader.parse_metadata)
-
-    def test_cul_entry_is_unchanged_since_861238a6(self):
-        entry = make_uploader(FakeRemote(), cul_metadata(), uploader_class=CULUploader).parse_metadata()
-
-        self.assertEqual(normalise_updated(entry), CUL_GOLDEN_861238A6)
 
 
 class Unavailable:

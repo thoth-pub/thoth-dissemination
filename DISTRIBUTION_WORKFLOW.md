@@ -58,9 +58,7 @@ GitHub Actions schedules run in UTC.
 |---|---|---|---|---|
 | InternetArchive | `ia_bulk_disseminate.yml` | Daily at 04:40 | `InternetArchiveIDFinder` | Active supported works updated in the captured previous 30 hours with a usable canonical PDF source |
 | Crossref | `cr_bulk_disseminate.yml` | Hourly at :45 | `CrossrefIDFinder` | Active + qualifying Forthcoming works updated recently |
-| Figshare | `fs_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
 | Zenodo | `zn_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
-| CUL | `cul_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
 | GooglePlay | `gp_bulk_disseminate.yaml` | Daily at 05:50 | `GooglePlayIDFinder` | Previous day, active |
 | BKCI | `bkci_bulk_disseminate.yaml` | Monthly, day 6 at 06:40 | `BKCIIDFinder` | Previous month, active, excludes textbooks |
 | OAPEN | `oapen_bulk_disseminate.yaml` | Weekly, Mon at 02:20 | `WeeklyIDFinder` | Previous week, active |
@@ -69,6 +67,8 @@ GitHub Actions schedules run in UTC.
 | ProjectMUSE | `muse_bulk_disseminate.yaml` | Weekly, Thu at 02:20 | Intended `WeeklyIDFinder` | Previous week, active |
 | ProQuest | `pq_bulk_disseminate.yaml` | Weekly, Fri at 02:20 | `WeeklyIDFinder` | Previous week, active |
 | ScienceOpen | No scheduled workflow | Manual only | N/A | Per-work manual dissemination |
+
+CUL (Cambridge University Library) and Figshare are retired destinations (#101). This repository has no uploader, selector or workflow for them. `publisher_source.py` still recognises their Thoth platform values, `CAMBRIDGE_UNIVERSITY_LIBRARY` and `FIGSHARE`, and classifies both as `deprecated`, with no dissemination pathway. Locations that earlier runs wrote to Thoth are unchanged.
 
 ## 4) Platform-by-platform payload and conditions
 
@@ -148,18 +148,6 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
 - Chapter support:
   - Explicitly marked as not yet implemented.
 
-### CUL (`CUL`)
-- Upload content:
-  - SWORDv2 deposit with:
-    - Required PDF
-    - Supplemental `json::thoth`
-    - Metadata mapped via `JISC_ROUTER` profile
-- Preconditions:
-  - `cul_pilot_user` / `cul_pilot_pw`
-  - PDF canonical location required
-- Automatic writeback:
-  - Returns location (`OTHER`) and workflow writes it to Thoth.
-
 ### Crossref (`Crossref`)
 - Upload content:
   - Only `doideposit::crossref` XML submitted via HTTPS.
@@ -173,26 +161,6 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
   - Forthcoming entries are removed unless both DOI and publication date exist.
 - Automatic writeback:
   - No location writeback (metadata deposit workflow only).
-
-### Figshare (`Figshare`)
-- Upload content:
-  - Creates one project per work.
-  - Creates one article per available publication format.
-  - For each article uploads:
-    - Publication file
-    - `json::thoth` metadata file
-- Preconditions:
-  - `figshare_token`
-  - Work must have:
-    - Long Abstract
-    - Licence supported by Figshare
-    - At least one Main Contribution
-    - At least one Subject of type `KEYWORD`
-  - Existing article containing same Thoth work ID blocks upload.
-- Publication formats considered:
-  - Iterates all types in `PUB_FORMATS` (PDF, XML-as-zip, EPUB, AZW3, MOBI, DOCX, FICTION_BOOK), uploading whichever are available. A listed PDF that fails the PDF check fails the work before the project is created.
-- Automatic writeback:
-  - Returns per-publication locations (`OTHER`) and workflow writes them to Thoth.
 
 ### Zenodo (`Zenodo`)
 - Upload content:
@@ -289,8 +257,6 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
 ### Immediate writeback platforms
 From `disseminate.yml`, these platforms return location lines and trigger `write_locations.py`:
 - `InternetArchive`
-- `CUL`
-- `Figshare`
 - `Zenodo`
 
 ### Deferred location writeback
@@ -308,7 +274,6 @@ From `disseminate.yml`, email job runs for:
 - Automatic dissemination is currently configured for book-like work types only.
 - `BOOK_CHAPTER` is not included in automatic ID-finder filters.
 - `ScienceOpen` uploader explicitly states chapter dissemination is not yet implemented.
-- `Figshare` metadata mapping contains explicit `BOOK_CHAPTER` type handling, so chapter dissemination is most plausible via manual per-work runs (not via current scheduled bulk selectors).
 
 ## 7) Known implementation caveats in current repo state
 
@@ -354,10 +319,14 @@ JSON object keyed by this repository's dissemination platform names:
   failure for the affected pathway, never a silent activation;
 - no wildcard or default key can activate a non-`env` mode;
 - `compare` and `api` are rejected for destinations with no automated
-  publisher-discovery pathway (manual-only, pull-feed and inactive).
+  publisher-discovery pathway (manual-only, pull-feed, inactive and
+  deprecated);
+- `CUL` and `Figshare` are no longer dissemination platform names, so a key
+  for either is an unknown key. Every pathway parses the whole variable, so
+  such a key fails every scheduled selection.
 
 `.github/workflows/bulk_disseminate.yml` reads
-`${{ vars.PUBLISHER_SOURCE_MODES }}` centrally, so the eleven platform-specific
+`${{ vars.PUBLISHER_SOURCE_MODES }}` centrally, so the nine platform-specific
 callers need no per-platform configuration.
 `.github/workflows/ia_bulk_disseminate.yml` reads the same variable.
 
@@ -373,6 +342,9 @@ unrecognised upstream platform is a contract incompatibility and fails closed.
 OAPEN and DOAB are queried and reconciled as two upstream platforms but
 projected onto the single existing OAPEN/DOAB execution adapter; a
 disagreement between their publisher sets is an error, never a silent union.
+`CAMBRIDGE_UNIVERSITY_LIBRARY` and `FIGSHARE` are classified `deprecated`:
+they stay known, and keep their pinned option descriptors, but have no
+execution pathway (#101).
 
 ### Platform-option contract validation
 

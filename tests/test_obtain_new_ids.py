@@ -117,13 +117,21 @@ class TestInternetArchiveArgumentsAndMapping(
             InternetArchiveIDFinder,
         )
 
-    def test_other_monthly_platforms_stay_monthly(self):
-        for platform in ('Figshare', 'Zenodo', 'CUL'):
+    def test_zenodo_stays_monthly(self):
+        with patch('obtain_new_ids.get_thoth_client',
+                   return_value=self.thoth):
+            args = get_arguments(['--platform', 'Zenodo'])
+            self.assertIsInstance(get_id_finder(args), MonthlyIDFinder)
+
+    def test_retired_platforms_have_no_finder(self):
+        # CUL and Figshare were retired (#101)
+        for platform in ('CUL', 'Figshare'):
             with self.subTest(platform=platform), patch(
                     'obtain_new_ids.get_thoth_client',
                     return_value=self.thoth):
                 args = get_arguments(['--platform', platform])
-                self.assertIsInstance(get_id_finder(args), MonthlyIDFinder)
+                with self.assertRaises(InternetArchiveSelectionError):
+                    get_id_finder(args)
 
     def test_weekly_platforms_stay_weekly(self):
         for platform in (
@@ -963,6 +971,11 @@ class TestOrdinaryOutputAndExitCharacterization(
 
     def test_unknown_platform_returns_one(self):
         self.assertEqual(main(['--platform', 'NotAPlatform']), 1)
+
+    def test_retired_platforms_return_one(self):
+        for platform in ('CUL', 'Figshare'):
+            with self.subTest(platform=platform):
+                self.assertEqual(main(['--platform', platform]), 1)
 
 
 PUBLISHER_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'

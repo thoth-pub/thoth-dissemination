@@ -2,7 +2,7 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to (Loughborough) Figshare, Zenodo, CUL and Google Play:
+For dissemination to Zenodo and Google Play:
 find newly-published works for upload. Internet Archive selection is based on
 recent relation-aware updates and usable canonical PDF sources.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
@@ -885,9 +885,7 @@ def get_id_finder(args, now_provider=None, thoth=None):
         'JSTOR': WeeklyIDFinder,
         'ProjectMUSE': WeeklyIDFinder,
         'ProQuest': WeeklyIDFinder,
-        'Figshare': MonthlyIDFinder,
         'Zenodo': MonthlyIDFinder,
-        'CUL': MonthlyIDFinder,
         'BKCI': BKCIIDFinder,
     }
     if platform == 'InternetArchive':
@@ -904,9 +902,9 @@ def get_id_finder(args, now_provider=None, thoth=None):
     finder_class = finder_classes.get(platform)
     if finder_class is None:
         raise InternetArchiveSelectionError(
-            'Platform must be one of InternetArchive, Crossref, Figshare, '
-            'Zenodo, CUL, GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, '
-            'ProjectMUSE or ProQuest')
+            'Platform must be one of InternetArchive, Crossref, Zenodo, '
+            'GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, ProjectMUSE or '
+            'ProQuest')
     return finder_class(
         platform=platform,
         source_mode=source_mode,
