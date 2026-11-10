@@ -2,7 +2,7 @@
 """
 Acquire a list of work IDs to be disseminated.
 Purpose: automatic dissemination at regular intervals of specified works from selected publishers.
-For dissemination to (Loughborough) Figshare, Zenodo, CUL and Google Play:
+For dissemination to Zenodo and Google Play:
 find newly-published works for upload. Internet Archive selection is based on
 recent relation-aware updates and usable canonical PDF sources.
 For dissemination to Crossref: find newly-updated works for metadata deposit (including update).
@@ -673,6 +673,17 @@ class WeeklyIDFinder(IDFinder):
         self.get_thoth_ids_iteratively(previous_week_start, previous_week_end)
 
 
+class OapenWeeklyIDFinder(WeeklyIDFinder):
+    """Logic for retrieving work IDs for weekly OAPEN dissemination"""
+
+    def get_query_parameters(self):
+        """Construct Thoth work ID query parameters depending on OAPEN-specific requirements"""
+        super().get_query_parameters()
+        # OAPEN only accepts monographs, edited books and textbooks: other types
+        # are held by oapensworduploader.py (OAPEN_WORK_TYPES), so don't select them.
+        self.work_types = '[MONOGRAPH, EDITED_BOOK, TEXTBOOK]'
+
+
 class CrossrefIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Crossref dissemination"""
 
@@ -869,14 +880,12 @@ def get_id_finder(args, now_provider=None, thoth=None):
     finder_classes = {
         'Crossref': CrossrefIDFinder,
         'GooglePlay': GooglePlayIDFinder,
-        'OAPEN': WeeklyIDFinder,
+        'OAPEN': OapenWeeklyIDFinder,
         'EBSCOHost': WeeklyIDFinder,
         'JSTOR': WeeklyIDFinder,
         'ProjectMUSE': WeeklyIDFinder,
         'ProQuest': WeeklyIDFinder,
-        'Figshare': MonthlyIDFinder,
         'Zenodo': MonthlyIDFinder,
-        'CUL': MonthlyIDFinder,
         'BKCI': BKCIIDFinder,
     }
     if platform == 'InternetArchive':
@@ -893,9 +902,9 @@ def get_id_finder(args, now_provider=None, thoth=None):
     finder_class = finder_classes.get(platform)
     if finder_class is None:
         raise InternetArchiveSelectionError(
-            'Platform must be one of InternetArchive, Crossref, Figshare, '
-            'Zenodo, CUL, GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, '
-            'ProjectMUSE or ProQuest')
+            'Platform must be one of InternetArchive, Crossref, Zenodo, '
+            'GooglePlay, BKCI, OAPEN, EBSCOHost, JSTOR, ProjectMUSE or '
+            'ProQuest')
     return finder_class(
         platform=platform,
         source_mode=source_mode,

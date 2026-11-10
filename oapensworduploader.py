@@ -4,22 +4,24 @@ Retrieve and disseminate files and metadata to
 OAPEN DSpace using SWORD protocol
 """
 
-import hashlib
-import io
 import logging
 import re
+import sys
 import time
 import unicodedata
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from enum import Enum
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
-import pikepdf
+import pycountry
 import requests
+import sword2
 
 from dspaceuploader import DSpaceUploader, MetadataProfile
 from errors import DisseminationError
-from uploader import Location, Publication
+from oapenthema import THEMACODES
+from uploader import Location
 
 
 OAPEN_SEARCH_URL = 'https://library.oapen.org/rest/search'
@@ -32,13 +34,6 @@ OAPEN_PAGE_SIZE = 100
 OAPEN_MAX_RESULTS = 500
 OAPEN_HANDLE_PREFIX = '20.500.12657/'
 
-# A PDF source that is larger, or stalls for longer, is held rather than truncated
-OAPEN_PDF_MAX_BYTES = 512 * 1024 * 1024
-OAPEN_PDF_TIMEOUT = (10, 90)
-OAPEN_PDF_CHUNK_BYTES = 1024 * 1024
-# The browser-like agent the shared downloader sends, which some publisher hosts require
-PDF_SOURCE_USER_AGENT = ('Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 '
-                         '(KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36')
 # DOIs that OAPEN mints for its own records do not identify a publisher's work
 OAPEN_DOI_PREFIX = '10.26530/'
 THOTH_WORK_ID_MARKER = 'thoth-work-id:'
@@ -65,6 +60,324 @@ INDEX_CONTROLS = (
     (MARKER_FIELD, 'thoth-work-id:4344e3cc-b92a-4375-816c-56ce99e29c43', '20.500.12657/113008'),
     (TITLE_FIELD, 'The deliverance of open access books', '20.500.12657/25287'),
 )
+
+
+OAPEN_WORK_TYPES = ('MONOGRAPH', 'EDITED_BOOK', 'TEXTBOOK')
+CREATIVE_COMMONS_HOSTS = ('creativecommons.org', 'www.creativecommons.org')
+# The six current Creative Commons licences, any version or jurisdiction port, and CC0
+CC_LICENCE_PATH = re.compile(
+    r'/licenses/(by|by-sa|by-nd|by-nc|by-nc-sa|by-nc-nd)/\d+\.\d+(/[a-z]{2,}(-[a-z]{2,})?)?'
+    r'(/(deed|legalcode)(\.[a-z]{2,3}([_-][a-z0-9]+)?)?)?/?', re.ASCII)
+CC0_PATH = re.compile(
+    r'/publicdomain/zero/1\.0(/(deed|legalcode)(\.[a-z]{2,3}([_-][a-z0-9]+)?)?)?/?', re.ASCII)
+ISSN_PATTERN = re.compile(r'\d{4}-?\d{3}[\dX]', re.ASCII)
+PUBLICATION_DATE_PATTERN = re.compile(r'\d{4}-\d{2}-\d{2}', re.ASCII)
+# Characters that sword2 (lxml) refuses in element text
+XML_INCOMPATIBLE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f￾￿\ud800-\udfff]')
+# Removed from quoted values so that a hold message stays on one line
+MESSAGE_CONTROL_CHARACTERS = re.compile(r'[\x00-\x1f\x7f-\x9f]')
+QUOTED_VALUE_LIMIT = 100
+
+
+def is_missing(value):
+    """Whether a Thoth value is absent: None, not a string, or only whitespace."""
+    return not isinstance(value, str) or value.strip() == ''
+
+
+def quote_value(value):
+    """repr() of a Thoth value for a log line, without control characters and at most 100 characters long."""
+    text = value if isinstance(value, str) else repr(value)
+    text = MESSAGE_CONTROL_CHARACTERS.sub('', text)[:QUOTED_VALUE_LIMIT]
+    return repr(text) if isinstance(value, str) else text
+
+
+def is_open_licence(licence):
+    """Whether a licence is a current Creative Commons licence URL or CC0 (decision D1 on #145)."""
+    if not isinstance(licence, str):
+        return False
+    value = licence.strip()
+    # urlsplit silently drops tabs and newlines inside a URL
+    if any(char.isspace() for char in value):
+        return False
+    try:
+        parts = urlsplit(value)
+        if parts.port is not None:
+            return False
+    except ValueError:
+        return False
+    if parts.scheme.lower() not in ('http', 'https'):
+        return False
+    if parts.username is not None or parts.password is not None:
+        return False
+    if parts.hostname not in CREATIVE_COMMONS_HOSTS:
+        return False
+    path = parts.path.lower()
+    return bool(CC_LICENCE_PATH.fullmatch(path) or CC0_PATH.fullmatch(path))
+
+
+def is_absolute_http_url(value):
+    value = value.strip()
+    if any(char.isspace() for char in value):
+        return False
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return parts.scheme.lower() in ('http', 'https') and bool(parts.hostname)
+
+
+def parse_publication_date(value):
+    """Return a strict YYYY-MM-DD date, or None."""
+    if not PUBLICATION_DATE_PATTERN.fullmatch(value):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def is_valid_issn(value):
+    """Whether a value is an ISSN with a correct mod-11 check digit."""
+    if not isinstance(value, str) or not ISSN_PATTERN.fullmatch(value):
+        return False
+    digits = value.replace('-', '')
+    total = sum(int(digit) * weight for digit, weight in zip(digits[:7], range(8, 1, -1)))
+    check = (11 - total % 11) % 11
+    return digits[7] == ('X' if check == 10 else str(check))
+
+
+def language_name(code):
+    """English name of a Thoth language code, or None."""
+    if not isinstance(code, str) or code == '':
+        return None
+    try:
+        # Thoth uses the less common "bibliographic" variant of codes that have two
+        language = (pycountry.languages.get(bibliographic=code)
+                    or pycountry.languages.get(alpha_3=code))
+    except (LookupError, KeyError):
+        return None
+    name = getattr(language, 'name', None)
+    return None if is_missing(name) else name
+
+
+def contributor_name(contribution):
+    """'lastName, firstName' (or fullName) plus ' | orcid', or None when there is no name."""
+    first_name = contribution.get('firstName')
+    if first_name is None:
+        name = contribution.get('fullName')
+    else:
+        name = '{}, {}'.format(contribution.get('lastName'), first_name)
+    if is_missing(name):
+        return None
+    contributor = contribution.get('contributor')
+    orcid = contributor.get('orcid') if isinstance(contributor, dict) else None
+    if orcid is not None:
+        name += ' | {}'.format(orcid)
+    return name
+
+
+def dict_items(value):
+    """The dicts in a Thoth list, ignoring anything malformed."""
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def dict_value(value):
+    return value if isinstance(value, dict) else {}
+
+
+def positional_group(groups):
+    """
+    SWORD fields for repeated series or fundings, given (key, value or None) per member.
+    One member omits missing values; two or more send them as empty elements, so that
+    OAPEN can still pair values by position.
+    """
+    fields = []
+    for group in groups:
+        for (key, value) in group:
+            if value is not None:
+                fields.append((key, value))
+            elif len(groups) > 1:
+                fields.append((key, ''))
+    return fields
+
+
+def validate_oapen_work(work, work_id, today=None):
+    """
+    Check Thoth work metadata for an OAPEN deposit and build its SWORD fields.
+
+    Returns (fields, problems): the (sword2 key, str value) pairs in the order they
+    are sent, and every problem that holds the work, in a fixed order. The fields
+    may only be sent when there are no problems. Makes no request and logs nothing.
+    """
+    today = datetime.now(timezone.utc).date() if today is None else today
+    work = dict_value(work)
+    problems = []
+
+    status = work.get('workStatus')
+    if status != 'ACTIVE':
+        problems.append('work status {} is not ACTIVE'.format(quote_value(status)))
+    work_type = work.get('workType')
+    if work_type not in OAPEN_WORK_TYPES:
+        problems.append('work type {} is not MONOGRAPH, EDITED_BOOK or TEXTBOOK'.format(
+            quote_value(work_type)))
+
+    long_abstract = work.get('longAbstract')
+    licence = work.get('license')
+    landing_page = work.get('landingPage')
+    title = work.get('title')
+    publication_date = work.get('publicationDate')
+    imprint = dict_value(work.get('imprint'))
+    imprint_name = imprint.get('imprintName')
+    publisher_name = dict_value(imprint.get('publisher')).get('publisherName')
+    isbns = [publication['isbn'] for publication in dict_items(work.get('publications'))
+             if not is_missing(publication.get('isbn'))]
+    language_codes = [language.get('languageCode')
+                      for language in dict_items(work.get('languages'))]
+    subjects = dict_items(work.get('subjects'))
+    thema_codes = [subject['subjectCode'] for subject in subjects
+                   if subject.get('subjectType') == 'THEMA'
+                   and not is_missing(subject.get('subjectCode'))]
+    keywords = [subject['subjectCode'] for subject in subjects
+                if subject.get('subjectType') == 'KEYWORD'
+                and not is_missing(subject.get('subjectCode'))]
+    contributions = []
+    for contribution in dict_items(work.get('contributions')):
+        if contribution.get('mainContribution') is True:
+            name = contributor_name(contribution)
+            if name is not None:
+                contributions.append((contribution.get('contributionType'), name))
+
+    # Legacy phrases kept from the mandatory-field checks of profile_oapen
+    if is_missing(long_abstract):
+        problems.append('Work must have a Long Abstract')
+    if is_missing(licence):
+        problems.append('Work must have a Licence')
+    if is_missing(landing_page):
+        problems.append('Work must have a Landing Page')
+    if not isbns:
+        problems.append('no ISBNs found')
+    if not language_codes:
+        problems.append('no languages found')
+    if not thema_codes:
+        problems.append('no THEMA Subject Codes found')
+    if not keywords:
+        problems.append('no Subject Keywords found')
+    if is_missing(title):
+        problems.append('Work must have a Title')
+    if is_missing(publication_date):
+        problems.append('Work must have a Publication Date')
+    if is_missing(imprint_name) or is_missing(publisher_name):
+        problems.append('Work must have a Publisher and Imprint name')
+
+    if not any(contribution_type in ('AUTHOR', 'EDITOR')
+               for (contribution_type, _) in contributions):
+        problems.append('no main AUTHOR or EDITOR')
+    if not is_missing(landing_page) and not is_absolute_http_url(landing_page):
+        problems.append('landing page is not an absolute http(s) URL')
+    if not is_missing(publication_date):
+        issued = parse_publication_date(publication_date)
+        if issued is None:
+            problems.append('publication date {} is not a valid YYYY-MM-DD date'.format(
+                quote_value(publication_date)))
+        elif issued > today:
+            problems.append('publication date {} is in the future'.format(publication_date))
+    unnamed_languages = []
+    for code in language_codes:
+        if language_name(code) is None and code not in unnamed_languages:
+            unnamed_languages.append(code)
+    if unnamed_languages:
+        problems.append('language code(s) with no name: {}'.format(
+            ', '.join(map(quote_value, unnamed_languages))))
+    if not is_missing(licence) and not is_open_licence(licence):
+        problems.append('licence {} is not a Creative Commons licence or CC0'.format(
+            quote_value(licence)))
+    unknown_thema_codes = []
+    for code in thema_codes:
+        if code not in THEMACODES and code not in unknown_thema_codes:
+            unknown_thema_codes.append(code)
+    if unknown_thema_codes:
+        problems.append('Thema code(s) not in the OAPEN list: {}'.format(
+            ', '.join(map(quote_value, unknown_thema_codes))))
+
+    fields = []
+    if not is_missing(long_abstract):
+        fields.append(('dcterms_abstract', long_abstract))
+    if not is_missing(publication_date):
+        # OAPEN needs the year only
+        fields.append(('dcterms_issued', publication_date.split('-')[0]))
+    if not is_missing(publisher_name):
+        fields.append(('dcterms_publisherId', publisher_name))
+    if not is_missing(imprint_name):
+        fields.append(('dcterms_imprintId', imprint_name))
+    if not is_missing(title):
+        fields.append(('dcterms_title', title))
+    for (key, name) in (('dcterms_alternative', 'subtitle'), ('dcterms_ocn', 'oclc')):
+        if not is_missing(work.get(name)):
+            fields.append((key, work[name]))
+    page_count = work.get('pageCount')
+    if type(page_count) is int and page_count > 0:
+        fields.append(('dcterms_pageCount', str(page_count)))
+    if not is_missing(work.get('place')):
+        fields.append(('dcterms_place', work['place']))
+    # No edition: OAPEN has not named a field for it (#122)
+    if not is_missing(licence):
+        fields.append(('dcterms_rights', licence))
+    if not is_missing(landing_page):
+        fields.append(('dcterms_urlwebshop', landing_page))
+    doi = work.get('doi')
+    if isinstance(doi, str) and doi:
+        fields.append(('dcterms_doi', doi.replace('https://doi.org/', '')))
+    for (contribution_type, name) in contributions:
+        key = {'AUTHOR': 'dcterms_creator',
+               'EDITOR': 'dcterms_editor'}.get(contribution_type, 'dcterms_contributionsBy')
+        fields.append((key, name))
+    fields.extend(('dcterms_isbn', isbn.replace('-', '')) for isbn in isbns)
+    for code in language_codes:
+        name = language_name(code)
+        if name is not None:
+            fields.append(('dcterms_language', name))
+    fields.extend(('dcterms_classification', THEMACODES[code])
+                  for code in thema_codes if code in THEMACODES)
+    fields.extend(('dcterms_other', keyword) for keyword in keywords)
+    fields.append(('dcterms_oapenIdentifier', 'thoth-work-id:{}'.format(work_id)))
+
+    series_groups = []
+    for issue in dict_items(work.get('issues')):
+        series = dict_value(issue.get('series'))
+        issn = series.get('issnDigital')
+        series_name = series.get('seriesName')
+        ordinal = issue.get('issueOrdinal')
+        series_groups.append([
+            ('dcterms_issn', issn if is_valid_issn(issn) else None),
+            ('dcterms_seriesId', None if is_missing(series_name) else series_name),
+            ('dcterms_seriesNumber', str(ordinal) if type(ordinal) is int else None),
+        ])
+    fields.extend(positional_group(series_groups))
+    funding_groups = []
+    for funding in dict_items(work.get('fundings')):
+        institution_name = dict_value(funding.get('institution')).get('institutionName')
+        funding_groups.append(
+            [(key, None if is_missing(funding.get(name)) else funding[name])
+             for (key, name) in (('dcterms_grantNumber', 'grantNumber'),
+                                 ('dcterms_program', 'program'),
+                                 ('dcterms_projectName', 'projectName'))]
+            + [('dcterms_institutionId',
+                None if is_missing(institution_name) else institution_name)])
+    fields.extend(positional_group(funding_groups))
+
+    unsendable = []
+    for (key, value) in fields:
+        if XML_INCOMPATIBLE.search(value) and key not in unsendable:
+            unsendable.append(key)
+    problems.extend('field {} contains characters XML cannot carry'.format(key)
+                    for key in unsendable)
+    return fields, problems
+
+
+def hold_message(work_id, problems):
+    """The single log line that reports every metadata problem holding a work."""
+    return 'Cannot upload to OAPEN: work {} held for {} metadata problem(s): {}'.format(
+        MESSAGE_CONTROL_CHARACTERS.sub('', str(work_id)), len(problems), '; '.join(problems))
 
 
 class PreflightDecision(Enum):
@@ -326,110 +639,6 @@ class OAPENLibraryIndex:
         return batch
 
 
-class OAPENPDFError(DisseminationError):
-    """The PDF source could not be downloaded completely, or is not a sound PDF."""
-
-
-def describe_pdf_problem(problem):
-    """Shorten a parser message, naming the file rather than its in-memory buffer."""
-    text = re.sub(r'stream <_io\.BytesIO object at 0x[0-9a-f]+>', 'PDF', str(problem))
-    text = ' '.join(text.split())
-    return text if len(text) <= 200 else text[:197] + '...'
-
-
-def check_pdf(data):
-    """
-    Return the page count of a complete, unencrypted PDF whose structure,
-    streams and page contents all parse without problems, or raise OAPENPDFError.
-    """
-    if not data:
-        raise OAPENPDFError('the file is empty')
-    # PDF readers accept a header anywhere in the first 1024 bytes
-    if b'%PDF-' not in data[:1024]:
-        raise OAPENPDFError('the file has no PDF header')
-    try:
-        # Without recovery, a damaged cross-reference table fails instead of being rebuilt
-        with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
-            if pdf.is_encrypted:
-                raise OAPENPDFError('the file is encrypted')
-            pages = len(pdf.pages)
-            if pages == 0:
-                raise OAPENPDFError('the file has no pages')
-            # Decodes every stream, parses every page's content and reports parser warnings
-            problems = pdf.check_pdf_syntax()
-    except OAPENPDFError:
-        raise
-    except pikepdf.PasswordError:
-        raise OAPENPDFError('the file is encrypted with a password') from None
-    except pikepdf.PdfError as error:
-        raise OAPENPDFError('the file could not be read as a PDF: {}'.format(
-            describe_pdf_problem(error))) from None
-    except Exception as error:
-        raise OAPENPDFError('the file could not be checked ({})'.format(
-            type(error).__name__)) from None
-    if problems:
-        raise OAPENPDFError('the file has {} structural problem(s), first: {}'.format(
-            len(problems), describe_pdf_problem(problems[0])))
-    return pages
-
-
-class OAPENPDFSource:
-    """Download a PDF source in one bounded request, keeping its exact bytes."""
-
-    def __init__(self, http_get=requests.get):
-        self.http_get = http_get
-
-    def fetch(self, url):
-        """Return the complete body of a PDF source, or raise OAPENPDFError."""
-        # Errors name the host only: source URLs may carry signed tokens
-        host = urlparse(url).hostname or 'the source host'
-        try:
-            response = self.http_get(url, headers={'User-Agent': PDF_SOURCE_USER_AGENT},
-                                     timeout=OAPEN_PDF_TIMEOUT, stream=True)
-        except requests.RequestException as error:
-            raise OAPENPDFError('the request to {} failed ({})'.format(
-                host, type(error).__name__)) from None
-        try:
-            # Redirects are followed, so report where the body came from
-            host = urlparse(response.url).hostname or host
-            return self.read_body(response, host)
-        except requests.RequestException as error:
-            raise OAPENPDFError('the download from {} failed ({})'.format(
-                host, type(error).__name__)) from None
-        finally:
-            response.close()
-
-    @staticmethod
-    def read_body(response, host):
-        if response.status_code != 200:
-            raise OAPENPDFError('{} answered HTTP status {}'.format(host, response.status_code))
-        content_type = (response.headers.get('Content-Type') or '').split(';')[0].strip().lower()
-        if content_type != 'application/pdf':
-            raise OAPENPDFError('{} served {} instead of application/pdf'.format(
-                host, repr(content_type[:60]) if content_type else 'no content type'))
-        declared = response.headers.get('Content-Length')
-        if declared is not None:
-            if not re.fullmatch(r'[0-9]+', declared.strip()):
-                raise OAPENPDFError('{} sent an invalid Content-Length'.format(host))
-            declared = int(declared)
-            if declared > OAPEN_PDF_MAX_BYTES:
-                raise OAPENPDFError('{} declared {} bytes, more than the {}-byte limit'.format(
-                    host, declared, OAPEN_PDF_MAX_BYTES))
-        chunks = []
-        received = 0
-        for chunk in response.iter_content(chunk_size=OAPEN_PDF_CHUNK_BYTES):
-            chunks.append(chunk)
-            received += len(chunk)
-            if received > OAPEN_PDF_MAX_BYTES:
-                raise OAPENPDFError('{} sent more than the {}-byte limit'.format(
-                    host, OAPEN_PDF_MAX_BYTES))
-        # A compressed transfer arrives decoded, so only an unencoded body has a comparable length
-        encoding = (response.headers.get('Content-Encoding') or 'identity').strip().lower()
-        if declared is not None and encoding == 'identity' and received != declared:
-            raise OAPENPDFError('{} declared {} bytes but sent {}'.format(host, declared, received))
-        return b''.join(chunks)
-
-
 class PreflightGatedSwordApi:
     """Expose the SWORD calls an upload makes, allowing one create per cleared preflight."""
 
@@ -506,7 +715,6 @@ class OAPENSWORDUploader(DSpaceUploader):
             metadata_profile)
         self.api = PreflightGatedSwordApi(self.api, work_id)
         self.oapen_index = OAPENLibraryIndex()
-        self.pdf_source = OAPENPDFSource()
 
     def upload_to_platform(self):
         """Check for an existing OAPEN item, then perform standard upload and OAPEN-specific processing"""
@@ -532,23 +740,22 @@ class OAPENSWORDUploader(DSpaceUploader):
         return [Location(publication_id, location_platform, landing_page,
                          full_text_url, None, None)]
 
-    def get_publication_details(self, publication_type):
-        """
-        Download the PDF once and check it before any SWORD create, returning
-        exactly the checked bytes for upload. Other formats use the shared path.
-        """
-        if publication_type != 'PDF':
-            return super().get_publication_details(publication_type)
-        source = self.get_publication_source('PDF')
-        try:
-            pdf_bytes = self.pdf_source.fetch(source.url)
-            pages = check_pdf(pdf_bytes)
-        except OAPENPDFError as error:
-            raise OAPENPDFError('Not creating OAPEN item for work {}: PDF publication {} was '
-                                'not accepted: {}'.format(self.work_id, source.id, error)) from None
-        logging.info('OAPEN PDF for work {}: publication {}, {} bytes, {} pages, SHA-256 {}'.format(
-            self.work_id, source.id, len(pdf_bytes), pages, hashlib.sha256(pdf_bytes).hexdigest()))
-        return Publication('PDF', source.id, pdf_bytes, source.file_ext, source.url)
+    def parse_metadata(self):
+        """Build the OAPEN SWORD entry, or exit reporting every metadata problem that holds the work"""
+        work = ((self.metadata or {}).get('data') or {}).get('work') or {}
+        fields, problems = validate_oapen_work(work, self.work_id)
+        if problems:
+            logging.error(hold_message(self.work_id, problems))
+            sys.exit(1)
+        entry = sword2.Entry()
+        for (key, value) in fields:
+            entry.add_field(key, value)
+        return entry
+
+    def describe_rejected_pdf(self, source, error):
+        """A rejected PDF stops the upload before any SWORD create."""
+        return 'Not creating OAPEN item for work {}: PDF publication {} was not accepted: {}'.format(
+            self.work_id, source.id, error)
 
     def assess_existing_deposit(self):
         """

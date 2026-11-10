@@ -29,8 +29,8 @@ Verified structure:
   (`--lookback-hours`, `--max-ids`, `--report`) and an OAPEN-only `--locations`
   mode.
 - `*uploader.py` — platform-specific upload logic (Internet Archive, OAPEN
-  SWORD/FTP, ScienceOpen, CUL, Crossref, Figshare, Zenodo, Project MUSE, JSTOR,
-  EBSCOHost, ProQuest, Google Play, BKCI), with shared behaviour in
+  SWORD/FTP, ScienceOpen, Crossref, Zenodo, Project MUSE, JSTOR, EBSCOHost,
+  ProQuest, Google Play, BKCI), with shared behaviour in
   `uploader.py`, `swordv2uploader.py` and `sftpclient.py`.
 - `thothapi.py` — shared Thoth GraphQL access used by selection, location
   write-back and reconciliation.
@@ -345,7 +345,7 @@ syntax with the repository's established actionlint procedure.
 Verified in `disseminate.yml`:
 
 - a `write-locations` job runs after successful dissemination for
-  `InternetArchive`, `CUL`, `Figshare`, `Zenodo` and `OAPEN`, downloads the
+  `InternetArchive`, `Zenodo` and `OAPEN`, downloads the
   dissemination output artifact, and runs `write_locations.py <work-id>` with
   `THOTH_PAT`. **This writes location records back into Thoth**;
 - a `send-email` job runs for `EBSCOHost`, `BKCI`, `JSTOR`, `ProjectMUSE` and

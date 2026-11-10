@@ -19,7 +19,6 @@ from unittest.mock import patch
 
 import requests
 
-from culuploader import CULUploader
 from errors import DisseminationError
 from oapensworduploader import (
     OAPEN_MAX_RESULTS,
@@ -352,7 +351,6 @@ class FakeSwordApi:
 
 CREDENTIALS = {
     'oapen_sword_user': 'test-user', 'oapen_sword_pw': 'test-password',
-    'cul_pilot_user': 'test-user', 'cul_pilot_pw': 'test-password',
 }
 
 
@@ -1146,20 +1144,8 @@ class RepeatAndRetryTests(OfflineTestCase):
 
 
 class OtherUploaderTests(OfflineTestCase):
-    def test_cul_sword_upload_is_unchanged(self):
-        remote = FakeRemote()
-        uploader = make_uploader(remote, uploader_class=CULUploader)
-
-        uploader.upload_to_platform()
-
-        self.assertIsInstance(uploader.api, FakeSwordApi)
-        self.assertEqual(remote.searches, [])
-        self.assertEqual(remote.events, ['export_metadata', 'pdf_download', 'create_item',
-                                         'upload_metadata', 'upload_pdf', 'complete_deposit'])
-
     def test_preflight_is_defined_only_on_the_oapen_uploader(self):
         self.assertFalse(hasattr(SwordV2Uploader, 'assess_existing_deposit'))
-        self.assertFalse(hasattr(CULUploader, 'assess_existing_deposit'))
 
 
 class ProductionWiringTests(OfflineTestCase):

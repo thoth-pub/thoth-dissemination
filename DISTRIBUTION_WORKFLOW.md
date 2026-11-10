@@ -58,9 +58,7 @@ GitHub Actions schedules run in UTC.
 |---|---|---|---|---|
 | InternetArchive | `ia_bulk_disseminate.yml` | Daily at 04:40 | `InternetArchiveIDFinder` | Active supported works updated in the captured previous 30 hours with a usable canonical PDF source |
 | Crossref | `cr_bulk_disseminate.yml` | Hourly at :45 | `CrossrefIDFinder` | Active + qualifying Forthcoming works updated recently |
-| Figshare | `fs_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
 | Zenodo | `zn_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
-| CUL | `cul_bulk_disseminate.yml` | Monthly, day 7 at 04:40 | `MonthlyIDFinder` | Previous calendar month, active |
 | GooglePlay | `gp_bulk_disseminate.yaml` | Daily at 05:50 | `GooglePlayIDFinder` | Previous day, active |
 | BKCI | `bkci_bulk_disseminate.yaml` | Monthly, day 6 at 06:40 | `BKCIIDFinder` | Previous month, active, excludes textbooks |
 | OAPEN | `oapen_bulk_disseminate.yaml` | Weekly, Mon at 02:20 | `WeeklyIDFinder` | Previous week, active |
@@ -70,7 +68,18 @@ GitHub Actions schedules run in UTC.
 | ProQuest | `pq_bulk_disseminate.yaml` | Weekly, Fri at 02:20 | `WeeklyIDFinder` | Previous week, active |
 | ScienceOpen | No scheduled workflow | Manual only | N/A | Per-work manual dissemination |
 
+CUL (Cambridge University Library) and Figshare are retired destinations (#101). This repository has no uploader, selector or workflow for them. `publisher_source.py` still recognises their Thoth platform values, `CAMBRIDGE_UNIVERSITY_LIBRARY` and `FIGSHARE`, and classifies both as `deprecated`, with no dissemination pathway. Locations that earlier runs wrote to Thoth are unchanged.
+
 ## 4) Platform-by-platform payload and conditions
+
+Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147, #155). A file served as `application/pdf` is checked; a file served as `application/octet-stream` or `binary/octet-stream` is checked when its first 1024 bytes hold a PDF header.
+
+Where a PDF is described as optional, that means Thoth gives no PDF file for the work:
+- no PDF publication;
+- a canonical PDF location without a full-text URL;
+- a full-text URL that serves no PDF file: an HTTP 4xx answer other than 408 and 429, a landing page or any other content type, or an octet stream without a PDF header. The run logs a warning naming the work and publication.
+
+Project MUSE and ProQuest still need a PDF publication, because they name every file after its ISBN. A PDF that fails the download (a timeout, a 5xx, 408 or 429 answer, a size or length error) or the check fails the work on every platform. A full-text URL that serves no PDF file fails the work only on platforms that need the PDF.
 
 ### Internet Archive (`InternetArchive`)
 - Scheduled selection:
@@ -100,13 +109,38 @@ GitHub Actions schedules run in UTC.
     or ambiguous works.
 
 ### OAPEN (`OAPEN`)
-- Upload content:
-  - Only `onix_3.0::oapen` metadata XML is uploaded to OAPEN FTP.
+- Upload content (SWORD v2, `oapensworduploader.py`):
+  - A SWORD Atom entry with the OAPEN metadata fields. Missing optional values
+    are omitted; a work with two or more series or fundings keeps one empty
+    element per missing value so that the values still pair by position.
+  - `json::thoth` metadata file.
+  - The checked PDF.
 - Preconditions:
-  - `oapen_ftp_user` / `oapen_ftp_pw`
+  - `oapen_sword_user` / `oapen_sword_pw`
+  - Metadata validation, before any OAPEN request, PDF download or SWORD
+    create. All problems are reported in one log line and the job fails. A
+    work is held if:
+    - its status is not `ACTIVE`, or its type is not `MONOGRAPH`,
+      `EDITED_BOOK` or `TEXTBOOK`;
+    - it lacks a long abstract, licence, landing page, ISBN, language, Thema
+      code, keyword, title, publication date, publisher or imprint name, or a
+      main author or editor;
+    - its landing page is not an absolute http(s) URL;
+    - its publication date is not a valid `YYYY-MM-DD` date, or is in the
+      future;
+    - a language code has no name, its licence is not a current Creative
+      Commons licence or CC0, or a Thema code is missing from `oapenthema.py`;
+    - a value contains characters that XML cannot carry.
+  - Duplicate preflight (#123): Thoth must record no OAPEN location, and
+    read-only OAPEN searches by DOI, Thoth work ID, ISBN and title must find no
+    possible match; otherwise the job fails without a create.
+  - PDF check (#124): the PDF is downloaded once and checked; a rejected PDF
+    fails the job without a create.
 - Automatic writeback:
-  - No immediate location returned by uploader.
-  - Separate weekly catch-up (`oapen_catchup_locations.yaml`) queries OAPEN + DOAB APIs and writes missing locations to Thoth.
+  - The uploader returns an OAPEN location, which the `write-locations` job
+    writes to Thoth.
+  - The weekly catch-up (`oapen_catchup_locations.yaml`) still queries OAPEN +
+    DOAB APIs and writes missing locations to Thoth, as a fallback.
 
 ### ScienceOpen (`ScienceOpen`)
 - Upload content (manual flow only):
@@ -120,18 +154,6 @@ GitHub Actions schedules run in UTC.
   - PDF required
 - Chapter support:
   - Explicitly marked as not yet implemented.
-
-### CUL (`CUL`)
-- Upload content:
-  - SWORDv2 deposit with:
-    - Required PDF
-    - Supplemental `json::thoth`
-    - Metadata mapped via `JISC_ROUTER` profile
-- Preconditions:
-  - `cul_pilot_user` / `cul_pilot_pw`
-  - PDF canonical location required
-- Automatic writeback:
-  - Returns location (`OTHER`) and workflow writes it to Thoth.
 
 ### Crossref (`Crossref`)
 - Upload content:
@@ -147,30 +169,10 @@ GitHub Actions schedules run in UTC.
 - Automatic writeback:
   - No location writeback (metadata deposit workflow only).
 
-### Figshare (`Figshare`)
-- Upload content:
-  - Creates one project per work.
-  - Creates one article per available publication format.
-  - For each article uploads:
-    - Publication file
-    - `json::thoth` metadata file
-- Preconditions:
-  - `figshare_token`
-  - Work must have:
-    - Long Abstract
-    - Licence supported by Figshare
-    - At least one Main Contribution
-    - At least one Subject of type `KEYWORD`
-  - Existing article containing same Thoth work ID blocks upload.
-- Publication formats considered:
-  - Iterates all types in `PUB_FORMATS` (PDF, XML-as-zip, EPUB, AZW3, MOBI, DOCX, FICTION_BOOK), uploading whichever are available.
-- Automatic writeback:
-  - Returns per-publication locations (`OTHER`) and workflow writes them to Thoth.
-
 ### Zenodo (`Zenodo`)
 - Upload content:
   - One deposition per work.
-  - Uploads every available publication file.
+  - Uploads every available publication file. A listed PDF that fails the PDF check fails the work before the deposition is created. A PDF link that serves no PDF file is left out, and the record is published without it.
   - Uploads supplemental `*_metadata.json` (`json::thoth`).
 - Preconditions:
   - `zenodo_token`
@@ -187,7 +189,7 @@ GitHub Actions schedules run in UTC.
 - Upload content:
   - `onix_3.0::project_muse`
   - JPG cover (strict `.jpg`)
-  - PDF and/or EPUB (at least one required)
+  - PDF and/or EPUB (at least one required; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - Per-publisher credentials:
     - `muse_ftp_user_<publisher_id>`
@@ -212,7 +214,7 @@ GitHub Actions schedules run in UTC.
 ### EBSCOHost (`EBSCOHost`)
 - Upload content:
   - `onix_2.1::ebsco_host`
-  - PDF and/or EPUB (at least one)
+  - PDF and/or EPUB (at least one; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - `ebsco_ftp_user`, `ebsco_ftp_pw`
   - Filename root prefers PDF ISBN, falls back to EPUB ISBN
@@ -223,7 +225,7 @@ GitHub Actions schedules run in UTC.
 - Upload content:
   - `onix_2.1::proquest_ebrary`
   - Cover file (any extension)
-  - PDF and/or EPUB (intended)
+  - PDF and/or EPUB (intended; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - `proquest_ftp_user`, `proquest_ftp_pw`
   - Uploads to `/upload`
@@ -240,7 +242,7 @@ GitHub Actions schedules run in UTC.
   - `google_play_bucket`
   - `google_play_coll_<publisher_id>`
   - GitHub OIDC + GCP service account/workload identity provider secrets
-  - At least one of PDF or EPUB required
+  - At least one of PDF or EPUB required; a PDF file that the link serves must pass the PDF check
 - Automatic writeback:
   - No location writeback; no notification email step.
 
@@ -262,8 +264,6 @@ GitHub Actions schedules run in UTC.
 ### Immediate writeback platforms
 From `disseminate.yml`, these platforms return location lines and trigger `write_locations.py`:
 - `InternetArchive`
-- `CUL`
-- `Figshare`
 - `Zenodo`
 
 ### Deferred location writeback
@@ -281,7 +281,6 @@ From `disseminate.yml`, email job runs for:
 - Automatic dissemination is currently configured for book-like work types only.
 - `BOOK_CHAPTER` is not included in automatic ID-finder filters.
 - `ScienceOpen` uploader explicitly states chapter dissemination is not yet implemented.
-- `Figshare` metadata mapping contains explicit `BOOK_CHAPTER` type handling, so chapter dissemination is most plausible via manual per-work runs (not via current scheduled bulk selectors).
 
 ## 7) Known implementation caveats in current repo state
 
@@ -327,10 +326,14 @@ JSON object keyed by this repository's dissemination platform names:
   failure for the affected pathway, never a silent activation;
 - no wildcard or default key can activate a non-`env` mode;
 - `compare` and `api` are rejected for destinations with no automated
-  publisher-discovery pathway (manual-only, pull-feed and inactive).
+  publisher-discovery pathway (manual-only, pull-feed, inactive and
+  deprecated);
+- `CUL` and `Figshare` are no longer dissemination platform names, so a key
+  for either is an unknown key. Every pathway parses the whole variable, so
+  such a key fails every scheduled selection.
 
 `.github/workflows/bulk_disseminate.yml` reads
-`${{ vars.PUBLISHER_SOURCE_MODES }}` centrally, so the eleven platform-specific
+`${{ vars.PUBLISHER_SOURCE_MODES }}` centrally, so the nine platform-specific
 callers need no per-platform configuration.
 `.github/workflows/ia_bulk_disseminate.yml` reads the same variable.
 
@@ -346,6 +349,9 @@ unrecognised upstream platform is a contract incompatibility and fails closed.
 OAPEN and DOAB are queried and reconciled as two upstream platforms but
 projected onto the single existing OAPEN/DOAB execution adapter; a
 disagreement between their publisher sets is an error, never a silent union.
+`CAMBRIDGE_UNIVERSITY_LIBRARY` and `FIGSHARE` are classified `deprecated`:
+they stay known, and keep their pinned option descriptors, but have no
+execution pathway (#101).
 
 ### Platform-option contract validation
 

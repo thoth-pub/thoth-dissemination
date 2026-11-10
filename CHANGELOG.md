@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.10.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.10.0) - 2026-11-10
+
+### Added
+  - OAPEN uploads now validate the work's metadata before any OAPEN search, PDF download or SWORD request, and report every problem in one log line (#145).
+
+### Changed
+  - Every platform that delivers a PDF now downloads it with one bounded request and checks it with `pikepdf` before any upload, as OAPEN has since v1.9.0, and uploads exactly the checked bytes (#147). A PDF whose download fails (a timeout, an HTTP 5xx, a size or length error) or that fails the check now fails the work, also on platforms where the PDF is optional; Internet Archive reconciliation reports it as a `pdf` failure.
+  - A full-text URL that serves no PDF file, such as a landing page or an HTTP 404, still counts as no PDF on platforms where the PDF is optional, as in v1.9.0, and the run logs a warning; platforms that need the PDF fail the work (#155).
+  - A PDF served as `application/octet-stream` or `binary/octet-stream`, as some file stores do, is now accepted when it starts with a PDF header and passes the check (#155).
+  - The OAPEN SWORD entry no longer contains empty elements or the text `None` for missing values, and a blank required value counts as missing (#145).
+  - Weekly OAPEN runs no longer select journal issues or book sets (#150).
+
+### Removed
+  - Dissemination to the retired CUL (Cambridge University Library) and Figshare destinations: their uploaders, monthly workflows, work selection and location write-back (#101).
+
+### Fixed
+  - A PDF publication with no full-text URL is now reported as `No PDF Full Text URL found for Work` instead of failing with `MissingSchema`; platforms where the PDF is optional send the work without it, and Internet Archive reconciliation reports it as `no_pdf_source` (#147).
+
+### Deployment
+  - Merging this release into `main` activates every change above for scheduled and manual runs.
+  - The PDF check is strict: a parser warning, a cross-reference table that needs repair, any encryption, a file over 512 MiB, an HTTP 5xx, 408 or 429 answer, any other answer that is neither 200 nor 4xx, or a host that takes more than 10 s to connect or stalls for 90 s rejects the PDF. A work whose PDF is rejected fails on every platform. A full-text URL that serves no PDF file fails the work only on Internet Archive, OAPEN, JSTOR, BKCI and ScienceOpen, as in v1.9.0. Scheduled runs that select by publication date do not pick it up again, so once the PDF is replaced the work needs a manual run on those platforms. The daily Internet Archive and Google Play runs are the first to show rejections. How many current publisher PDFs it rejects is tracked on #147.
+  - On Zenodo, a work whose canonical PDF location has no full-text URL is now published as a permanent record without the PDF, where v1.9.0 failed the run instead (#147). A full-text URL that serves no PDF file also gives a record without the PDF, as in v1.9.0 (#155).
+  - OAPEN now holds a work whose metadata fails validation, for example a licence other than a current Creative Commons licence or CC0, or a Thema code missing from `oapenthema.py`, until the metadata or the code changes (#145).
+  - The CUL and Figshare workflows were disabled on 2026-11-10; their secrets and variables are deleted after this release (#101).
+
 ## [[1.9.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.9.0) - 2026-10-29
 
 ### Added
