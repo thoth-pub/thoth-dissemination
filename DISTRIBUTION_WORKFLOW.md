@@ -102,13 +102,38 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
     or ambiguous works.
 
 ### OAPEN (`OAPEN`)
-- Upload content:
-  - Only `onix_3.0::oapen` metadata XML is uploaded to OAPEN FTP.
+- Upload content (SWORD v2, `oapensworduploader.py`):
+  - A SWORD Atom entry with the OAPEN metadata fields. Missing optional values
+    are omitted; a work with two or more series or fundings keeps one empty
+    element per missing value so that the values still pair by position.
+  - `json::thoth` metadata file.
+  - The checked PDF.
 - Preconditions:
-  - `oapen_ftp_user` / `oapen_ftp_pw`
+  - `oapen_sword_user` / `oapen_sword_pw`
+  - Metadata validation, before any OAPEN request, PDF download or SWORD
+    create. All problems are reported in one log line and the job fails. A
+    work is held if:
+    - its status is not `ACTIVE`, or its type is not `MONOGRAPH`,
+      `EDITED_BOOK` or `TEXTBOOK`;
+    - it lacks a long abstract, licence, landing page, ISBN, language, Thema
+      code, keyword, title, publication date, publisher or imprint name, or a
+      main author or editor;
+    - its landing page is not an absolute http(s) URL;
+    - its publication date is not a valid `YYYY-MM-DD` date, or is in the
+      future;
+    - a language code has no name, its licence is not a current Creative
+      Commons licence or CC0, or a Thema code is missing from `oapenthema.py`;
+    - a value contains characters that XML cannot carry.
+  - Duplicate preflight (#123): Thoth must record no OAPEN location, and
+    read-only OAPEN searches by DOI, Thoth work ID, ISBN and title must find no
+    possible match; otherwise the job fails without a create.
+  - PDF check (#124): the PDF is downloaded once and checked; a rejected PDF
+    fails the job without a create.
 - Automatic writeback:
-  - No immediate location returned by uploader.
-  - Separate weekly catch-up (`oapen_catchup_locations.yaml`) queries OAPEN + DOAB APIs and writes missing locations to Thoth.
+  - The uploader returns an OAPEN location, which the `write-locations` job
+    writes to Thoth.
+  - The weekly catch-up (`oapen_catchup_locations.yaml`) still queries OAPEN +
+    DOAB APIs and writes missing locations to Thoth, as a fallback.
 
 ### ScienceOpen (`ScienceOpen`)
 - Upload content (manual flow only):
