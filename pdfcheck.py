@@ -22,8 +22,30 @@ PDF_SOURCE_USER_AGENT = ('Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 
                          '(KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36')
 
 
+# A body served under one of these types is a PDF only if it starts like one
+OCTET_STREAM_TYPES = ('application/octet-stream', 'binary/octet-stream')
+PDF_HEADER_BYTES = 1024
+
+
 class PDFCheckError(DisseminationError):
     """The PDF source could not be downloaded completely, or is not a sound PDF."""
+
+
+class PDFNotServedError(DisseminationError):
+    """
+    The PDF link serves no PDF file: a landing page, an error page or a missing file.
+    Platforms where the PDF is optional treat this as no PDF; it is not a PDFCheckError.
+    """
+
+
+def is_not_served_status(status_code):
+    """A client error says the file is missing or not accessible, except timeouts and rate limits."""
+    return 400 <= status_code < 500 and status_code not in (408, 429)
+
+
+def has_pdf_header(data):
+    # PDF readers accept a header anywhere in the first 1024 bytes
+    return b'%PDF-' in data[:PDF_HEADER_BYTES]
 
 
 def describe_pdf_problem(problem):
@@ -40,8 +62,7 @@ def check_pdf(data):
     """
     if not data:
         raise PDFCheckError('the file is empty')
-    # PDF readers accept a header anywhere in the first 1024 bytes
-    if b'%PDF-' not in data[:1024]:
+    if not has_pdf_header(data):
         raise PDFCheckError('the file has no PDF header')
     try:
         # Without recovery, a damaged cross-reference table fails instead of being rebuilt
@@ -76,7 +97,10 @@ class PDFSource:
         self.http_get = http_get
 
     def fetch(self, url):
-        """Return the complete body of a PDF source, or raise PDFCheckError."""
+        """
+        Return the complete body of a PDF source, or raise PDFNotServedError when the
+        link serves no PDF file and PDFCheckError when it cannot be downloaded completely.
+        """
         # Errors name the host only: source URLs may carry signed tokens
         host = urlparse(url).hostname or 'the source host'
         try:
@@ -101,10 +125,15 @@ class PDFSource:
     @staticmethod
     def read_body(response, host):
         if response.status_code != 200:
-            raise PDFCheckError('{} answered HTTP status {}'.format(host, response.status_code))
+            message = '{} answered HTTP status {}'.format(host, response.status_code)
+            if is_not_served_status(response.status_code):
+                raise PDFNotServedError(message)
+            raise PDFCheckError(message)
         content_type = (response.headers.get('Content-Type') or '').split(';')[0].strip().lower()
-        if content_type != 'application/pdf':
-            raise PDFCheckError('{} served {} instead of application/pdf'.format(
+        # Some file stores serve every file as an octet stream, so its first bytes decide
+        octet_stream = content_type in OCTET_STREAM_TYPES
+        if content_type != 'application/pdf' and not octet_stream:
+            raise PDFNotServedError('{} served {} instead of application/pdf'.format(
                 host, repr(content_type[:60]) if content_type else 'no content type'))
         declared = response.headers.get('Content-Length')
         if declared is not None:
@@ -116,9 +145,14 @@ class PDFSource:
                     host, declared, PDF_MAX_BYTES))
         chunks = []
         received = 0
+        header_checked = not octet_stream
         for chunk in response.iter_content(chunk_size=PDF_CHUNK_BYTES):
             chunks.append(chunk)
             received += len(chunk)
+            # Stop reading an octet stream as soon as its first bytes show it is not a PDF
+            if not header_checked and received >= PDF_HEADER_BYTES:
+                PDFSource.require_pdf_header(b''.join(chunks), content_type, host)
+                header_checked = True
             if received > PDF_MAX_BYTES:
                 raise PDFCheckError('{} sent more than the {}-byte limit'.format(
                     host, PDF_MAX_BYTES))
@@ -126,4 +160,16 @@ class PDFSource:
         encoding = (response.headers.get('Content-Encoding') or 'identity').strip().lower()
         if declared is not None and encoding == 'identity' and received != declared:
             raise PDFCheckError('{} declared {} bytes but sent {}'.format(host, declared, received))
-        return b''.join(chunks)
+        data = b''.join(chunks)
+        # A Content-Length error found before an octet stream's first 1024 bytes are judged
+        # (an oversize declaration, or a short body that does not match it) stays strict
+        # even if the body turns out not to be a PDF
+        if not header_checked:
+            PDFSource.require_pdf_header(data, content_type, host)
+        return data
+
+    @staticmethod
+    def require_pdf_header(data, content_type, host):
+        if not has_pdf_header(data):
+            raise PDFNotServedError('{} served {} that is not a PDF'.format(
+                host, repr(content_type)))

@@ -1,4 +1,5 @@
-"""Offline tests for checking every delivered PDF, not just OAPEN's (DIS-PDF-CHECK-01, #147).
+"""Offline tests for checking every delivered PDF, not just OAPEN's (DIS-PDF-CHECK-01, #147),
+and for links that serve no PDF file (DIS-PDF-CHECK-02, #155).
 
 Each platform's own upload code runs with its network client faked, and the PDF
 source answers through a fake host: no test sends a network request or needs credentials.
@@ -18,10 +19,10 @@ import museuploader
 import proquestuploader
 import souploader
 from disseminator import UPLOADERS
-from errors import DisseminationError
+from errors import DisseminationError, InternetArchiveDesiredStateError
 from iauploader import IAUploader
 from oapensworduploader import OAPENSWORDUploader
-from pdfcheck import PDFCheckError, PDFSource
+from pdfcheck import PDFCheckError, PDFNotServedError, PDFSource
 from tests.test_oapen_pdf_integrity import (
     HTML_PAGE,
     SECRET,
@@ -59,6 +60,23 @@ PDF_OPTIONAL = ('ProjectMUSE', 'EBSCOHost', 'ProQuest', 'GooglePlay')
 # MUSE and ProQuest name every file after the PDF ISBN, so only these send an EPUB
 # for a work with no PDF publication at all
 PDF_PUBLICATION_OPTIONAL = ('EBSCOHost', 'GooglePlay')
+# These cannot send without the PDF
+PDF_REQUIRED = ('JSTOR', 'ScienceOpen', 'BKCI')
+
+
+def not_served_cases():
+    """Fresh responses from links that serve no PDF file, and the reason each gives (#155)."""
+    return {
+        'landing page': (FakeResponse(HTML_PAGE, content_type='text/html'),
+                         "publisher.example served 'text/html' instead of application/pdf"),
+        'not found': (FakeResponse(HTML_PAGE, 404, 'text/html'),
+                      'publisher.example answered HTTP status 404'),
+        'forbidden': (FakeResponse(HTML_PAGE, 403, 'text/html'),
+                      'publisher.example answered HTTP status 403'),
+        'octet stream that is not a PDF': (
+            FakeResponse(HTML_PAGE, content_type='application/octet-stream'),
+            "publisher.example served 'application/octet-stream' that is not a PDF"),
+    }
 
 
 def metadata(pdf_listed=True):
@@ -204,7 +222,7 @@ class EveryPlatformChecksItsPDFTests(OfflineTestCase):
 
     def test_a_rejected_pdf_names_the_work_and_publication_but_not_the_url(self):
         uploader, host = make_platform_uploader(
-            'JSTOR', FakeResponse(HTML_PAGE, content_type='text/html', url=SIGNED_URL))
+            'JSTOR', FakeResponse(VALID_PDF[:-20], url=SIGNED_URL))
         pdf_publication(uploader)['locations'][0]['fullTextUrl'] = SIGNED_URL
 
         with self.assertRaises(PDFCheckError) as raised:
@@ -212,8 +230,39 @@ class EveryPlatformChecksItsPDFTests(OfflineTestCase):
 
         message = str(raised.exception)
         self.assertTrue(message.startswith(REJECTION), message)
+        self.assertIn('could not be read as a PDF', message)
+        self.assertNotIn(SECRET, message)
+
+    def test_a_link_without_a_pdf_names_the_work_and_publication_but_not_the_url(self):
+        uploader, host = make_platform_uploader(
+            'JSTOR', FakeResponse(HTML_PAGE, content_type='text/html', url=SIGNED_URL))
+        pdf_publication(uploader)['locations'][0]['fullTextUrl'] = SIGNED_URL
+
+        with self.assertRaises(PDFNotServedError) as raised, \
+                self.assertLogs(level='WARNING') as logs:
+            uploader.get_publication_details('PDF')
+
+        self.assertNotIsInstance(raised.exception, PDFCheckError)
+        message = str(raised.exception)
+        self.assertTrue(message.startswith(REJECTION), message)
         self.assertIn("cdn.example served 'text/html' instead of application/pdf", message)
         self.assertNotIn(SECRET, message)
+        warning = '\n'.join(logs.output)
+        self.assertIn('PDF publication {} of work {} has no PDF file to send: cdn.example served '
+                      "'text/html' instead of application/pdf".format(PDF_PUBLICATION_ID, WORK_ID),
+                      warning)
+        self.assertNotIn(SECRET, warning)
+
+    def test_an_octet_stream_pdf_is_returned_as_the_exact_bytes_checked(self):
+        uploader, host = make_platform_uploader(
+            'JSTOR', FakeResponse(content_type='application/octet-stream'))
+
+        with self.assertLogs(level='INFO') as logs:
+            publication = uploader.get_publication_details('PDF')
+
+        self.assertEqual(publication.bytes, VALID_PDF)
+        self.assertIn('PDF for work {}: publication {}, {} bytes, 3 pages'.format(
+            WORK_ID, PDF_PUBLICATION_ID, len(VALID_PDF)), '\n'.join(logs.output))
 
     def test_a_missing_pdf_is_not_a_rejected_pdf(self):
         # No PDF publication, no location, or a canonical location with only a landing page
@@ -246,23 +295,30 @@ class EveryPlatformChecksItsPDFTests(OfflineTestCase):
 class PlatformDeliveryTests(OfflineTestCase):
     def test_every_platform_sends_the_checked_pdf_bytes(self):
         for platform in CLIENTS:
-            with self.subTest(platform):
-                uploader, host = make_platform_uploader(platform)
-                run = PlatformRun(platform, uploader)
+            for content_type in ('application/pdf', 'application/octet-stream'):
+                with self.subTest(platform=platform, content_type=content_type):
+                    uploader, host = make_platform_uploader(
+                        platform, FakeResponse(content_type=content_type))
+                    run = PlatformRun(platform, uploader)
 
-                with self.assertLogs(level='INFO'):
-                    run.run()
+                    with self.assertLogs(level='INFO'):
+                        run.run()
 
-                self.assertEqual(len(host.requests), 1)
-                self.assertIn('9781999900014.pdf', run.files)
-                self.assertEqual(run.file('9781999900014.pdf'), VALID_PDF)
+                    self.assertEqual(len(host.requests), 1)
+                    self.assertIn('9781999900014.pdf', run.files)
+                    self.assertEqual(run.file('9781999900014.pdf'), VALID_PDF)
 
     def test_a_rejected_pdf_stops_every_platform_before_it_sends_anything(self):
         cases = {
-            'login page': (FakeResponse(HTML_PAGE, content_type='text/html'), None,
-                           "served 'text/html' instead of application/pdf"),
             'truncated PDF': (FakeResponse(VALID_PDF[:-20]), None, 'could not be read as a PDF'),
+            'truncated octet-stream PDF': (
+                FakeResponse(VALID_PDF[:-20], content_type='application/octet-stream'), None,
+                'could not be read as a PDF'),
             'timeout': (None, requests.exceptions.ReadTimeout('slow'), 'failed (ReadTimeout)'),
+            'server error': (FakeResponse(HTML_PAGE, 503, 'text/html'), None,
+                             'answered HTTP status 503'),
+            'rate limited': (FakeResponse(HTML_PAGE, 429, 'text/html'), None,
+                             'answered HTTP status 429'),
         }
         for platform in CLIENTS:
             for name, (response, error, expected) in cases.items():
@@ -307,6 +363,60 @@ class PlatformDeliveryTests(OfflineTestCase):
                     self.assertEqual(run.sent['{}.epub'.format(isbn)], EPUB_BYTES)
                     self.assertFalse([name for name in run.files if name.endswith('.pdf')])
 
+    def test_platforms_with_an_optional_pdf_send_the_epub_when_the_pdf_link_has_no_pdf(self):
+        for platform in PDF_OPTIONAL:
+            for name, (response, expected) in not_served_cases().items():
+                with self.subTest(platform=platform, case=name):
+                    uploader, host = make_platform_uploader(platform, response)
+                    run = PlatformRun(platform, uploader)
+
+                    with self.assertLogs(level='INFO') as logs:
+                        run.run()
+
+                    self.assertEqual(len(host.requests), 1)
+                    self.assertEqual(run.sent['9781999900014.epub'], EPUB_BYTES)
+                    self.assertFalse([name for name in run.files if name.endswith('.pdf')])
+                    self.assertIn('WARNING', '\n'.join(logs.output))
+                    self.assertIn('has no PDF file to send: ' + expected,
+                                  '\n'.join(logs.output))
+
+    def test_platforms_that_need_the_pdf_stop_when_the_pdf_link_has_no_pdf(self):
+        for platform in PDF_REQUIRED:
+            for name, (response, expected) in not_served_cases().items():
+                with self.subTest(platform=platform, case=name):
+                    uploader, host = make_platform_uploader(platform, response)
+                    run = PlatformRun(platform, uploader)
+
+                    # ScienceOpen logs a failed PDF and exits; the others raise it to the CLI
+                    with self.assertRaises((PDFNotServedError, SystemExit)) as raised, \
+                            self.assertLogs(level='INFO') as logs:
+                        run.run()
+
+                    if isinstance(raised.exception, SystemExit):
+                        message = '\n'.join(logs.output)
+                    else:
+                        message = str(raised.exception)
+                    self.assertIn(REJECTION, message)
+                    self.assertIn(expected, message)
+                    self.assertEqual(run.sent, {})
+                    run.client.assert_not_called()
+
+    def test_internet_archive_reports_a_pdf_link_without_a_pdf_as_a_pdf_failure(self):
+        # Reconciliation reports a `pdf` failure as pdf_source_unavailable
+        for name, (response, expected) in not_served_cases().items():
+            with self.subTest(name):
+                uploader, host = make_platform_uploader('InternetArchive', response)
+                uploader.get_formatted_metadata = lambda format: b'{"work": "metadata"}'
+
+                with self.assertRaises(InternetArchiveDesiredStateError) as raised, \
+                        self.assertLogs(level='WARNING'):
+                    uploader.build_desired_state()
+
+                self.assertEqual(raised.exception.source, 'pdf')
+                self.assertIsInstance(raised.exception.__cause__, PDFNotServedError)
+                self.assertIn(REJECTION + expected, str(raised.exception))
+                self.assertEqual(len(host.requests), 1)
+
     def test_ebsco_and_google_play_send_the_epub_when_no_pdf_is_listed(self):
         for platform in PDF_PUBLICATION_OPTIONAL:
             with self.subTest(platform):
@@ -322,12 +432,17 @@ class PlatformDeliveryTests(OfflineTestCase):
                 self.assertEqual(run.sent['9781999900038.epub'], EPUB_BYTES)
                 self.assertFalse([name for name in run.files if name.endswith('.pdf')])
 
-    def test_zenodo_creates_nothing_for_a_rejected_pdf(self):
-        uploader, host = make_platform_uploader(
-            'Zenodo', FakeResponse(HTML_PAGE, content_type='text/html'))
+    def make_zenodo(self, response):
+        uploader, host = make_platform_uploader('Zenodo', response)
         uploader.api = MagicMock()
         uploader.api.search_records.return_value = {'total': 0}
+        uploader.api.create_deposition.return_value = (1, 'bucket')
+        uploader.api.upload_file.return_value = 'md5'
         uploader.parse_metadata = lambda: {}
+        return uploader
+
+    def test_zenodo_creates_nothing_for_a_rejected_pdf(self):
+        uploader = self.make_zenodo(FakeResponse(VALID_PDF[:-20]))
 
         with self.assertRaises(PDFCheckError) as raised:
             uploader.upload_to_platform()
@@ -335,3 +450,17 @@ class PlatformDeliveryTests(OfflineTestCase):
         self.assertIn(REJECTION, str(raised.exception))
         uploader.api.create_deposition.assert_not_called()
         uploader.api.upload_file.assert_not_called()
+
+    def test_zenodo_sends_the_other_files_when_the_pdf_link_has_no_pdf(self):
+        for name, (response, expected) in not_served_cases().items():
+            with self.subTest(name):
+                uploader = self.make_zenodo(response)
+
+                with self.assertLogs(level='INFO'):
+                    locations = uploader.upload_to_platform()
+
+                sent = [call.args[1] for call in uploader.api.upload_file.call_args_list]
+                self.assertEqual(sent, ['{}_book.epub'.format(WORK_ID),
+                                        '{}_metadata.json'.format(WORK_ID)])
+                self.assertEqual(len(locations), 1)
+                uploader.api.publish_deposition.assert_called_once_with(1)

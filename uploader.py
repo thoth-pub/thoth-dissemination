@@ -9,7 +9,7 @@ import sys
 import json
 import requests
 from errors import DisseminationError
-from pdfcheck import PDFCheckError, PDFSource, check_pdf
+from pdfcheck import PDFCheckError, PDFNotServedError, PDFSource, check_pdf
 from os import environ
 from thothapi import get_thoth_client
 from thothlibrary import ThothError
@@ -288,11 +288,17 @@ class Uploader():
     def get_checked_pdf(self, source):
         """
         Download a PDF source in one bounded request and return its bytes once
-        they pass check_pdf, or raise PDFCheckError before any platform receives them
+        they pass check_pdf, or raise PDFCheckError before any platform receives them.
+        A link that serves no PDF file raises PDFNotServedError instead, which
+        platforms where the PDF is optional treat as no PDF.
         """
         try:
             pdf_bytes = self.pdf_source.fetch(source.url)
             pages = check_pdf(pdf_bytes)
+        except PDFNotServedError as error:
+            logging.warning('PDF publication {} of work {} has no PDF file to send: {}'.format(
+                source.id, self.work_id, error))
+            raise PDFNotServedError(self.describe_rejected_pdf(source, error)) from None
         except PDFCheckError as error:
             raise PDFCheckError(self.describe_rejected_pdf(source, error)) from None
         logging.info('PDF for work {}: publication {}, {} bytes, {} pages, SHA-256 {}'.format(

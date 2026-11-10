@@ -72,7 +72,14 @@ CUL (Cambridge University Library) and Figshare are retired destinations (#101).
 
 ## 4) Platform-by-platform payload and conditions
 
-Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147). Where a PDF is described as optional, that means Thoth lists no PDF file for the work: no PDF publication, or a canonical PDF location without a full-text URL. Project MUSE and ProQuest still need a PDF publication, because they name every file after its ISBN. A PDF that Thoth does list but that fails the download or the check fails the work on every platform.
+Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147, #155). A file served as `application/pdf` is checked; a file served as `application/octet-stream` or `binary/octet-stream` is checked when its first 1024 bytes hold a PDF header.
+
+Where a PDF is described as optional, that means Thoth gives no PDF file for the work:
+- no PDF publication;
+- a canonical PDF location without a full-text URL;
+- a full-text URL that serves no PDF file: an HTTP 4xx answer other than 408 and 429, a landing page or any other content type, or an octet stream without a PDF header. The run logs a warning naming the work and publication.
+
+Project MUSE and ProQuest still need a PDF publication, because they name every file after its ISBN. A PDF that fails the download (a timeout, a 5xx, 408 or 429 answer, a size or length error) or the check fails the work on every platform. A full-text URL that serves no PDF file fails the work only on platforms that need the PDF.
 
 ### Internet Archive (`InternetArchive`)
 - Scheduled selection:
@@ -165,7 +172,7 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
 ### Zenodo (`Zenodo`)
 - Upload content:
   - One deposition per work.
-  - Uploads every available publication file. A listed PDF that fails the PDF check fails the work before the deposition is created.
+  - Uploads every available publication file. A listed PDF that fails the PDF check fails the work before the deposition is created. A PDF link that serves no PDF file is left out, and the record is published without it.
   - Uploads supplemental `*_metadata.json` (`json::thoth`).
 - Preconditions:
   - `zenodo_token`
@@ -182,7 +189,7 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
 - Upload content:
   - `onix_3.0::project_muse`
   - JPG cover (strict `.jpg`)
-  - PDF and/or EPUB (at least one required; a listed PDF must pass the PDF check)
+  - PDF and/or EPUB (at least one required; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - Per-publisher credentials:
     - `muse_ftp_user_<publisher_id>`
@@ -207,7 +214,7 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
 ### EBSCOHost (`EBSCOHost`)
 - Upload content:
   - `onix_2.1::ebsco_host`
-  - PDF and/or EPUB (at least one; a listed PDF must pass the PDF check)
+  - PDF and/or EPUB (at least one; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - `ebsco_ftp_user`, `ebsco_ftp_pw`
   - Filename root prefers PDF ISBN, falls back to EPUB ISBN
@@ -218,7 +225,7 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
 - Upload content:
   - `onix_2.1::proquest_ebrary`
   - Cover file (any extension)
-  - PDF and/or EPUB (intended; a listed PDF must pass the PDF check)
+  - PDF and/or EPUB (intended; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - `proquest_ftp_user`, `proquest_ftp_pw`
   - Uploads to `/upload`
@@ -235,7 +242,7 @@ Every platform below that sends a PDF downloads it in one bounded request and ch
   - `google_play_bucket`
   - `google_play_coll_<publisher_id>`
   - GitHub OIDC + GCP service account/workload identity provider secrets
-  - At least one of PDF or EPUB required; a listed PDF must pass the PDF check
+  - At least one of PDF or EPUB required; a PDF file that the link serves must pass the PDF check
 - Automatic writeback:
   - No location writeback; no notification email step.
 
