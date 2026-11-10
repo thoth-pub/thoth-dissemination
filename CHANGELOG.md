@@ -20,11 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dissemination to the retired CUL (Cambridge University Library) and Figshare destinations: their uploaders, monthly workflows, work selection and location write-back (#101).
 
 ### Fixed
-  - A PDF publication with no full-text URL is now reported as `No PDF Full Text URL found for Work` instead of failing with `MissingSchema`; platforms where the PDF is optional send the work without it (#147).
+  - A PDF publication with no full-text URL is now reported as `No PDF Full Text URL found for Work` instead of failing with `MissingSchema`; platforms where the PDF is optional send the work without it, and Internet Archive reconciliation reports it as `no_pdf_source` (#147).
 
 ### Deployment
   - Merging this release into `main` activates every change above for scheduled and manual runs.
-  - The PDF check is strict: a parser warning, a cross-reference table that needs repair, any encryption, a content type other than `application/pdf` or a file over 512 MiB rejects the PDF. A work whose PDF is rejected fails on every platform until the PDF is replaced, and daily Google Play runs are the first to show it. How many current publisher PDFs it rejects is tracked on #147.
+  - The PDF check is strict: a parser warning, a cross-reference table that needs repair, any encryption, a content type other than `application/pdf`, a file over 512 MiB, or a host that takes more than 10 s to connect or stalls for 90 s rejects the PDF. A work whose PDF is rejected fails on every platform. Scheduled runs that select by publication date do not pick it up again, so once the PDF is replaced the work needs a manual run on those platforms. The daily Internet Archive and Google Play runs are the first to show rejections. How many current publisher PDFs it rejects is tracked on #147.
+  - On Zenodo, a work whose PDF publication has only a landing page is now published as a permanent record without the PDF, where v1.9.0 failed the run instead (#147).
   - OAPEN now holds a work whose metadata fails validation, for example a licence other than a current Creative Commons licence or CC0, or a Thema code missing from `oapenthema.py`, until the metadata or the code changes (#145).
   - The CUL and Figshare workflows were disabled on 2026-11-10; their secrets and variables are deleted after this release (#101).
 
