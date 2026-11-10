@@ -6,31 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.10.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.10.0) - 2026-11-10
+
 ### Added
-  - OAPEN uploads now validate the work's metadata before any OAPEN search, PDF download or SWORD request, and report every problem in one log line (#145). A work is held if it is not `ACTIVE`; is not a monograph, edited book or textbook; lacks a long abstract, licence, landing page, ISBN, language, Thema code, keyword, title, publication date, publisher or imprint name, or a main author or editor; has a landing page that is not an absolute http(s) URL, or a publication date that is not a valid `YYYY-MM-DD` date or is in the future; has a language code with no name, a licence other than a current Creative Commons licence or CC0, or a Thema code missing from `oapenthema.py`; or has a value that XML cannot carry.
+  - OAPEN uploads now validate the work's metadata before any OAPEN search, PDF download or SWORD request, and report every problem in one log line (#145).
 
 ### Changed
-  - The OAPEN SWORD entry no longer contains empty elements or the text `None` for missing values (#145). A missing subtitle, OCLC number, place, page count (sent only as a positive integer), ISSN (sent only with a valid check digit), series number, or funding grant, programme or project is omitted, except that a work with two or more series or fundings keeps one empty element per missing value, so that OAPEN can still pair them by position.
-  - A required OAPEN value that is an empty or blank string now counts as missing (#145).
-  - Every platform that delivers a PDF now downloads and checks it as OAPEN has since v1.9.0 (#147): Internet Archive, CUL, ScienceOpen, Figshare, Zenodo, Project MUSE, JSTOR, EBSCOHost, ProQuest, Google Play and BKCI. The bounded download and `pikepdf` check moved from `oapensworduploader.py` to `pdfcheck.py`, and `Uploader.get_publication_details('PDF')` uses them, so no platform receives a PDF that was not checked. Exactly the checked bytes are uploaded, and the run logs their size, page count and SHA-256. OAPEN keeps its own rejection message; its log line for an accepted PDF now begins `PDF for work`, as on every other platform.
-  - A PDF download is now one GET with a 10 s connect and 90 s read timeout and a 512 MiB limit, instead of a HEAD and a GET with neither. The `application/pdf` content type is read from the download itself. The GET asks for an uncompressed transfer (`Accept-Encoding: identity`), so when the host honours it the limit also bounds memory and the received length is compared with `Content-Length`; this applies to OAPEN too, which since v1.9.0 asked for a compressed transfer. Errors name only the source host, not the URL, which may carry a signed token, or the response text. EPUB and other formats keep the previous download.
-  - On Google Play, Project MUSE, EBSCOHost, ProQuest, Figshare and Zenodo, a PDF that Thoth lists but that fails the download or the check now fails the work before anything is sent. Previously a PDF whose shared download raised a `DisseminationError`, such as a HEAD request that did not answer HTTP 200 with `application/pdf`, was dropped and the work was sent without it. A work whose PDF publication has no canonical full-text URL is sent with its other files (see Fixed). So is a work with no PDF publication on EBSCOHost, Google Play, Figshare and Zenodo; Project MUSE and ProQuest still name every file after the PDF ISBN and so still need a PDF publication, as before.
-  - Internet Archive reconciliation checks the source PDF too, and reports a rejected one as a `pdf` desired-state failure.
+  - Every platform that delivers a PDF now downloads it with one bounded request and checks it with `pikepdf` before any upload, as OAPEN has since v1.9.0, and uploads exactly the checked bytes (#147). A PDF that Thoth lists but that fails the download or the check now fails the work, also on platforms where the PDF is optional; Internet Archive reconciliation reports it as a `pdf` failure.
+  - The OAPEN SWORD entry no longer contains empty elements or the text `None` for missing values, and a blank required value counts as missing (#145).
   - Weekly OAPEN runs no longer select journal issues or book sets (#150).
 
 ### Removed
   - Dissemination to the retired CUL (Cambridge University Library) and Figshare destinations: their uploaders, monthly workflows, work selection and location write-back (#101).
-  - The edition was never sent to OAPEN: `dc` is not a namespace `sword2` registers, so the field was silently dropped. The dead line is removed until OAPEN names the field (#122, #145).
 
 ### Fixed
-  - A PDF publication whose canonical location has an empty or null full-text URL, which Thoth allows, for example when only a landing page is known, is now reported as `No PDF Full Text URL found for Work` instead of failing inside `requests` with `MissingSchema`. Platforms that treat the PDF as optional send the work without it, and Internet Archive reconciliation reports `no_pdf_source` (`ineligible`) instead of `pdf_source_unavailable`. Other formats are unchanged.
+  - A PDF publication with no full-text URL is now reported as `No PDF Full Text URL found for Work` instead of failing with `MissingSchema`; platforms where the PDF is optional send the work without it (#147).
 
 ### Deployment
-  - The check is strict: a parser warning, a cross-reference table that would need repair, or any encryption (including owner-password restrictions only) rejects the file. How many current publisher PDFs it rejects is not known. A work whose PDF is rejected fails on every platform until the PDF is replaced, and daily Google Play runs are the first to show it after a release.
-  - A host whose download answers with a content type other than `application/pdf`, or a PDF over 512 MiB, now fails where the HEAD request or the unbounded download previously let it through.
-  - A work whose PDF publication has only a landing page is now sent without a PDF on Google Play, Project MUSE, EBSCOHost, ProQuest, Figshare and Zenodo, where the run previously stopped with `MissingSchema`. On Figshare and Zenodo that creates a permanent record without the PDF, as for a work with no PDF publication.
-  - A work whose licence is not a current Creative Commons licence or CC0, including a retired CC licence or the Public Domain Mark, or which has a Thema code missing from `oapenthema.py`, is now held at OAPEN until its metadata or the code changes (#145).
-  - The legacy `profile_oapen` and its checks stay in `swordv2uploader.py`, unused by OAPEN, until a separate cleanup; CUL's SWORD entry is unchanged (#145).
+  - Merging this release into `main` activates every change above for scheduled and manual runs.
+  - The PDF check is strict: a parser warning, a cross-reference table that needs repair, any encryption, a content type other than `application/pdf` or a file over 512 MiB rejects the PDF. A work whose PDF is rejected fails on every platform until the PDF is replaced, and daily Google Play runs are the first to show it. How many current publisher PDFs it rejects is tracked on #147.
+  - OAPEN now holds a work whose metadata fails validation, for example a licence other than a current Creative Commons licence or CC0, or a Thema code missing from `oapenthema.py`, until the metadata or the code changes (#145).
+  - The CUL and Figshare workflows were disabled on 2026-11-10; their secrets and variables are deleted after this release (#101).
 
 ## [[1.9.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.9.0) - 2026-10-29
 
