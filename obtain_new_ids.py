@@ -673,6 +673,17 @@ class WeeklyIDFinder(IDFinder):
         self.get_thoth_ids_iteratively(previous_week_start, previous_week_end)
 
 
+class OapenWeeklyIDFinder(WeeklyIDFinder):
+    """Logic for retrieving work IDs for weekly OAPEN dissemination"""
+
+    def get_query_parameters(self):
+        """Construct Thoth work ID query parameters depending on OAPEN-specific requirements"""
+        super().get_query_parameters()
+        # OAPEN only accepts monographs, edited books and textbooks: other types
+        # are held by oapensworduploader.py (OAPEN_WORK_TYPES), so don't select them.
+        self.work_types = '[MONOGRAPH, EDITED_BOOK, TEXTBOOK]'
+
+
 class CrossrefIDFinder(IDFinder):
     """Logic for retrieving work IDs which is specific to Crossref dissemination"""
 
@@ -869,7 +880,7 @@ def get_id_finder(args, now_provider=None, thoth=None):
     finder_classes = {
         'Crossref': CrossrefIDFinder,
         'GooglePlay': GooglePlayIDFinder,
-        'OAPEN': WeeklyIDFinder,
+        'OAPEN': OapenWeeklyIDFinder,
         'EBSCOHost': WeeklyIDFinder,
         'JSTOR': WeeklyIDFinder,
         'ProjectMUSE': WeeklyIDFinder,
