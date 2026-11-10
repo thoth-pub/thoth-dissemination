@@ -161,6 +161,9 @@ class PDFSource:
         if declared is not None and encoding == 'identity' and received != declared:
             raise PDFCheckError('{} declared {} bytes but sent {}'.format(host, declared, received))
         data = b''.join(chunks)
+        # A Content-Length error found before an octet stream's first 1024 bytes are judged
+        # (an oversize declaration, or a short body that does not match it) stays strict
+        # even if the body turns out not to be a PDF
         if not header_checked:
             PDFSource.require_pdf_header(data, content_type, host)
         return data

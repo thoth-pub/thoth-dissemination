@@ -19,7 +19,7 @@ import museuploader
 import proquestuploader
 import souploader
 from disseminator import UPLOADERS
-from errors import DisseminationError
+from errors import DisseminationError, InternetArchiveDesiredStateError
 from iauploader import IAUploader
 from oapensworduploader import OAPENSWORDUploader
 from pdfcheck import PDFCheckError, PDFNotServedError, PDFSource
@@ -400,6 +400,22 @@ class PlatformDeliveryTests(OfflineTestCase):
                     self.assertIn(expected, message)
                     self.assertEqual(run.sent, {})
                     run.client.assert_not_called()
+
+    def test_internet_archive_reports_a_pdf_link_without_a_pdf_as_a_pdf_failure(self):
+        # Reconciliation reports a `pdf` failure as pdf_source_unavailable
+        for name, (response, expected) in not_served_cases().items():
+            with self.subTest(name):
+                uploader, host = make_platform_uploader('InternetArchive', response)
+                uploader.get_formatted_metadata = lambda format: b'{"work": "metadata"}'
+
+                with self.assertRaises(InternetArchiveDesiredStateError) as raised, \
+                        self.assertLogs(level='WARNING'):
+                    uploader.build_desired_state()
+
+                self.assertEqual(raised.exception.source, 'pdf')
+                self.assertIsInstance(raised.exception.__cause__, PDFNotServedError)
+                self.assertIn(REJECTION + expected, str(raised.exception))
+                self.assertEqual(len(host.requests), 1)
 
     def test_ebsco_and_google_play_send_the_epub_when_no_pdf_is_listed(self):
         for platform in PDF_PUBLICATION_OPTIONAL:

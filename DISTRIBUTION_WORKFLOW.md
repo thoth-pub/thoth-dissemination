@@ -189,7 +189,7 @@ Project MUSE and ProQuest still need a PDF publication, because they name every 
 - Upload content:
   - `onix_3.0::project_muse`
   - JPG cover (strict `.jpg`)
-  - PDF and/or EPUB (at least one required; a listed PDF must pass the PDF check)
+  - PDF and/or EPUB (at least one required; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - Per-publisher credentials:
     - `muse_ftp_user_<publisher_id>`
@@ -214,7 +214,7 @@ Project MUSE and ProQuest still need a PDF publication, because they name every 
 ### EBSCOHost (`EBSCOHost`)
 - Upload content:
   - `onix_2.1::ebsco_host`
-  - PDF and/or EPUB (at least one; a listed PDF must pass the PDF check)
+  - PDF and/or EPUB (at least one; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - `ebsco_ftp_user`, `ebsco_ftp_pw`
   - Filename root prefers PDF ISBN, falls back to EPUB ISBN
@@ -225,7 +225,7 @@ Project MUSE and ProQuest still need a PDF publication, because they name every 
 - Upload content:
   - `onix_2.1::proquest_ebrary`
   - Cover file (any extension)
-  - PDF and/or EPUB (intended; a listed PDF must pass the PDF check)
+  - PDF and/or EPUB (intended; a PDF file that the link serves must pass the PDF check)
 - Preconditions:
   - `proquest_ftp_user`, `proquest_ftp_pw`
   - Uploads to `/upload`
@@ -242,7 +242,7 @@ Project MUSE and ProQuest still need a PDF publication, because they name every 
   - `google_play_bucket`
   - `google_play_coll_<publisher_id>`
   - GitHub OIDC + GCP service account/workload identity provider secrets
-  - At least one of PDF or EPUB required; a listed PDF must pass the PDF check
+  - At least one of PDF or EPUB required; a PDF file that the link serves must pass the PDF check
 - Automatic writeback:
   - No location writeback; no notification email step.
 
