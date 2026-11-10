@@ -27,6 +27,7 @@ from pdfcheck import (
     PDF_SOURCE_USER_AGENT,
     PDF_TIMEOUT,
     PDFCheckError,
+    PDFNotServedError,
     PDFSource,
     check_pdf,
     describe_pdf_problem,
@@ -220,20 +221,80 @@ class PDFSourceTests(OfflineTestCase):
             'no Content-Length': FakeResponse(content_length=None),
             # Requests decodes the body, so it no longer matches the compressed length
             'compressed transfer': FakeResponse(content_length='10', encoding='gzip'),
+            # File stores such as S3 serve PDFs as octet streams (DIS-PDF-CHECK-02, #155)
+            'octet stream': FakeResponse(content_type='application/octet-stream'),
+            'binary octet stream': FakeResponse(content_type='binary/octet-stream'),
+            'octet stream without a length': FakeResponse(
+                content_type='Application/Octet-Stream; charset=binary', content_length=None),
         }
         for name, response in cases.items():
             with self.subTest(name):
                 self.assertEqual(self.fetch(response)[1], VALID_PDF)
 
+    def test_an_octet_stream_pdf_is_still_checked(self):
+        uploader = make_uploader(FakeRemote())
+        del uploader.get_publication_details
+        host = FakePDFHost(FakeResponse(VALID_PDF[:-20], content_type='application/octet-stream'))
+        uploader.pdf_source = PDFSource(http_get=host.get)
+
+        with self.assertRaises(PDFCheckError) as raised:
+            uploader.get_publication_details('PDF')
+
+        self.assertIn('could not be read as a PDF', str(raised.exception))
+
+    def test_links_that_serve_no_pdf_file_are_not_rejected_pdfs(self):
+        # Platforms where the PDF is optional send without it (DIS-PDF-CHECK-02, #155)
+        cases = {
+            'unauthorised': (FakeResponse(HTML_PAGE, 401, 'text/html'), 'answered HTTP status 401'),
+            'forbidden': (FakeResponse(HTML_PAGE, 403, 'text/html'), 'answered HTTP status 403'),
+            'not found': (FakeResponse(HTML_PAGE, 404, 'text/html'), 'answered HTTP status 404'),
+            'gone': (FakeResponse(b'', 410, None), 'answered HTTP status 410'),
+            'landing page': (FakeResponse(HTML_PAGE, content_type='text/html; charset=utf-8'),
+                             "served 'text/html' instead of application/pdf"),
+            'no content type': (FakeResponse(content_type=None),
+                                'served no content type instead of application/pdf'),
+            'octet stream that is not a PDF': (
+                FakeResponse(b'PK\x03\x04' + b'x' * 100, content_type='application/octet-stream'),
+                "served 'application/octet-stream' that is not a PDF"),
+            'PDF header after the first 1024 bytes': (
+                FakeResponse(b' ' * 1024 + VALID_PDF, content_type='binary/octet-stream'),
+                "served 'binary/octet-stream' that is not a PDF"),
+            'empty octet stream': (FakeResponse(b'', content_type='application/octet-stream'),
+                                   "served 'application/octet-stream' that is not a PDF"),
+        }
+        for name, (response, expected) in cases.items():
+            response.url = SIGNED_URL
+            with self.subTest(name):
+                with self.assertRaises(PDFNotServedError) as raised:
+                    self.fetch(response, url=SIGNED_URL)
+
+                self.assertNotIsInstance(raised.exception, PDFCheckError)
+                self.assertIsInstance(raised.exception, DisseminationError)
+                message = str(raised.exception)
+                self.assertEqual(message, 'cdn.example ' + expected)
+                self.assertNotIn(SECRET, message)
+                self.assertTrue(response.closed)
+
+    def test_an_octet_stream_that_is_not_a_pdf_is_not_read_to_the_end(self):
+        response = FakeResponse(b'<html>' + b'x' * 5000, content_type='application/octet-stream')
+
+        with self.assertRaises(PDFNotServedError):
+            self.fetch(response)
+
+        # Its first chunk already holds 1024 bytes without a PDF header
+        self.assertEqual(response.chunks_sent, 1)
+        self.assertTrue(response.closed)
+
     def test_unusable_responses_are_rejected_without_naming_the_url(self):
         too_large = str(PDF_MAX_BYTES + 1)
         cases = {
-            'forbidden': (FakeResponse(HTML_PAGE, 403, 'text/html'), 'answered HTTP status 403'),
-            'not found': (FakeResponse(HTML_PAGE, 404, 'text/html'), 'answered HTTP status 404'),
+            # Temporary failures are not a sign that the link has no PDF
             'server error': (FakeResponse(b'', 503, None), 'answered HTTP status 503'),
-            'login page': (FakeResponse(HTML_PAGE, content_type='text/html; charset=utf-8'),
-                           "served 'text/html' instead of application/pdf"),
-            'no content type': (FakeResponse(content_type=None), 'served no content type'),
+            'bad gateway': (FakeResponse(HTML_PAGE, 502, 'text/html'), 'answered HTTP status 502'),
+            'request timeout': (FakeResponse(HTML_PAGE, 408, 'text/html'),
+                                'answered HTTP status 408'),
+            'rate limited': (FakeResponse(HTML_PAGE, 429, 'text/html'), 'answered HTTP status 429'),
+            'no content': (FakeResponse(b'', 204, None), 'answered HTTP status 204'),
             'invalid length': (FakeResponse(content_length='12x'), 'invalid Content-Length'),
             # Passes str.isdigit(), but int() cannot read it
             'non-ASCII digit length': (FakeResponse(content_length='²'),
@@ -305,7 +366,7 @@ class PDFSourceTests(OfflineTestCase):
         response = FakeResponse(HTML_PAGE, content_type='text/html',
                                 url='https://login.example/sso?next={}'.format(SECRET))
 
-        with self.assertRaises(PDFCheckError) as raised:
+        with self.assertRaises(PDFNotServedError) as raised:
             self.fetch(response, url=SIGNED_URL)
 
         self.assertIn('login.example served', str(raised.exception))
@@ -374,6 +435,10 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
                                            url=SIGNED_URL), None, 'the file is encrypted'),
             'forbidden': (FakeResponse(HTML_PAGE, 403, 'text/html', url=SIGNED_URL), None,
                           'answered HTTP status 403'),
+            # OAPEN needs the PDF, so a link without one stops it too (#155)
+            'octet stream that is not a PDF': (
+                FakeResponse(HTML_PAGE, content_type='application/octet-stream', url=SIGNED_URL),
+                None, "served 'application/octet-stream' that is not a PDF"),
             'timeout': (None, requests.exceptions.ReadTimeout(SIGNED_URL),
                         'failed (ReadTimeout)'),
         }
