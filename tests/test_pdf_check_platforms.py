@@ -17,7 +17,6 @@ import jstoruploader
 import museuploader
 import proquestuploader
 import souploader
-from culuploader import CULUploader
 from disseminator import UPLOADERS
 from errors import DisseminationError
 from iauploader import IAUploader
@@ -34,9 +33,7 @@ from tests.test_oapen_pdf_integrity import (
 from tests.test_oapensword_preflight import (
     PDF_PUBLICATION_ID,
     WORK_ID,
-    FakeRemote,
     OfflineTestCase,
-    make_uploader,
     thoth_metadata,
 )
 from uploader import Uploader
@@ -325,35 +322,16 @@ class PlatformDeliveryTests(OfflineTestCase):
                 self.assertEqual(run.sent['9781999900038.epub'], EPUB_BYTES)
                 self.assertFalse([name for name in run.files if name.endswith('.pdf')])
 
-    def test_figshare_and_zenodo_create_nothing_for_a_rejected_pdf(self):
-        for platform, search, create in (('Figshare', 'search_articles', 'create_project'),
-                                         ('Zenodo', 'search_records', 'create_deposition')):
-            with self.subTest(platform):
-                uploader, host = make_platform_uploader(
-                    platform, FakeResponse(HTML_PAGE, content_type='text/html'))
-                uploader.api = MagicMock()
-                getattr(uploader.api, search).return_value = (
-                    [] if platform == 'Figshare' else {'total': 0})
-                uploader.parse_metadata = lambda: ({}, {'title': 'T'}) if platform == 'Figshare' else {}
+    def test_zenodo_creates_nothing_for_a_rejected_pdf(self):
+        uploader, host = make_platform_uploader(
+            'Zenodo', FakeResponse(HTML_PAGE, content_type='text/html'))
+        uploader.api = MagicMock()
+        uploader.api.search_records.return_value = {'total': 0}
+        uploader.parse_metadata = lambda: {}
 
-                with self.assertRaises(PDFCheckError) as raised:
-                    uploader.upload_to_platform()
-
-                self.assertIn(REJECTION, str(raised.exception))
-                getattr(uploader.api, create).assert_not_called()
-                uploader.api.upload_file.assert_not_called()
-
-    def test_cul_creates_no_sword_item_for_a_rejected_pdf(self):
-        remote = FakeRemote()
-        uploader = make_uploader(remote, uploader_class=CULUploader)
-        # Use the uploader's own PDF path instead of the preflight tests' stand-in
-        del uploader.get_publication_details
-        host = FakePDFHost(FakeResponse(VALID_PDF[:-20]), None, remote.events)
-        uploader.pdf_source = PDFSource(http_get=host.get)
-
-        with self.assertRaises(SystemExit), self.assertLogs(level='ERROR') as logs:
+        with self.assertRaises(PDFCheckError) as raised:
             uploader.upload_to_platform()
 
-        self.assertIn(REJECTION, '\n'.join(logs.output))
-        self.assertIn('pdf_download', remote.events)
-        self.assertNotIn('create_item', remote.events)
+        self.assertIn(REJECTION, str(raised.exception))
+        uploader.api.create_deposition.assert_not_called()
+        uploader.api.upload_file.assert_not_called()

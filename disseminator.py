@@ -16,9 +16,7 @@ from version import __version__
 from iauploader import IAUploader
 from oapensworduploader import OAPENSWORDUploader
 from souploader import SOUploader
-from culuploader import CULUploader
 from crossrefuploader import CrossrefUploader
-from fsuploader import FigshareUploader
 from zenodouploader import ZenodoUploader
 from museuploader import MUSEUploader
 from jstoruploader import JSTORUploader
@@ -31,9 +29,7 @@ UPLOADERS = {
     "InternetArchive": IAUploader,
     "OAPEN": OAPENSWORDUploader,
     "ScienceOpen": SOUploader,
-    "CUL": CULUploader,
     "Crossref": CrossrefUploader,
-    "Figshare": FigshareUploader,
     "Zenodo": ZenodoUploader,
     "ProjectMUSE": MUSEUploader,
     "JSTOR": JSTORUploader,

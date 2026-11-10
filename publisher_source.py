@@ -60,10 +60,14 @@ CLASSIFICATION_SHARED_ADAPTER = 'shared_adapter'
 CLASSIFICATION_MANUAL = 'manual'
 CLASSIFICATION_PULL_FEED = 'pull_feed'
 CLASSIFICATION_INACTIVE = 'inactive'
+# A retired destination (CUL and Figshare, #101). Its upstream identity stays
+# known, so it never fails as unknown, but this repository has no uploader,
+# selector or workflow for it.
+CLASSIFICATION_DEPRECATED = 'deprecated'
 
 # Classifications that have an automated publisher-discovery execution
-# pathway in this repository. Manual, pull-feed and inactive destinations
-# must never become synthetic dissemination pathways.
+# pathway in this repository. Manual, pull-feed, inactive and deprecated
+# destinations must never become synthetic dissemination pathways.
 AUTOMATED_CLASSIFICATIONS = (
     CLASSIFICATION_UPLOADER, CLASSIFICATION_SHARED_ADAPTER)
 
@@ -185,14 +189,13 @@ DESTINATIONS = (
         display_label='ScienceOpen',
         back_catalogue_behaviour=BACK_CATALOGUE_MANUAL),
     _Destination(
-        'CAMBRIDGE_UNIVERSITY_LIBRARY', CLASSIFICATION_UPLOADER, 'CUL',
+        'CAMBRIDGE_UNIVERSITY_LIBRARY', CLASSIFICATION_DEPRECATED,
         display_label='Cambridge University Library'),
     _Destination(
         'CROSSREF', CLASSIFICATION_UPLOADER, 'Crossref',
         display_label='Crossref'),
     _Destination(
-        'FIGSHARE', CLASSIFICATION_UPLOADER, 'Figshare',
-        display_label='Figshare'),
+        'FIGSHARE', CLASSIFICATION_DEPRECATED, display_label='Figshare'),
     _Destination(
         'ZENODO', CLASSIFICATION_UPLOADER, 'Zenodo', display_label='Zenodo'),
     _Destination(
@@ -235,9 +238,7 @@ DISSEMINATION_PLATFORMS = (
     'InternetArchive',
     'OAPEN',
     'ScienceOpen',
-    'CUL',
     'Crossref',
-    'Figshare',
     'Zenodo',
     'ProjectMUSE',
     'JSTOR',
