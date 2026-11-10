@@ -18,7 +18,6 @@ import requests
 from requests.structures import CaseInsensitiveDict
 
 import pdfcheck
-from culuploader import CULUploader
 from dspaceuploader import DSpaceUploader
 from errors import DisseminationError
 from oapensworduploader import OAPENSWORDUploader
@@ -417,7 +416,7 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
 
     def test_oapen_uses_the_shared_pdf_check_with_its_own_message(self):
         # Every platform checks PDFs since #147; OAPEN differs only in how it reports a rejection
-        for uploader_class in (DSpaceUploader, SwordV2Uploader, CULUploader, OAPENSWORDUploader):
+        for uploader_class in (DSpaceUploader, SwordV2Uploader, OAPENSWORDUploader):
             with self.subTest(uploader_class.__name__):
                 self.assertIs(uploader_class.get_publication_details,
                               Uploader.get_publication_details)

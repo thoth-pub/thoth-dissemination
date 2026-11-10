@@ -1960,9 +1960,7 @@ class TestDisseminatorCLI(unittest.TestCase):
         modules = {
             'oapensworduploader': 'OAPENSWORDUploader',
             'souploader': 'SOUploader',
-            'culuploader': 'CULUploader',
             'crossrefuploader': 'CrossrefUploader',
-            'fsuploader': 'FigshareUploader',
             'zenodouploader': 'ZenodoUploader',
             'museuploader': 'MUSEUploader',
             'jstoruploader': 'JSTORUploader',
@@ -2012,5 +2010,24 @@ class TestDisseminatorCLI(unittest.TestCase):
         self.assertEqual(status, 0)
         mock_run.assert_called_once()
         mock_logging.assert_not_called()
+
+    def test_retired_platforms_fail_before_any_uploader_is_built(self):
+        # CUL and Figshare were retired (#101)
+        disseminator = importlib.import_module('disseminator')
+        stand_ins = {platform: MagicMock(name=platform)
+                     for platform in disseminator.UPLOADERS}
+        for platform in ('CUL', 'Figshare'):
+            with self.subTest(platform=platform), patch.dict(
+                    disseminator.UPLOADERS, stand_ins):
+                self.assertNotIn(platform, disseminator.UPLOADERS)
+                with self.assertRaises(DisseminationError) as raised:
+                    disseminator.run(
+                        WORK_ID, platform, 'https://export.example', None)
+                self.assertIn('{} not supported'.format(platform),
+                              str(raised.exception))
+                for uploader_class in stand_ins.values():
+                    uploader_class.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Internet Archive reconciliation checks the source PDF too, and reports a rejected one as a `pdf` desired-state failure.
 
 ### Removed
+  - Dissemination to the retired CUL (Cambridge University Library) and Figshare destinations: their uploaders, monthly workflows, work selection and location write-back (#101).
   - The edition was never sent to OAPEN: `dc` is not a namespace `sword2` registers, so the field was silently dropped. The dead line is removed until OAPEN names the field (#122, #145).
 
 ### Fixed

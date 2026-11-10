@@ -226,9 +226,7 @@ class TestIABulkDisseminateWorkflow(unittest.TestCase):
     def test_other_platform_schedules_are_unchanged(self):
         expected = {
             'cr_bulk_disseminate.yml': '45 * * * *',
-            'fs_bulk_disseminate.yml': '40 4 7 * *',
             'zn_bulk_disseminate.yml': '40 4 7 * *',
-            'cul_bulk_disseminate.yml': '40 4 7 * *',
             'gp_bulk_disseminate.yaml': '50 5 * * *',
             'bkci_bulk_disseminate.yaml': '40 6 6 * *',
             'oapen_bulk_disseminate.yaml': '20 2 * * 1',

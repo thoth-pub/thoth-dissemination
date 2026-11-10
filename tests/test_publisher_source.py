@@ -257,6 +257,15 @@ class TestSourceModeConfiguration(unittest.TestCase):
                     PublisherSourceConfigurationError):
                 parse_source_modes(json.dumps({platform: 'compare'}))
 
+    def test_retired_platform_keys_fail_in_every_mode(self):
+        # A leftover CUL or Figshare key fails every pathway's selection, so
+        # the repository variable must not carry one when #101 is released
+        for platform in ('CUL', 'Figshare'):
+            for mode in (MODE_ENV, MODE_COMPARE, MODE_API):
+                with self.subTest(platform=platform, mode=mode), \
+                        self.assertRaises(PublisherSourceConfigurationError):
+                    parse_source_modes(json.dumps({platform: mode}))
+
     def test_no_wildcard_key_can_activate_a_non_legacy_mode(self):
         for key in ('*', '', 'all', 'ALL', 'default', 'DEFAULT'):
             for mode in ('compare', 'api', 'env'):
@@ -302,9 +311,7 @@ class TestPlatformClassification(unittest.TestCase):
         expected = {
             'InternetArchive': ('INTERNET_ARCHIVE',),
             'OAPEN': ('OAPEN', 'DOAB'),
-            'CUL': ('CAMBRIDGE_UNIVERSITY_LIBRARY',),
             'Crossref': ('CROSSREF',),
-            'Figshare': ('FIGSHARE',),
             'Zenodo': ('ZENODO',),
             'ProjectMUSE': ('PROJECT_MUSE',),
             'JSTOR': ('JSTOR',),
@@ -342,6 +349,27 @@ class TestPlatformClassification(unittest.TestCase):
                 self.assertEqual(destination.classification, classification)
                 self.assertFalse(destination.supports_publisher_discovery)
 
+    def test_retired_platforms_are_known_but_deprecated(self):
+        for api_platform in ('CAMBRIDGE_UNIVERSITY_LIBRARY', 'FIGSHARE'):
+            with self.subTest(api_platform=api_platform):
+                destination = publisher_source.destination_for_api_platform(
+                    api_platform)
+                self.assertEqual(destination.classification, 'deprecated')
+                self.assertEqual(
+                    publisher_source.CLASSIFICATION_DEPRECATED, 'deprecated')
+                self.assertIsNone(destination.dissemination_platform)
+                self.assertFalse(destination.supports_publisher_discovery)
+                # The upstream descriptor is still the pinned one
+                self.assertTrue(destination.assignable)
+                self.assertEqual(
+                    destination.back_catalogue_behaviour, 'AUTOMATIC_PUSH')
+        self.assertNotIn(
+            publisher_source.CLASSIFICATION_DEPRECATED,
+            publisher_source.AUTOMATED_CLASSIFICATIONS)
+        for platform in ('CUL', 'Figshare'):
+            with self.subTest(platform=platform):
+                self.assertNotIn(platform, DISSEMINATION_PLATFORMS)
+
     def test_pull_feed_and_inactive_platforms_are_not_dissemination_targets(
             self):
         for api_platform in ('OCLC_KB', 'EX_LIBRIS_KB', 'JISC_NBK'):
@@ -352,7 +380,8 @@ class TestPlatformClassification(unittest.TestCase):
                 self.assertNotIn(api_platform, DISSEMINATION_PLATFORMS)
 
     def test_unmapped_dissemination_platform_fails_closed(self):
-        for platform in ('OCLC_KB', 'NotAPlatform', 'DOAB', None):
+        for platform in (
+                'OCLC_KB', 'NotAPlatform', 'DOAB', None, 'CUL', 'Figshare'):
             with self.subTest(platform=platform):
                 self.assertFalse(supports_publisher_discovery(platform))
                 with self.assertRaises(PublisherSourceConfigurationError):
@@ -944,8 +973,7 @@ class TestBulkDisseminateWorkflowTransport(unittest.TestCase):
 
     def test_platform_callers_still_need_no_publisher_source_input(self):
         callers = (
-            'cr_bulk_disseminate.yml', 'fs_bulk_disseminate.yml',
-            'zn_bulk_disseminate.yml', 'cul_bulk_disseminate.yml',
+            'cr_bulk_disseminate.yml', 'zn_bulk_disseminate.yml',
             'gp_bulk_disseminate.yaml', 'bkci_bulk_disseminate.yaml',
             'oapen_bulk_disseminate.yaml', 'eh_bulk_disseminate.yaml',
             'jstor_bulk_disseminate.yaml', 'muse_bulk_disseminate.yaml',
@@ -957,6 +985,37 @@ class TestBulkDisseminateWorkflowTransport(unittest.TestCase):
                     ROOT / '.github' / 'workflows' / filename)
                 serialised = json.dumps(workflow)
                 self.assertNotIn('PUBLISHER_SOURCE_MODES', serialised)
+
+
+class TestRetiredPlatformWorkflows(unittest.TestCase):
+    """CUL and Figshare have no workflow and no location write-back (#101)."""
+
+    WORKFLOWS = ROOT / '.github' / 'workflows'
+
+    def test_retired_platform_workflows_are_absent(self):
+        for filename in (
+                'cul_bulk_disseminate.yml', 'fs_bulk_disseminate.yml'):
+            with self.subTest(filename=filename):
+                self.assertFalse((self.WORKFLOWS / filename).exists())
+
+    def test_no_workflow_names_a_retired_platform(self):
+        for path in sorted(self.WORKFLOWS.iterdir()):
+            text = path.read_text()
+            with self.subTest(workflow=path.name):
+                for name in ("'CUL'", '"CUL"', "'Figshare'", '"Figshare"',
+                             'CUL_', 'FS_ENV', 'FIGSHARE'):
+                    self.assertNotIn(name, text)
+
+    def test_location_write_back_is_routed_for_the_remaining_platforms(self):
+        workflow = load_yaml(self.WORKFLOWS / 'disseminate.yml')
+        expected = (
+            "contains(fromJSON('[\"InternetArchive\", \"Zenodo\", "
+            "\"OAPEN\"]'), inputs.platform)")
+        artifact = next(
+            step for step in workflow['jobs']['disseminate']['steps']
+            if step.get('uses', '').startswith('actions/upload-artifact'))
+        self.assertEqual(artifact['if'], expected)
+        self.assertEqual(workflow['jobs']['write-locations']['if'], expected)
 
 
 class TestPinnedPlatformOptionContract(unittest.TestCase):
