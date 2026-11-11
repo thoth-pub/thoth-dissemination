@@ -6,9 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [[1.10.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.10.1) - 2026-11-11
+
 ### Changed
   - Publisher discovery in `compare` and `api` mode now also accepts the 15-option `distributionPlatformOptions` list that Thoth BE-05 (thoth-pub/thoth#840) specifies, without the retired CUL and Figshare rows, so BE-05 can deploy without a further dissemination release (#158).
   - A PDF whose only problem is a page with a missing or invalid Resources entry, which PDF readers repair, now passes the PDF check and is sent unchanged, with a warning in the run log; any other problem still rejects it (#158).
+
+### Deployment
+  - Merging this release into `main` activates both changes for scheduled and manual runs.
+  - Thoth BE-05 can now deploy at any time. If its merged option list differs from its specification, `compare` mode reports a contract error again and `api` mode stops, as before this release.
+  - Internet Archive selects a work rejected for repaired page Resources again on its next daily run. Platforms that select by publication date do not, so such a work needs a manual run there (#147).
 
 ## [[1.10.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.10.0) - 2026-11-10
 
