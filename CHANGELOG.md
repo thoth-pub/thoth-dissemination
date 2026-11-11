@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deployment
   - Merging this release into `main` activates both changes for scheduled and manual runs.
   - Thoth BE-05 can now deploy at any time. If its merged option list differs from its specification, `compare` mode reports a contract error again and `api` mode stops, as before this release.
-  - Internet Archive selects a work rejected for repaired page Resources again on its next daily run. Platforms that select by publication date do not, so such a work needs a manual run there (#147).
+  - A work rejected for repaired page Resources since v1.10.0 is not selected again on its own, because scheduled runs only pick up new or recently updated works. Run it manually on each platform where it failed, such as Internet Archive for work `f1563c51` (#147).
 
 ## [[1.10.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.10.0) - 2026-11-10
 

@@ -85,10 +85,12 @@ def corrupt_stream_pdf(without_resources=False):
     return data[:start] + b'\x00\xff\x00\xff' + data[start + 4:]
 
 
-def repaired_resources_pdf(*page_numbers, invalid=False, damage=None, pages=3):
+def repaired_resources_pdf(*page_numbers, invalid=False, damage=None, pages=3,
+                           object_streams=False):
     """
     A PDF whose listed pages have no Resources dictionary, or one that is not a
     dictionary, which qpdf repairs with a warning (#158). `damage` adds one more problem.
+    With `object_streams`, the pages are stored in an object stream, as in many PDFs.
     """
     with pikepdf.open(io.BytesIO(make_pdf(pages=pages))) as pdf:
         for number in page_numbers:
@@ -105,7 +107,9 @@ def repaired_resources_pdf(*page_numbers, invalid=False, damage=None, pages=3):
             pdf.pages[pages - 1].obj.Resources.XObject = pikepdf.Dictionary(Im0=image)
         buffer = io.BytesIO()
         pdf.save(buffer, deterministic_id=True, compress_streams=False,
-                 stream_decode_level=pikepdf.StreamDecodeLevel.none)
+                 stream_decode_level=pikepdf.StreamDecodeLevel.none,
+                 object_stream_mode=(pikepdf.ObjectStreamMode.generate if object_streams
+                                     else pikepdf.ObjectStreamMode.preserve))
     data = buffer.getvalue()
     if damage == 'broken page tree':
         data = data.replace(b'/Type /Pages', b'/Type /Pagex', 1)
@@ -234,6 +238,8 @@ class PDFCheckTests(unittest.TestCase):
             'Resources that is not a dictionary': (repaired_resources_pdf(1, invalid=True), 1),
             'several pages without Resources': (repaired_resources_pdf(0, 2), 2),
             'every page without Resources': (repaired_resources_pdf(0, 1, 2), 3),
+            'pages in an object stream': (
+                repaired_resources_pdf(0, 2, object_streams=True), 2),
         }
         for name, (data, repaired) in cases.items():
             with self.subTest(name):
@@ -279,6 +285,8 @@ class PDFCheckTests(unittest.TestCase):
             '{}, object 3 0 at offset 145: {}'.format(stream, repaired),
             # As Internet Archive's run on 2026-11-11 reported it (#147)
             '{}, object 37242 0 at offset 11799663: {}'.format(stream, repaired),
+            # A page object stored in an object stream
+            '{} object stream 1, object 4 0 at offset 118: {}'.format(stream, repaired),
             '{}, object 3 0: kid 12 (from 0) Resources is missing or invalid; repairing'.format(
                 stream),
             '{}: {}'.format(stream, repaired),
@@ -299,6 +307,9 @@ class PDFCheckTests(unittest.TestCase):
             'overriding'.format(stream),
             'ERROR: stream <_io.BytesIO object at 0x7fb8bc95d440>, object 3 0: {}'.format(repaired),
             'WARNING: /tmp/book.pdf, object 3 0: {}'.format(repaired),
+            '{} object stream x, object 4 0: {}'.format(stream, repaired),
+            '{}, object 3 0: kid \u0663 (from 0) Resources is missing or invalid; '
+            'repairing'.format(stream),
             repaired,
             '',
         )

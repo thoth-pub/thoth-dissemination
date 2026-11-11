@@ -29,10 +29,11 @@ PDF_HEADER_BYTES = 1024
 # qpdf repairs a page that has no Resources dictionary, on the page or inherited,
 # by giving it an empty one, as PDF readers do. A file whose only problems are of
 # this kind is sent unchanged (#158); any other problem still rejects it.
+# The page object may sit in an object stream, which qpdf names before the object.
 REPAIRED_PAGE_RESOURCES = re.compile(
     r'WARNING: stream <_io\.BytesIO object at 0x[0-9a-f]+>'
-    r'(?:, object \d+ \d+)?(?: at offset \d+)?'
-    r': kid \d+ \(from \d+\) Resources is missing or invalid; repairing')
+    r'(?: object stream [0-9]+)?(?:, object [0-9]+ [0-9]+)?(?: at offset [0-9]+)?'
+    r': kid [0-9]+ \(from [0-9]+\) Resources is missing or invalid; repairing')
 
 
 class PDFCheckError(DisseminationError):
