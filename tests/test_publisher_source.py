@@ -1094,6 +1094,139 @@ class TestPinnedPlatformOptionContract(unittest.TestCase):
             get_distribution_platform_options(thoth)
 
 
+# The 15-row list that BE-05 (thoth-pub/thoth#840, section 8.2) specifies:
+# the v1.7.0 rows in the same order, without the retired CUL and Figshare.
+BE05_HIDDEN_PLATFORMS = ('CAMBRIDGE_UNIVERSITY_LIBRARY', 'FIGSHARE')
+
+
+def be05_options():
+    """Render the BE-05 contract as a live-shaped API response."""
+    return [
+        option for option in pinned_options()
+        if option['platform'] not in BE05_HIDDEN_PLATFORMS
+    ]
+
+
+class TestBE05PlatformOptionContract(unittest.TestCase):
+    """DIS-03B (#158): the BE-05 list is accepted beside the v1.7.0 one."""
+
+    def issues(self, options):
+        return validate_platform_options(options)
+
+    def issue_codes(self, options):
+        return sorted(issue['issue'] for issue in self.issues(options))
+
+    def test_be05_pin_is_the_v170_pin_without_cul_and_figshare(self):
+        self.assertEqual(expected_platform_options(be05=True), be05_options())
+        self.assertEqual(len(expected_platform_options(be05=True)), 15)
+        self.assertEqual(len(expected_platform_options()), 17)
+
+    def test_be05_pin_keeps_jisc_visible_and_not_assignable(self):
+        jisc = [
+            option for option in expected_platform_options(be05=True)
+            if option['platform'] == 'JISC_NBK']
+        self.assertEqual(len(jisc), 1)
+        self.assertIs(jisc[0]['assignable'], False)
+
+    def test_both_lists_are_compatible(self):
+        self.assertEqual(self.issues(pinned_options()), [])
+        self.assertEqual(self.issues(be05_options()), [])
+
+    def test_hiding_only_one_retired_row_is_incompatible(self):
+        for hidden in BE05_HIDDEN_PLATFORMS:
+            with self.subTest(hidden=hidden):
+                options = [
+                    option for option in pinned_options()
+                    if option['platform'] != hidden]
+                issues = self.issues(options)
+                self.assertEqual(
+                    [(issue['issue'], issue['platform']) for issue in issues],
+                    [('platform_option_missing_platform', hidden)])
+
+    def test_be05_list_missing_another_platform_is_incompatible(self):
+        options = [
+            option for option in be05_options()
+            if option['platform'] != 'ZENODO']
+        issues = self.issues(options)
+        self.assertEqual(
+            [(issue['issue'], issue['platform']) for issue in issues],
+            [('platform_option_missing_platform', 'ZENODO')])
+
+    def test_be05_list_with_jisc_hidden_too_is_incompatible(self):
+        options = [
+            option for option in be05_options()
+            if option['platform'] != 'JISC_NBK']
+        self.assertEqual(
+            self.issue_codes(options), ['platform_option_missing_platform'])
+
+    def test_retired_row_with_changed_descriptor_is_incompatible(self):
+        for retired in BE05_HIDDEN_PLATFORMS:
+            with self.subTest(retired=retired):
+                options = pinned_options()
+                for option in options:
+                    if option['platform'] == retired:
+                        option['assignable'] = False
+                issues = self.issues(options)
+                self.assertEqual(
+                    [(issue['issue'], issue['platform']) for issue in issues],
+                    [('platform_option_assignable_mismatch', retired)])
+
+    def test_be05_list_descriptor_drift_reports_only_that_drift(self):
+        options = be05_options()
+        for option in options:
+            if option['platform'] == 'CROSSREF':
+                option['displayLabel'] = 'Crossref DOI'
+        issues = self.issues(options)
+        self.assertEqual(
+            [(issue['issue'], issue['platform']) for issue in issues],
+            [('platform_option_display_label_mismatch', 'CROSSREF')])
+
+    def test_be05_list_out_of_order_is_incompatible(self):
+        options = be05_options()
+        options[0], options[1] = options[1], options[0]
+        self.assertEqual(
+            self.issue_codes(options), ['platform_option_order_mismatch'])
+
+    def test_be05_list_with_an_unknown_platform_is_incompatible(self):
+        options = be05_options() + [{
+            'platform': 'NEW_PLATFORM',
+            'displayLabel': 'New Platform',
+            'linkedGroup': None,
+            'backCatalogueBehaviour': 'AUTOMATIC_PUSH',
+            'assignable': True,
+        }]
+        self.assertEqual(
+            self.issue_codes(options), ['platform_option_unknown_platform'])
+
+    def test_be05_list_with_a_duplicate_row_is_incompatible(self):
+        options = be05_options() + [be05_options()[0]]
+        self.assertEqual(
+            self.issue_codes(options), ['platform_option_duplicate_platform'])
+
+    def test_retired_row_with_an_unusable_platform_value_is_not_hidden(self):
+        # A malformed row never counts as a returned retired row, and a row
+        # whose platform is not a string never breaks the shape choice.
+        options = be05_options() + [{'platform': ['FIGSHARE']}]
+        self.assertEqual(
+            self.issue_codes(options), ['platform_option_malformed'])
+
+    def test_contract_error_names_both_pins(self):
+        error = PlatformOptionContractError(
+            validate_platform_options(be05_options()[1:]))
+        self.assertIn('v1.7.0 or BE-05 contract', str(error))
+
+    def test_enum_inventory_and_retired_classification_are_unchanged(self):
+        self.assertEqual(
+            [destination.api_platform for destination in DESTINATIONS],
+            list(PINNED_DISTRIBUTION_PLATFORMS))
+        for retired in BE05_HIDDEN_PLATFORMS:
+            with self.subTest(retired=retired):
+                self.assertEqual(
+                    publisher_source.destination_for_api_platform(
+                        retired).classification,
+                    'deprecated')
+
+
 class TestPlatformOptionValidation(unittest.TestCase):
     """Deterministic validation of one live option response."""
 

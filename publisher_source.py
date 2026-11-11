@@ -16,7 +16,9 @@ publisher list for one scheduled dissemination pathway:
 Nothing here disseminates, uploads, writes a Thoth location, sends email,
 creates or mutates a distribution job, or mutates Publisher Services
 configuration. Discovery consumes only the public, anonymous read surfaces of
-the pinned Thoth v1.7.0 contract and requires no credential.
+the pinned Thoth v1.7.0 contract and requires no credential. The option list
+may also take the BE-05 shape, which hides the retired CUL and Figshare rows
+(DIS-03B, `thoth-pub/thoth-dissemination#158`).
 
 Modes are activated only by the repository-level `PUBLISHER_SOURCE_MODES`
 variable. When that variable is absent - which is its state at merge - every
@@ -87,6 +89,11 @@ PLATFORM_OPTION_FIELDS = (
     'assignable',
 )
 
+# BE-05 (`thoth-pub/thoth#840`, section 8.2) hides exactly these retired
+# identities from `distributionPlatformOptions` and changes nothing else, so
+# the option list has 15 rows while the enum keeps all 17 (DIS-03B, #158).
+BE05_HIDDEN_OPTION_PLATFORMS = ('CAMBRIDGE_UNIVERSITY_LIBRARY', 'FIGSHARE')
+
 DETAIL_LENGTH_LIMIT = 300
 SUMMARY_PUBLISHER_LIMIT = 10
 PLATFORM_OPTION_ISSUE_SUMMARY_LIMIT = 3
@@ -125,7 +132,7 @@ class PlatformOptionContractError(PublisherDiscoveryError):
             shown.append('(+{} more)'.format(remainder))
         super().__init__(
             'Publisher Services platform-option contract is incompatible '
-            'with the pinned Thoth v1.7.0 contract: {}'.format(
+            'with the pinned Thoth v1.7.0 or BE-05 contract: {}'.format(
                 '; '.join(shown)))
         self.issues = issues
 
@@ -303,12 +310,14 @@ def destination_for_api_platform(api_platform):
     return destination
 
 
-def expected_platform_options():
+def expected_platform_options(be05=False):
     """
-    Return the pinned v1.7.0 `distributionPlatformOptions` contract.
+    Return a pinned `distributionPlatformOptions` contract.
 
-    The rows are in the canonical upstream declaration order, which that
-    contract declares binding.
+    By default this is the v1.7.0 list of all 17 rows. With `be05`, it is the
+    BE-05 list, which omits only the retired CUL and Figshare rows. The rows
+    are in the canonical upstream declaration order, which both contracts
+    declare binding.
     """
     return [
         {
@@ -319,7 +328,21 @@ def expected_platform_options():
             'assignable': destination.assignable,
         }
         for destination in DESTINATIONS
+        if not (be05 and destination.api_platform in BE05_HIDDEN_OPTION_PLATFORMS)
     ]
+
+
+def _returns_be05_shape(options):
+    """
+    Whether a response is held to the BE-05 list rather than the v1.7.0 one.
+
+    A response that carries either retired row is held to the full v1.7.0
+    list, so omitting only one of them is still a missing platform.
+    """
+    return not any(
+        isinstance(option, dict)
+        and option.get('platform') in BE05_HIDDEN_OPTION_PLATFORMS
+        for option in options)
 
 
 def _platform_option_issue(issue, platform, detail):
@@ -357,9 +380,11 @@ def _platform_option_descriptor_issues(platform, option, pinned):
 def validate_platform_options(options):
     """
     Validate one live `distributionPlatformOptions` response against the
-    pinned v1.7.0 contract and return deterministic contract issues.
+    pinned v1.7.0 or BE-05 contract and return deterministic contract issues.
 
-    An empty result means the running API is compatible. The check covers
+    An empty result means the running API is compatible. A response with a
+    CUL or Figshare row must match the v1.7.0 list exactly, and any other
+    response must match the BE-05 list exactly. The check covers
     structural usability, the exact platform inventory, duplicates, unknown
     platforms, canonical ordering and every pinned descriptor value. It is
     independent of this repository's local dissemination execution mapping and
@@ -372,7 +397,9 @@ def validate_platform_options(options):
             'distributionPlatformOptions was not a list')]
 
     pinned = {
-        option['platform']: option for option in expected_platform_options()}
+        option['platform']: option
+        for option in expected_platform_options(
+            be05=_returns_be05_shape(options))}
     seen = {}
     received_order = []
     issues = []

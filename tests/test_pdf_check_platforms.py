@@ -1,5 +1,6 @@
 """Offline tests for checking every delivered PDF, not just OAPEN's (DIS-PDF-CHECK-01, #147),
-and for links that serve no PDF file (DIS-PDF-CHECK-02, #155).
+for links that serve no PDF file (DIS-PDF-CHECK-02, #155) and for PDFs whose only
+problem is a page Resources entry that readers repair (DIS-PDF-CHECK-03, #158).
 
 Each platform's own upload code runs with its network client faked, and the PDF
 source answers through a fake host: no test sends a network request or needs credentials.
@@ -25,6 +26,7 @@ from oapensworduploader import OAPENSWORDUploader
 from pdfcheck import PDFCheckError, PDFNotServedError, PDFSource
 from tests.test_oapen_pdf_integrity import (
     HTML_PAGE,
+    REPAIRED_PDF,
     SECRET,
     SIGNED_URL,
     VALID_PDF,
@@ -62,6 +64,9 @@ PDF_OPTIONAL = ('ProjectMUSE', 'EBSCOHost', 'ProQuest', 'GooglePlay')
 PDF_PUBLICATION_OPTIONAL = ('EBSCOHost', 'GooglePlay')
 # These cannot send without the PDF
 PDF_REQUIRED = ('JSTOR', 'ScienceOpen', 'BKCI')
+# Logged when a PDF passes with page Resources that readers repair (#158)
+REPAIRED_WARNING = ('PDF publication {} of work {} from {} has 1 page(s) with missing or invalid '
+                    'Resources, which readers repair; sending it unchanged')
 
 
 def not_served_cases():
@@ -253,6 +258,32 @@ class EveryPlatformChecksItsPDFTests(OfflineTestCase):
                       warning)
         self.assertNotIn(SECRET, warning)
 
+    def test_a_pdf_with_repaired_page_resources_is_returned_unchanged_with_a_warning(self):
+        uploader, host = make_platform_uploader(
+            'JSTOR', FakeResponse(REPAIRED_PDF, url=SIGNED_URL))
+        pdf_publication(uploader)['locations'][0]['fullTextUrl'] = SIGNED_URL
+
+        with self.assertLogs(level='INFO') as logs:
+            publication = uploader.get_publication_details('PDF')
+
+        self.assertEqual(publication.bytes, REPAIRED_PDF)
+        self.assertEqual(len(host.requests), 1)
+        warnings = [record.getMessage() for record in logs.records
+                    if record.levelname == 'WARNING']
+        self.assertEqual(warnings, [REPAIRED_WARNING.format(
+            PDF_PUBLICATION_ID, WORK_ID, 'cdn.example')])
+        self.assertIn('PDF for work {}: publication {}, {} bytes, 3 pages'.format(
+            WORK_ID, PDF_PUBLICATION_ID, len(REPAIRED_PDF)), '\n'.join(logs.output))
+        self.assertNotIn(SECRET, '\n'.join(logs.output))
+
+    def test_a_sound_pdf_logs_no_warning(self):
+        uploader, host = make_platform_uploader('JSTOR')
+
+        with self.assertLogs(level='INFO') as logs:
+            uploader.get_publication_details('PDF')
+
+        self.assertEqual([record.levelname for record in logs.records], ['INFO'])
+
     def test_an_octet_stream_pdf_is_returned_as_the_exact_bytes_checked(self):
         uploader, host = make_platform_uploader(
             'JSTOR', FakeResponse(content_type='application/octet-stream'))
@@ -307,6 +338,24 @@ class PlatformDeliveryTests(OfflineTestCase):
                     self.assertEqual(len(host.requests), 1)
                     self.assertIn('9781999900014.pdf', run.files)
                     self.assertEqual(run.file('9781999900014.pdf'), VALID_PDF)
+
+    def test_every_platform_sends_a_pdf_with_repaired_page_resources_unchanged(self):
+        # Platforms where the PDF is optional and platforms that need it alike
+        self.assertTrue(set(PDF_OPTIONAL) & set(CLIENTS) and set(PDF_REQUIRED) & set(CLIENTS))
+        for platform in CLIENTS:
+            with self.subTest(platform=platform):
+                uploader, host = make_platform_uploader(platform, FakeResponse(REPAIRED_PDF))
+                run = PlatformRun(platform, uploader)
+
+                with self.assertLogs(level='INFO') as logs:
+                    run.run()
+
+                self.assertEqual(len(host.requests), 1)
+                self.assertEqual(run.file('9781999900014.pdf'), REPAIRED_PDF)
+                self.assertIn(REPAIRED_WARNING.format(PDF_PUBLICATION_ID, WORK_ID,
+                                                      'publisher.example'),
+                              [record.getMessage() for record in logs.records
+                               if record.levelname == 'WARNING'])
 
     def test_a_rejected_pdf_stops_every_platform_before_it_sends_anything(self):
         cases = {

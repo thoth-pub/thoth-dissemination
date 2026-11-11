@@ -31,6 +31,8 @@ from pdfcheck import (
     PDFSource,
     check_pdf,
     describe_pdf_problem,
+    inspect_pdf,
+    is_repaired_page_resources,
 )
 from swordv2uploader import SwordV2Uploader
 from tests.test_oapensword_preflight import (
@@ -67,13 +69,15 @@ def make_pdf(pages=3, encryption=None, linearize=False):
     return buffer.getvalue()
 
 
-def corrupt_stream_pdf():
+def corrupt_stream_pdf(without_resources=False):
     """A one-page PDF whose Flate-compressed content stream does not decode."""
     pdf = pikepdf.Pdf.new()
     pdf.add_blank_page(page_size=(200, 200))
     stream = pdf.make_stream(zlib.compress(b'BT /F1 12 Tf 20 100 Td (Hello) Tj ET'))
     stream.Filter = pikepdf.Name.FlateDecode
     pdf.pages[0].Contents = stream
+    if without_resources:
+        del pdf.pages[0].obj.Resources
     buffer = io.BytesIO()
     pdf.save(buffer, compress_streams=False, deterministic_id=True)
     data = buffer.getvalue()
@@ -81,7 +85,47 @@ def corrupt_stream_pdf():
     return data[:start] + b'\x00\xff\x00\xff' + data[start + 4:]
 
 
+def repaired_resources_pdf(*page_numbers, invalid=False, damage=None, pages=3,
+                           object_streams=False):
+    """
+    A PDF whose listed pages have no Resources dictionary, or one that is not a
+    dictionary, which qpdf repairs with a warning (#158). `damage` adds one more problem.
+    With `object_streams`, the pages are stored in an object stream, as in many PDFs.
+    """
+    with pikepdf.open(io.BytesIO(make_pdf(pages=pages))) as pdf:
+        for number in page_numbers:
+            if invalid:
+                pdf.pages[number].obj.Resources = 5
+            else:
+                del pdf.pages[number].obj.Resources
+        if damage == 'no media box':
+            del pdf.pages[pages - 1].obj.MediaBox
+        elif damage == 'damaged image stream':
+            # Damaged like the second file Internet Archive rejected on 2026-11-11 (#147)
+            image = pikepdf.Stream(pdf, b'\x00\xff\x00\xff not deflate data')
+            image.Filter = pikepdf.Name.FlateDecode
+            pdf.pages[pages - 1].obj.Resources.XObject = pikepdf.Dictionary(Im0=image)
+        buffer = io.BytesIO()
+        pdf.save(buffer, deterministic_id=True, compress_streams=False,
+                 stream_decode_level=pikepdf.StreamDecodeLevel.none,
+                 object_stream_mode=(pikepdf.ObjectStreamMode.generate if object_streams
+                                     else pikepdf.ObjectStreamMode.preserve))
+    data = buffer.getvalue()
+    if damage == 'broken page tree':
+        data = data.replace(b'/Type /Pages', b'/Type /Pagex', 1)
+    return data
+
+
+def repaired_resources_warnings(data):
+    """The warnings qpdf gives while it reads the page tree and repairs page Resources."""
+    with pikepdf.open(io.BytesIO(data), attempt_recovery=False) as pdf:
+        len(pdf.pages)
+        return [warning for warning in pdf.get_warnings()
+                if 'Resources is missing or invalid; repairing' in warning]
+
+
 VALID_PDF = make_pdf()
+REPAIRED_PDF = repaired_resources_pdf(0)
 HTML_PAGE = b'<!DOCTYPE html><html><body>Please sign in</body></html>'
 
 
@@ -186,6 +230,92 @@ class PDFCheckTests(unittest.TestCase):
                 check_pdf(VALID_PDF)
 
         self.assertEqual(str(raised.exception), 'the file could not be checked (RuntimeError)')
+
+    def test_a_pdf_whose_only_problems_are_repaired_page_resources_passes(self):
+        self.assertEqual(inspect_pdf(VALID_PDF), (3, 0))
+        cases = {
+            'one page without Resources': (repaired_resources_pdf(0), 1),
+            'Resources that is not a dictionary': (repaired_resources_pdf(1, invalid=True), 1),
+            'several pages without Resources': (repaired_resources_pdf(0, 2), 2),
+            'every page without Resources': (repaired_resources_pdf(0, 1, 2), 3),
+            'pages in an object stream': (
+                repaired_resources_pdf(0, 2, object_streams=True), 2),
+        }
+        for name, (data, repaired) in cases.items():
+            with self.subTest(name):
+                # The fixture really makes qpdf repair one page at a time
+                self.assertEqual(len(repaired_resources_warnings(data)), repaired)
+
+                self.assertEqual(inspect_pdf(data), (3, repaired))
+                self.assertEqual(check_pdf(data), 3)
+
+    def test_repaired_page_resources_do_not_hide_any_other_problem(self):
+        cases = {
+            'damaged image stream': (
+                repaired_resources_pdf(0, damage='damaged image stream'),
+                '2 structural problem(s), first: WARNING: PDF (offset ',
+                'error decoding stream data for object'),
+            'damaged page content stream': (
+                corrupt_stream_pdf(without_resources=True),
+                'could not be read as a PDF: ', 'errors while decoding'),
+            'page without a media box': (
+                repaired_resources_pdf(0, damage='no media box'),
+                '1 structural problem(s), first: ', 'MediaBox is undefined'),
+            'broken page tree': (
+                repaired_resources_pdf(0, damage='broken page tree'),
+                '1 structural problem(s), first: ', '/Type key should be /Pages'),
+        }
+        for name, (data, rejection, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(len(repaired_resources_warnings(data)), 1)
+
+                with self.assertRaises(PDFCheckError) as raised:
+                    inspect_pdf(data)
+
+                message = str(raised.exception)
+                self.assertIn(rejection, message)
+                self.assertIn(expected, message)
+                self.assertNotIn('Resources', message)
+                self.assertNotIn('BytesIO', message)
+
+    def test_only_the_repaired_page_resources_warning_is_allowed(self):
+        stream = 'WARNING: stream <_io.BytesIO object at 0x7fb8bc95d440>'
+        repaired = 'kid 0 (from 0) Resources is missing or invalid; repairing'
+        allowed = (
+            '{}, object 3 0 at offset 145: {}'.format(stream, repaired),
+            # As Internet Archive's run on 2026-11-11 reported it (#147)
+            '{}, object 37242 0 at offset 11799663: {}'.format(stream, repaired),
+            # A page object stored in an object stream
+            '{} object stream 1, object 4 0 at offset 118: {}'.format(stream, repaired),
+            '{}, object 3 0: kid 12 (from 0) Resources is missing or invalid; repairing'.format(
+                stream),
+            '{}: {}'.format(stream, repaired),
+        )
+        for problem in allowed:
+            with self.subTest(problem):
+                self.assertTrue(is_repaired_page_resources(problem))
+        rejected = (
+            '{}, object 3 0 at offset 145: kid 0 (from 0) Resources is missing or invalid'.format(
+                stream),
+            '{}, object 3 0 at offset 145: {}; and more'.format(stream, repaired),
+            '{}, object 3 0 at offset 145: {}\n{}: other'.format(stream, repaired, stream),
+            '{}, object 3 0 at offset 145: kid 0 (from 0) XObject is missing or invalid; '
+            'repairing'.format(stream),
+            '{}, object 3 0 at offset 145: kid 0 (from 0) MediaBox is undefined; '
+            'setting to letter / ANSI A'.format(stream),
+            '{}, object 3 0 at offset 145: kid 0 (from 0) Resources is missing or invalid; '
+            'overriding'.format(stream),
+            'ERROR: stream <_io.BytesIO object at 0x7fb8bc95d440>, object 3 0: {}'.format(repaired),
+            'WARNING: /tmp/book.pdf, object 3 0: {}'.format(repaired),
+            '{} object stream x, object 4 0: {}'.format(stream, repaired),
+            '{}, object 3 0: kid \u0663 (from 0) Resources is missing or invalid; '
+            'repairing'.format(stream),
+            repaired,
+            '',
+        )
+        for problem in rejected:
+            with self.subTest(problem):
+                self.assertFalse(is_repaired_page_resources(problem))
 
     def test_parser_messages_are_shortened(self):
         self.assertEqual(len(describe_pdf_problem('x ' * 500)), 200)
@@ -420,6 +550,33 @@ class OAPENUploadIntegrityTests(OfflineTestCase):
         self.assertIn('PDF for work {}: publication {}, {} bytes, 3 pages, SHA-256 {}'.format(
             WORK_ID, PDF_PUBLICATION_ID, len(VALID_PDF), hashlib.sha256(VALID_PDF).hexdigest()),
             '\n'.join(logs.output))
+
+    def test_a_pdf_with_repaired_page_resources_is_deposited_unchanged(self):
+        metadata = thoth_metadata()
+        pdf = [publication for publication in metadata['data']['work']['publications']
+               if publication['publicationType'] == 'PDF'][0]
+        pdf['locations'][0]['fullTextUrl'] = SIGNED_URL
+        remote, uploader, host = self.make(FakeResponse(REPAIRED_PDF, url=SIGNED_URL),
+                                           metadata=metadata)
+        uploaded = []
+        upload_pdf = FakeSwordApi.upload_pdf
+
+        def record_upload(api, edit_media_iri, payload):
+            uploaded.append(payload)
+            return upload_pdf(api, edit_media_iri, payload)
+
+        with patch.object(FakeSwordApi, 'upload_pdf', record_upload), \
+                self.assertLogs(level='INFO') as logs:
+            uploader.upload_to_platform()
+
+        self.assertEqual(uploaded, [REPAIRED_PDF])
+        warnings = [record.getMessage() for record in logs.records
+                    if record.levelname == 'WARNING']
+        self.assertEqual(warnings, [
+            'PDF publication {} of work {} from cdn.example has 1 page(s) with missing or invalid '
+            'Resources, which readers repair; sending it unchanged'.format(
+                PDF_PUBLICATION_ID, WORK_ID)])
+        self.assertNotIn(SECRET, '\n'.join(logs.output))
 
     def test_an_unaccepted_pdf_stops_the_upload_before_any_create(self):
         metadata = thoth_metadata()

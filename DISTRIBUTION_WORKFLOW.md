@@ -72,7 +72,7 @@ CUL (Cambridge University Library) and Figshare are retired destinations (#101).
 
 ## 4) Platform-by-platform payload and conditions
 
-Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147, #155). A file served as `application/pdf` is checked; a file served as `application/octet-stream` or `binary/octet-stream` is checked when its first 1024 bytes hold a PDF header.
+Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147, #155). A file served as `application/pdf` is checked; a file served as `application/octet-stream` or `binary/octet-stream` is checked when its first 1024 bytes hold a PDF header. Any structural problem rejects the file, with one exception (#158): a page whose Resources entry is missing or invalid, which qpdf and PDF readers repair. A file with only that problem is sent unchanged, and the run logs a warning naming the work, the publication, the host and the number of pages.
 
 Where a PDF is described as optional, that means Thoth gives no PDF file for the work:
 - no PDF publication;
@@ -357,13 +357,21 @@ execution pathway (#101).
 
 Before any Publisher Services evidence is treated as usable, `compare` and
 `api` read the anonymous `distributionPlatformOptions` query and validate the
-complete returned option set against the pinned Thoth v1.7.0 contract:
-structural usability, the exact 17-platform inventory with no missing, extra,
+complete returned option set against a pinned contract:
+structural usability, the exact platform inventory with no missing, extra,
 unknown or duplicate platform, the canonical platform order that the upstream
 inventory declares binding, and each pinned `displayLabel`, `linkedGroup`,
 `backCatalogueBehaviour` and `assignable` value. `displayLabel` is validated as
 contract data only; no execution mapping is ever inferred from it, and this
 check does not replace the local dissemination platform mapping above.
+
+Two inventories are accepted (DIS-03B, #158). A response with a
+`CAMBRIDGE_UNIVERSITY_LIBRARY` or `FIGSHARE` row must match the Thoth v1.7.0
+list of all 17 rows. Any other response must match the 15-row list that BE-05
+(`thoth-pub/thoth#840`) specifies: the same rows without those two, with
+`JISC_NBK` still not assignable. So BE-05 can deploy without a further
+dissemination release, and a response that drops only one of the two retired
+rows still fails.
 
 An unreadable or incompatible option surface is never treated as compatible.
 In `compare` it becomes deterministic `contractIssues` with comparison status
