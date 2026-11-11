@@ -9,8 +9,9 @@ import sys
 import json
 import requests
 from errors import DisseminationError
-from pdfcheck import PDFCheckError, PDFNotServedError, PDFSource, check_pdf
+from pdfcheck import PDFCheckError, PDFNotServedError, PDFSource, inspect_pdf
 from os import environ
+from urllib.parse import urlparse
 from thothapi import get_thoth_client
 from thothlibrary import ThothError
 
@@ -288,19 +289,24 @@ class Uploader():
     def get_checked_pdf(self, source):
         """
         Download a PDF source in one bounded request and return its bytes once
-        they pass check_pdf, or raise PDFCheckError before any platform receives them.
+        they pass the PDF check, or raise PDFCheckError before any platform receives them.
         A link that serves no PDF file raises PDFNotServedError instead, which
         platforms where the PDF is optional treat as no PDF.
         """
         try:
             pdf_bytes = self.pdf_source.fetch(source.url)
-            pages = check_pdf(pdf_bytes)
+            pages, repaired = inspect_pdf(pdf_bytes)
         except PDFNotServedError as error:
             logging.warning('PDF publication {} of work {} has no PDF file to send: {}'.format(
                 source.id, self.work_id, error))
             raise PDFNotServedError(self.describe_rejected_pdf(source, error)) from None
         except PDFCheckError as error:
             raise PDFCheckError(self.describe_rejected_pdf(source, error)) from None
+        if repaired:
+            # Name the host only: a full-text URL can carry an access token (#158)
+            logging.warning('PDF publication {} of work {} from {} has {} page(s) with missing or '
+                            'invalid Resources, which readers repair; sending it unchanged'.format(
+                                source.id, self.work_id, urlparse(source.url).hostname, repaired))
         logging.info('PDF for work {}: publication {}, {} bytes, {} pages, SHA-256 {}'.format(
             self.work_id, source.id, len(pdf_bytes), pages, hashlib.sha256(pdf_bytes).hexdigest()))
         return pdf_bytes

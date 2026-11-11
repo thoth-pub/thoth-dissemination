@@ -72,7 +72,7 @@ CUL (Cambridge University Library) and Figshare are retired destinations (#101).
 
 ## 4) Platform-by-platform payload and conditions
 
-Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147, #155). A file served as `application/pdf` is checked; a file served as `application/octet-stream` or `binary/octet-stream` is checked when its first 1024 bytes hold a PDF header.
+Every platform below that sends a PDF downloads it in one bounded request and checks it with `pikepdf` before anything is sent (`pdfcheck.py`, #124, #147, #155). A file served as `application/pdf` is checked; a file served as `application/octet-stream` or `binary/octet-stream` is checked when its first 1024 bytes hold a PDF header. Any structural problem rejects the file, with one exception (#158): a page whose Resources entry is missing or invalid, which qpdf and PDF readers repair. A file with only that problem is sent unchanged, and the run logs a warning naming the work, the publication, the host and the number of pages.
 
 Where a PDF is described as optional, that means Thoth gives no PDF file for the work:
 - no PDF publication;
