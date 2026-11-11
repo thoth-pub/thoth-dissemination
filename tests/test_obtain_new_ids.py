@@ -1486,6 +1486,52 @@ class TestPlatformOptionContractGating(PublisherSourceModeTestCase):
         self.assertEqual(drifted.comparison_report['status'], 'ERROR')
         self.assertEqual(drifted.comparison_report['apiPublisherIds'], [])
 
+    def be05_options(self):
+        """The 15-row list that BE-05 specifies: CUL and Figshare hidden."""
+        return [
+            option for option in expected_platform_options()
+            if option['platform'] not in (
+                'CAMBRIDGE_UNIVERSITY_LIBRARY', 'FIGSHARE')
+        ]
+
+    def test_compare_matches_on_the_be05_option_list(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})
+        self.platform_options.return_value = self.be05_options()
+        finder = self.ordinary_finder(MODE_COMPARE)
+        self.run_finder(finder)
+        report = finder.comparison_report
+        self.assertEqual(report['status'], 'MATCH')
+        self.assertTrue(report['platformContractValidated'])
+        self.assertEqual(report['contractIssues'], [])
+
+    def test_api_discovers_publishers_on_the_be05_option_list(self):
+        self.patch_discovery({
+            'OAPEN': [PUBLISHER_B], 'DOAB': [PUBLISHER_B]})
+        self.platform_options.return_value = self.be05_options()
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            self.thoth.works.call_args.kwargs['publishers'],
+            json.dumps([PUBLISHER_B]),
+        )
+
+    def test_api_fails_closed_when_only_one_retired_row_is_hidden(self):
+        discovery = self.patch_discovery({
+            'OAPEN': [PUBLISHER_B], 'DOAB': [PUBLISHER_B]})
+        self.platform_options.return_value = [
+            option for option in expected_platform_options()
+            if option['platform'] != 'FIGSHARE'
+        ]
+        with patch.dict(os.environ, {
+                'PUBLISHER_SOURCE_MODES': json.dumps({'OAPEN': 'api'})}):
+            status = main(['--platform', 'OAPEN'], thoth=self.thoth)
+        self.assertEqual(status, 1)
+        discovery.assert_not_called()
+        self.thoth.works.assert_not_called()
+
     def test_compare_contract_failure_still_exits_zero(self):
         self.patch_discovery({
             'OAPEN': [PUBLISHER_ID], 'DOAB': [PUBLISHER_ID]})

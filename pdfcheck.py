@@ -26,6 +26,15 @@ PDF_SOURCE_USER_AGENT = ('Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 
 OCTET_STREAM_TYPES = ('application/octet-stream', 'binary/octet-stream')
 PDF_HEADER_BYTES = 1024
 
+# qpdf repairs a page that has no Resources dictionary, on the page or inherited,
+# by giving it an empty one, as PDF readers do. A file whose only problems are of
+# this kind is sent unchanged (#158); any other problem still rejects it.
+# The page object may sit in an object stream, which qpdf names before the object.
+REPAIRED_PAGE_RESOURCES = re.compile(
+    r'WARNING: stream <_io\.BytesIO object at 0x[0-9a-f]+>'
+    r'(?: object stream [0-9]+)?(?:, object [0-9]+ [0-9]+)?(?: at offset [0-9]+)?'
+    r': kid [0-9]+ \(from [0-9]+\) Resources is missing or invalid; repairing')
+
 
 class PDFCheckError(DisseminationError):
     """The PDF source could not be downloaded completely, or is not a sound PDF."""
@@ -55,10 +64,25 @@ def describe_pdf_problem(problem):
     return text if len(text) <= 200 else text[:197] + '...'
 
 
+def is_repaired_page_resources(problem):
+    """Whether a parser problem is only a page's missing or invalid Resources, which qpdf repairs."""
+    return REPAIRED_PAGE_RESOURCES.fullmatch(str(problem)) is not None
+
+
 def check_pdf(data):
     """
     Return the page count of a complete, unencrypted PDF whose structure,
     streams and page contents all parse without problems, or raise PDFCheckError.
+    A page with missing or invalid Resources is allowed; see inspect_pdf.
+    """
+    return inspect_pdf(data)[0]
+
+
+def inspect_pdf(data):
+    """
+    Check a PDF as check_pdf does and return its page count and the number of
+    pages whose missing or invalid Resources qpdf repaired, or raise PDFCheckError.
+    The bytes are never changed: a passing file is sent exactly as downloaded.
     """
     if not data:
         raise PDFCheckError('the file is empty')
@@ -84,10 +108,11 @@ def check_pdf(data):
     except Exception as error:
         raise PDFCheckError('the file could not be checked ({})'.format(
             type(error).__name__)) from None
-    if problems:
+    rejected = [problem for problem in problems if not is_repaired_page_resources(problem)]
+    if rejected:
         raise PDFCheckError('the file has {} structural problem(s), first: {}'.format(
-            len(problems), describe_pdf_problem(problems[0])))
-    return pages
+            len(rejected), describe_pdf_problem(rejected[0])))
+    return pages, len(problems)
 
 
 class PDFSource:
