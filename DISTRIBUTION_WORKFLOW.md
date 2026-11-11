@@ -357,13 +357,21 @@ execution pathway (#101).
 
 Before any Publisher Services evidence is treated as usable, `compare` and
 `api` read the anonymous `distributionPlatformOptions` query and validate the
-complete returned option set against the pinned Thoth v1.7.0 contract:
-structural usability, the exact 17-platform inventory with no missing, extra,
+complete returned option set against a pinned contract:
+structural usability, the exact platform inventory with no missing, extra,
 unknown or duplicate platform, the canonical platform order that the upstream
 inventory declares binding, and each pinned `displayLabel`, `linkedGroup`,
 `backCatalogueBehaviour` and `assignable` value. `displayLabel` is validated as
 contract data only; no execution mapping is ever inferred from it, and this
 check does not replace the local dissemination platform mapping above.
+
+Two inventories are accepted (DIS-03B, #158). A response with a
+`CAMBRIDGE_UNIVERSITY_LIBRARY` or `FIGSHARE` row must match the Thoth v1.7.0
+list of all 17 rows. Any other response must match the 15-row list that BE-05
+(`thoth-pub/thoth#840`) specifies: the same rows without those two, with
+`JISC_NBK` still not assignable. So BE-05 can deploy without a further
+dissemination release, and a response that drops only one of the two retired
+rows still fails.
 
 An unreadable or incompatible option surface is never treated as compatible.
 In `compare` it becomes deterministic `contractIssues` with comparison status

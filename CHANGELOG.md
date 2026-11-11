@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+  - Publisher discovery in `compare` and `api` mode now also accepts the 15-option `distributionPlatformOptions` list that Thoth BE-05 (thoth-pub/thoth#840) specifies, without the retired CUL and Figshare rows, so BE-05 can deploy without a further dissemination release (#158).
+
 ## [[1.10.0]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.10.0) - 2026-11-10
 
 ### Added
