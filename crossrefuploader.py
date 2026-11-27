@@ -17,8 +17,8 @@ CR_DEPOSIT_ENDPOINT = 'https://doi.crossref.org/servlet/deposit'
 # requests are malformed, so check the response text for confirmation
 SUCCESS_MSG = 'Your batch submission was successfully received.'
 
-# Explicit bounds for every Crossref call. The durable-job worker holds a
-# non-renewable lease, so an unbounded provider call is never acceptable.
+# Explicit bounds for every Crossref call, so an unbounded provider call is
+# never possible.
 CR_CONNECT_TIMEOUT_SECONDS = 10
 CR_PREFIX_READ_TIMEOUT_SECONDS = 30
 CR_DEPOSIT_READ_TIMEOUT_SECONDS = 90
