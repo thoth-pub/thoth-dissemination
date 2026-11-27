@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+  - The hourly `distribution-job-worker` workflow, the durable-job worker and its Crossref runner, which consumed the unused BE-04 distribution-job API of Thoth (#162). No other workflow or dissemination path changes.
+
+### Deployment
+  - Merging this into `main` removes the scheduled `distribution-job-worker` runs. The repository variable `DISTRIBUTION_JOB_WORKER_ENABLED` and the `THOTH_WORKER_TOKEN` secret are no longer read and can be deleted.
+
 ## [[1.10.1]](https://github.com/thoth-pub/thoth-dissemination/releases/tag/v1.10.1) - 2026-11-11
 
 ### Changed
